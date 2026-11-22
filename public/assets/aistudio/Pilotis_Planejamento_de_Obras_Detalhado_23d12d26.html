@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pilotis · Planejamento de Obras detalhado</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg-app:#F6F5F2;--bg-surface:#FFFFFF;--bg-subtle:#F0EEE9;--bg-sidebar:#101828;--bg-sidebar-active:#1D2A44;--text:#14181F;--text-2:#5B6472;--text-dark-muted:#A8B0BF;--border:#E4E1DA;--primary:#1F3A5F;--accent:#9A6212;--accent-soft:#F6E7CC;--ok:#1E7F5C;--ok-bg:#E3F4EC;--warn:#8A5200;--warn-bg:#FBF1DC;--bad:#B42318;--bad-bg:#FDECEA;--info:#2455A4;--info-bg:#E6EEFB;--neutral-bg:#ECEAE4}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:#E9E7E1;color:var(--text);font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;line-height:1.4}
+:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.doc{max-width:1480px;margin:0 auto;padding:32px 20px 80px}
+.doc>h1{font-size:28px;margin:0 0 6px}.lead{color:var(--text-2);margin:0 0 20px;max-width:80ch}
+.toc{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:36px}.toc a{background:var(--bg-surface);border:1px solid var(--border);border-radius:999px;padding:7px 14px;color:var(--primary);font-weight:600;text-decoration:none;font-size:13px}.toc a:hover{background:var(--accent-soft)}
+.screen-wrap{margin-bottom:48px}.screen-wrap>h2{font-size:18px;margin:0 0 4px}.screen-wrap>p{margin:0 0 12px;color:var(--text-2);max-width:90ch}
+.scroller{overflow-x:auto;padding-bottom:10px}
+.app{display:grid;grid-template-columns:248px 1fr;width:1440px;min-height:900px;background:var(--bg-app);border:1px solid var(--border);border-radius:12px;overflow:hidden;position:relative}
+.sidebar{background:var(--bg-sidebar);padding:24px 16px;display:flex;flex-direction:column;gap:4px}
+.brand{display:flex;gap:10px;align-items:center;padding:8px;margin-bottom:16px}
+.logo{width:36px;height:36px;border-radius:8px;background:var(--accent);color:#fff;font-weight:700;font-size:18px;display:grid;place-items:center;flex:none}
+.brand b{display:block;color:#fff;font-size:16px}.brand small{color:var(--text-dark-muted);font-size:11px}
+.nav{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:8px;color:var(--text-dark-muted);font-weight:500;position:relative}
+.nav.on{background:var(--bg-sidebar-active);color:#fff;font-weight:600}
+.nav.on::before{content:"";position:absolute;left:0;top:50%;width:3px;height:20px;margin-top:-10px;background:var(--accent);border-radius:2px}
+.nav svg{width:20px;height:20px;flex:none}
+.main{padding:24px 32px;display:flex;flex-direction:column;gap:22px;min-width:0}
+.top{display:flex;align-items:center;gap:12px}.top .t{flex:1;min-width:0}.top h1{margin:0;font-size:26px}.top p{margin:4px 0 0;color:var(--text-2)}
+.chip{background:var(--accent-soft);color:var(--accent);font-weight:600;font-size:12px;padding:6px 10px;border-radius:999px;white-space:nowrap}
+.who{display:flex;align-items:center;gap:8px;background:var(--bg-surface);border:1px solid var(--border);border-radius:999px;padding:6px 10px;font-weight:500;font-size:13px;white-space:nowrap}
+.who i{width:28px;height:28px;border-radius:50%;background:var(--primary);color:#fff;display:grid;place-items:center;font-style:normal;font-weight:700;font-size:13px}
+.btn{font:inherit;font-weight:600;border-radius:8px;padding:10px 16px;border:1px solid transparent;cursor:pointer;background:var(--primary);color:#fff;white-space:nowrap}
+.btn.sec{background:var(--bg-surface);color:var(--text);border-color:var(--border)}.btn.txt{background:none;color:var(--primary);padding:6px 8px}.btn.full{width:100%}.btn[disabled]{opacity:.45;cursor:not-allowed}
+.tabs{display:flex;gap:28px;border-bottom:1px solid var(--border)}.tabs span{color:var(--text-2);font-weight:500;border-bottom:3px solid transparent;margin-bottom:-1px;padding-bottom:10px}.tabs .on{color:var(--primary);font-weight:600;border-color:var(--accent)}
+.row{display:flex;gap:16px;align-items:stretch}.row>*{min-width:0}.g1{flex:1}.g2{flex:2}.col{display:flex;flex-direction:column;gap:16px}
+.kpis{display:flex;gap:16px}.kpi{flex:1;background:var(--bg-surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px}
+.kpi small{display:block;color:var(--text-2);font-weight:500;font-size:13px}.kpi b{display:block;font-size:28px;margin:6px 0}.kpi span{color:var(--text-2);font-size:12px}
+.card{background:var(--bg-surface);border:1px solid var(--border);border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:16px}
+.card>header{display:flex;align-items:center;justify-content:space-between;gap:12px}.card h3{margin:0;font-size:16px}
+.badge{display:inline-block;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:600;white-space:nowrap;background:var(--neutral-bg);color:var(--text-2)}
+.badge.ok{background:var(--ok-bg);color:var(--ok)}.badge.warn{background:var(--warn-bg);color:var(--warn)}.badge.bad{background:var(--bad-bg);color:var(--bad)}.badge.info{background:var(--info-bg);color:var(--info)}.badge.crit{background:var(--accent-soft);color:var(--accent)}
+.seg{display:inline-flex;background:var(--bg-subtle);padding:3px;border-radius:8px;gap:2px}.seg span{padding:6px 14px;border-radius:6px;font-weight:600;font-size:13px;color:var(--text-2);white-space:nowrap}.seg .on{background:var(--bg-surface);color:var(--text);border:1px solid var(--border);padding:5px 13px}
+table{width:100%;border-collapse:collapse}th{background:var(--bg-subtle);text-align:left;font-size:12px;font-weight:600;color:var(--text-2);padding:8px 12px}th:first-child{border-radius:8px 0 0 8px}th:last-child{border-radius:0 8px 8px 0}
+td{padding:11px 12px;border-bottom:1px solid var(--border);color:var(--text-2);font-size:13px;vertical-align:middle}td:first-child{color:var(--text);font-weight:500}
+tr.ph td{background:var(--bg-subtle);color:var(--text);font-weight:700}tr.total td{color:var(--text);font-weight:700}.num{text-align:right}
+.li{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:3px 0;font-size:13px;color:var(--text-2)}.li b{color:var(--text)}.li.strong span{color:var(--text);font-weight:600}
+.bar{height:8px;background:var(--bg-subtle);border-radius:4px;overflow:hidden}.bar i{display:block;height:100%;background:var(--primary);border-radius:4px}
+.note{border-radius:10px;padding:14px 16px;font-size:13px}.note b{display:block;margin-bottom:2px}.note.warn{background:var(--warn-bg);color:var(--warn)}.note.info{background:var(--info-bg);color:var(--info)}.note.soft{background:var(--accent-soft)}.note.bad{background:var(--bad-bg);color:var(--bad)}.note.ok{background:var(--ok-bg);color:var(--ok)}
+.field{display:flex;flex-direction:column;gap:6px}.field label{font-weight:600;font-size:13px}
+.input{border:1px solid var(--border);border-radius:8px;padding:11px 14px;background:var(--bg-surface);font:inherit;color:var(--text);width:100%}
+.field.err .input{border-color:var(--bad);box-shadow:0 0 0 3px var(--bad-bg)}.help{font-size:12px;color:var(--text-2)}.field.err .help{color:var(--bad);font-weight:500}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}.three{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--text-2);flex-wrap:wrap}.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px}
+.overlay{position:absolute;inset:0;background:rgba(16,24,40,.55);display:grid;place-items:center;padding:20px}
+.modal{width:640px;background:var(--bg-surface);border-radius:14px;padding:28px;display:flex;flex-direction:column;gap:16px;box-shadow:0 20px 50px rgba(0,0,0,.3)}.modal h3{margin:0;font-size:20px}.acts{display:flex;justify-content:flex-end;gap:10px}
+/* metodologia */
+.cycle{display:flex;gap:10px}.cycle div{flex:1;border:1px solid var(--border);background:var(--bg-surface);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:4px}
+.cycle b{font-size:13px}.cycle span{font-size:12px;color:var(--text-2)}.cycle .on{border:2px solid var(--primary);background:var(--info-bg)}.cycle .done b::after{content:" ✓";color:var(--ok)}
+/* gantt */
+.gantt{display:flex;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--bg-surface)}
+.gl{width:430px;flex:none;border-right:1px solid var(--border)}.gh{height:48px;background:var(--bg-subtle);display:flex;align-items:flex-end;padding:0 12px 8px;font-size:12px;font-weight:600;color:var(--text-2)}
+.gr1{height:40px;display:flex;align-items:center;gap:8px;padding:0 12px;border-top:1px solid var(--border);font-size:13px}.gr1.ph{background:var(--bg-subtle);font-weight:700}.gr1 .n{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.gr1 small{color:var(--text-2);width:34px;text-align:right}
+.gt{position:relative;flex:1}.gt .wk{position:absolute;top:24px;height:24px;font-size:10px;color:var(--text-2);text-align:center;line-height:24px;border-left:1px solid var(--border)}.gt .mo{position:absolute;top:0;height:24px;font-size:11px;font-weight:700;color:var(--text);padding:5px 6px;border-left:1px solid var(--border);background:var(--bg-subtle)}
+.gt .bg{position:absolute;left:0;right:0;border-top:1px solid var(--border)}.gt .ph{position:absolute;left:0;right:0;background:var(--bg-subtle);opacity:.6}
+.gt .bk{position:absolute;height:6px;border-radius:3px;background:repeating-linear-gradient(90deg,#B9B4A8 0 4px,transparent 4px 7px)}
+.gt .tk{position:absolute;height:18px;border-radius:5px;background:var(--primary);overflow:hidden;box-shadow:0 0 0 1px rgba(0,0,0,.05)}.gt .tk.c{background:var(--accent)}.gt .tk i{display:block;height:100%;background:rgba(0,0,0,.28)}
+.gt .tk.late{outline:2px solid var(--bad)}.gt .ms{position:absolute;width:16px;height:16px;transform:rotate(45deg);background:var(--accent)}
+.gt .today{position:absolute;top:0;bottom:0;width:2px;background:var(--bad)}.gt .today::after{content:"Hoje";position:absolute;top:50px;left:4px;font-size:11px;font-weight:700;color:var(--bad)}
+.gt svg{position:absolute;left:0;top:0;pointer-events:none}
+/* kanban */
+.kb{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}.kc{background:var(--bg-subtle);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px}
+.kc>header{display:flex;justify-content:space-between;align-items:center;gap:8px}.kc>header b{font-size:13px}.kc>header small{color:var(--text-2);font-size:11px}
+.kd{background:var(--bg-surface);border:1px solid var(--border);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px}.kd b{font-size:13px}.kd .tags{display:flex;gap:6px;flex-wrap:wrap}.kd small{color:var(--text-2);font-size:12px}.kd.crit{border-left:4px solid var(--accent)}
+.av{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--primary);color:#fff;font-size:10px;font-weight:700;margin-right:-6px;border:2px solid #fff}
+.kf{display:flex;justify-content:space-between;align-items:center}
+.gr{display:grid;gap:4px;align-items:center;font-size:12px}.gr .h{color:var(--text-2);font-weight:600;text-align:center}.gr .n{font-weight:600;font-size:13px}.gr .c{height:30px;border-radius:6px;display:grid;place-items:center;font-weight:600;font-size:11px;color:#fff}
+.c.R,.c.E{background:var(--primary)}.c.X{background:var(--info)}.c.P,.c.M,.c.A{background:var(--accent)}.c.Z{background:var(--bad-bg);color:var(--bad)}
+.tree td:first-child{white-space:nowrap}
+</style>
+</head>
+<body>
+<div class="doc">
+  <h1>Pilotis · Planejamento de Obras detalhado</h1>
+  <p class="lead">Telas do módulo de Planejamento de Obras com a metodologia de gestão de projetos aplicada à construção: estrutura analítica (EAP), cronograma com dependências e caminho crítico, linha de base, curva S, recursos e kanban com limite de trabalho em andamento. Dados ilustrativos de uma obra residencial.</p>
+  <nav class="toc" id="toc" aria-label="Telas"></nav>
+  <div id="out"></div>
+</div>
+<script>
+const NAVI={'Dashboard':'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>','IA Operacional':'<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/>','Financeiro':'<circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5c0-1 1-1.5 2.5-1.5s2.5.6 2.5 1.7c0 2.3-5 1.3-5 3.8 0 1.1 1 1.7 2.5 1.7s2.5-.6 2.5-1.5"/>','Clientes e Orçamentos':'<circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M16 4.5a3.5 3.5 0 010 7M18 14c2 .6 3 2.4 3 6"/>','Planejamento de Obras':'<path d="M4 21V8l8-5 8 5v13M9 21v-6h6v6"/>','Equipe':'<path d="M3 17h18M5 17a7 7 0 0114 0M12 6v4"/>','POPs':'<rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 3h6v3H9zM9 11h6M9 15h6"/>','Conformidade':'<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/>'};
+const bd=(t,k)=>`<span class="badge ${k||''}">${t}</span>`;
+const cl=c=>{if(typeof c!=='string')return c;const m=/^\{(ok|warn|bad|info|crit|n):(.*)\}$/.exec(c);return m?bd(m[2],m[1]==='n'?'':m[1]):c};
+const tbl=(h,rows,r=[],cls='')=>`<table class="${cls}"><thead><tr>${h.map((x,i)=>`<th${r.includes(i)?' class="num"':''}>${x}</th>`).join('')}</tr></thead><tbody>${rows.map(w=>{const k=w.cls||'';const a=w.cls?w.c:w;return `<tr class="${k}">${a.map((c,i)=>`<td${r.includes(i)?' class="num"':''}>${cl(c)}</td>`).join('')}</tr>`}).join('')}</tbody></table>`;
+const kp=a=>`<div class="kpis">${a.map(([l,v,s])=>`<div class="kpi"><small>${l}</small><b>${v}</b><span>${s}</span></div>`).join('')}</div>`;
+const tb=(l,a)=>`<div class="tabs">${l.map(x=>`<span${x===a?' class="on"':''}>${x}</span>`).join('')}</div>`;
+const sg=(l,a)=>`<div class="seg">${l.map(x=>`<span${x===a?' class="on"':''}>${x}</span>`).join('')}</div>`;
+const cd=(t,b,o={})=>`<div class="card ${o.c||''}">${t?`<header><h3>${t}</h3>${o.r||''}</header>`:''}${b}</div>`;
+const li=(a,b,s)=>`<div class="li${s?' strong':''}"><span>${a}</span><b>${b}</b></div>`;
+const br=(p,c)=>`<div class="bar"><i style="width:${p}%${c?';background:'+c:''}"></i></div>`;
+const rw=(...x)=>`<div class="row">${x.join('')}</div>`;const cc=(...x)=>`<div class="col">${x.join('')}</div>`;
+const nt=(k,t,x)=>`<div class="note ${k}"><b>${t}</b>${x}</div>`;const bt=(t,k='')=>`<button class="btn ${k}">${t}</button>`;
+const fd=(l,v,o={})=>`<div class="field${o.e?' err':''}"><label>${l}</label>${o.t?`<textarea class="input" rows="${o.t}" readonly>${v}</textarea>`:`<input class="input" value="${v}" readonly>`}${o.h?`<span class="help">${o.h}</span>`:''}</div>`;
+const two=(...x)=>`<div class="two">${x.join('')}</div>`;const three=(...x)=>`<div class="three">${x.join('')}</div>`;
+const lg=a=>`<div class="legend">${a.map(([c,t])=>`<span><i style="background:${c}"></i>${t}</span>`).join('')}</div>`;
+const REG=fd('Registrado por','Sócio · responsável administrativo');
+const PT=['Visão geral','EAP','Cronograma','Kanban','Recursos','Riscos e linha de base'];
+const OBRA='Obra A · residência';
+/* ---- dados da obra (ilustrativos) ---- */
+const WKS=18,CW=36,RH=40;
+const DT=['29/09','06/10','13/10','20/10','27/10','03/11','10/11','17/11','24/11','01/12','08/12','15/12','22/12','29/12','05/01','12/01','19/01','26/01'];
+const TK=[
+ {ph:'1 · Fundação, estrutura e cobertura'},
+ {id:'t1',w:'1.2',n:'Cobertura',r:'Equipe de cobertura',s:0,d:5,bs:0,bd:4,p:100,dep:[],c:1,late:1},
+ {ph:'2 · Instalações'},
+ {id:'t2',w:'2.1',n:'Instalações hidráulicas',r:'Hidráulica',s:1,d:4,bs:1,bd:4,p:100,dep:[]},
+ {id:'t3',w:'2.2',n:'Instalações elétricas',r:'Eletricistas',s:1,d:6,bs:1,bd:5,p:90,dep:[]},
+ {ph:'3 · Revestimentos'},
+ {id:'t4',w:'3.1',n:'Revestimento interno',r:'Ladrilheiro e pedreiros',s:5,d:6,bs:4,bd:5,p:40,dep:['t1'],c:1,late:1},
+ {id:'t5',w:'3.2',n:'Revestimento externo',r:'Pedreiros',s:5,d:5,bs:5,bd:5,p:50,dep:['t1']},
+ {ph:'4 · Pintura e acabamentos'},
+ {id:'t6',w:'4.1',n:'Pintura',r:'Pintores',s:11,d:3,bs:10,bd:3,p:0,dep:['t4'],c:1},
+ {id:'t7',w:'4.2',n:'Esquadrias e marcenaria',r:'Terceirizado',s:11,d:3,bs:11,bd:3,p:0,dep:['t4']},
+ {id:'t8',w:'4.3',n:'Acabamentos finais',r:'Pedreiros',s:14,d:2,bs:13,bd:2,p:0,dep:['t6','t7'],c:1},
+ {ph:'5 · Entrega'},
+ {id:'t9',w:'5.1',n:'Limpeza e vistoria final',r:'Equipe geral',s:16,d:1,bs:15,bd:1,p:0,dep:['t8'],c:1},
+ {id:'t10',w:'5.2',n:'Entrega ao cliente',r:'Sócios',s:17,d:0,bs:16,bd:0,p:0,dep:['t9'],c:1,mile:1}];
+const TODAY=7.43;
+function gantt(){
+  const rows=TK.map((t,i)=>({...t,y:i*RH}));const byId={};rows.forEach(r=>{if(r.id)byId[r.id]=r});
+  const H=rows.length*RH;const W=WKS*CW;const top=48;
+  let left=`<div class="gl"><div class="gh">Etapa · responsável</div>${rows.map(t=>t.ph?`<div class="gr1 ph"><span class="n">${t.ph}</span></div>`:`<div class="gr1"><small>${t.w}</small><span class="n">${t.n} · <span style="color:var(--text-2)">${t.r}</span></span>${t.c?bd('Crítica','crit'):''}<small>${t.p}%</small></div>`).join('')}</div>`;
+  let g=`<div class="gt" style="width:${W}px;height:${top+H}px">`;
+  [['Set e out',0,5],['Nov',5,4],['Dez',9,4],['Jan',13,5]].forEach(([m,s,n])=>g+=`<div class="mo" style="left:${s*CW}px;width:${n*CW}px">${m}</div>`);
+  DT.forEach((d,i)=>g+=`<div class="wk" style="left:${i*CW}px;width:${CW}px">${d}</div>`);
+  rows.forEach(r=>{g+=r.ph?`<div class="ph" style="top:${top+r.y}px;height:${RH}px"></div>`:`<div class="bg" style="top:${top+r.y}px"></div>`;});
+  let arrows='';
+  rows.forEach(r=>{if(!r.id)return;const y=top+r.y;
+    if(r.mile){g+=`<div class="ms" style="left:${r.s*CW-8}px;top:${y+10}px"></div>`;}
+    else{g+=`<div class="bk" style="left:${r.bs*CW}px;width:${r.bd*CW}px;top:${y+27}px"></div><div class="tk${r.c?' c':''}${r.late?' late':''}" style="left:${r.s*CW}px;width:${r.d*CW}px;top:${y+6}px"><i style="width:${r.p}%"></i></div>`;}
+    (r.dep||[]).forEach(d=>{const p=byId[d];const x1=(p.s+p.d)*CW,y1=top+p.y+15,x2=r.s*CW,y2=y+15;const crit=p.c&&r.c;
+      const path=x2-x1>=12?`M${x1} ${y1}H${x1+6}V${y2}H${x2-2}`:`M${x1} ${y1}H${x1+6}V${(y1+y2)/2}H${x2-8}V${y2}H${x2-2}`;
+      arrows+=`<path d="${path}" fill="none" stroke="${crit?'#9A6212':'#5B6472'}" stroke-width="1.5" marker-end="url(#ar${crit?'c':'n'})"/>`;});});
+  g+=`<svg width="${W}" height="${top+H}"><defs><marker id="arn" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0 0L6 3L0 6z" fill="#5B6472"/></marker><marker id="arc" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0 0L6 3L0 6z" fill="#9A6212"/></marker></defs>${arrows}</svg>`;
+  g+=`<div class="today" style="left:${TODAY*CW}px"></div></div>`;
+  return `<div class="gantt">${left}<div style="overflow:hidden">${g}</div></div>`;
+}
+function curvaS(){
+  const W=640,H=200,L=40,B=24,pw=W-L-10,ph=H-B-10;const X=i=>L+i*pw/17,Y=v=>10+ph-v*ph/100;
+  const pl=[0,8,18,30,44,58,70,82,89,93,96,98,99,99.5,100,100,100,100];const ac=[0,7,16,28,42,57,70,80,82];
+  const pts=a=>a.map((v,i)=>`${X(i<8?i:TODAY)},${Y(v)}`).join(' ');
+  const ap=ac.slice(0,8).map((v,i)=>`${X(i)},${Y(v)}`).join(' ')+` ${X(TODAY)},${Y(82)}`;
+  let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Curva S: progresso planejado e realizado">`;
+  [0,25,50,75,100].forEach(v=>s+=`<line x1="${L}" x2="${W-10}" y1="${Y(v)}" y2="${Y(v)}" stroke="#E4E1DA"/><text x="${L-6}" y="${Y(v)+4}" font-size="10" text-anchor="end" fill="#5B6472">${v}%</text>`);
+  ['Set','Out','Nov','Dez','Jan'].forEach((m,i)=>s+=`<text x="${X([0,1,5,9,13][i])}" y="${H-6}" font-size="10" fill="#5B6472">${m}</text>`);
+  s+=`<polyline points="${pl.map((v,i)=>`${X(i)},${Y(v)}`).join(' ')}" fill="none" stroke="#9A6212" stroke-width="2" stroke-dasharray="6 4"/><polyline points="${ap}" fill="none" stroke="#1F3A5F" stroke-width="3"/><line x1="${X(TODAY)}" x2="${X(TODAY)}" y1="10" y2="${H-B}" stroke="#B42318" stroke-width="1.5"/><text x="${X(TODAY)+4}" y="22" font-size="10" font-weight="700" fill="#B42318">Hoje</text></svg>`;
+  return s;
+}
+const kd=(n,o={})=>`<div class="kd${o.c?' crit':''}"><b>${n}</b><div class="tags">${(o.tags||[]).join('')}</div>${o.sub?`<small>${o.sub}</small>`:''}${o.p!=null?br(o.p):''}<div class="kf"><span>${(o.av||[]).map(a=>`<span class="av">${a}</span>`).join('')}</span><small>${o.d||''}</small></div></div>`;
+const kc=(t,lim,body)=>`<div class="kc"><header><b>${t}</b><small>${lim}</small></header>${body}</div>`;
+const rg=(heads,rows,txt)=>`<div class="gr" style="grid-template-columns:170px repeat(${heads.length},1fr)"><div></div>${heads.map(h=>`<div class="h">${h}</div>`).join('')}${rows.map(([n,s])=>`<div class="n">${n}</div>${[...s].map(x=>`<div class="c ${x}">${txt[x]}</div>`).join('')}`).join('')}</div>`;
+/* ---- telas ---- */
+const S=[];const add=(id,t,d,c)=>S.push({id,t,d,c});
+const head=(act)=>({a:'Planejamento de Obras',t:'Planejamento · Obra A',s:'Planejamento de Obras › '+OBRA,x:sg(['Obra A','Obra B','Satélite'],'Obra A')+bt('Nova etapa')});
+add('p1','1 · Visão geral do planejamento','Resumo da obra pelo ciclo de gestão de projetos: o que foi planejado, o que foi executado e o que exige decisão.',{...head(),b:tb(PT,'Visão geral')+
+ `<div class="cycle"><div class="done"><b>1 · Iniciação</b><span>Escopo e valor vêm do orçamento confirmado</span></div><div class="done"><b>2 · Planejamento</b><span>EAP, dependências, prazos, responsáveis e linha de base</span></div><div class="on"><b>3 · Execução</b><span>Kanban com limite de trabalho em andamento</span></div><div class="on"><b>4 · Monitoramento</b><span>Curva S, atrasos justificados e replanejamento</span></div><div><b>5 · Encerramento</b><span>Resultado real, garantia e pós-obra</span></div></div>`+
+ kp([['Progresso real','82%','Planejado até hoje: 85%'],['Índice de prazo','0,96','Abaixo de 1: levemente atrasada'],['Folga do caminho crítico','0 dias','Qualquer atraso move a entrega'],['Entrega prevista','26/01/2027','Linha de base: 19/01/2027']])+
+ rw(cd('Curva S · planejado x realizado',curvaS()+lg([['#9A6212','Planejado (linha de base)'],['#1F3A5F','Realizado'],['#B42318','Hoje']]),{c:'g2',r:bd('Realizado 3 p.p. abaixo','warn')}),cd('Próximos marcos',li('Fim do revestimento interno','08/12')+li('Início da pintura','15/12')+li('Acabamentos finais','05/01')+li('Entrega ao cliente','26/01',1)+nt('warn','Atenção ao caminho crítico','Revestimento interno é crítico e já está 1 semana acima do previsto.'),{c:'g1'}))+
+ rw(cd('Progresso por fase (EAP)',`${li('1 · Fundação, estrutura e cobertura','100%')}${br(100)}${li('2 · Instalações','95%')}${br(95)}${li('3 · Revestimentos','45%')}${br(45)}${li('4 · Pintura e acabamentos','0%')}${br(0)}${li('5 · Entrega','0%')}${br(0)}`,{c:'g1'}),cd('Caminho crítico',`<div class="li"><span>1 · Cobertura</span>${bd('Concluída com atraso','warn')}</div><div class="li"><span>2 · Revestimento interno</span>${bd('Em andamento','info')}</div><div class="li"><span>3 · Pintura</span>${bd('A fazer')}</div><div class="li"><span>4 · Acabamentos finais</span>${bd('A fazer')}</div><div class="li"><span>5 · Limpeza e vistoria · Entrega</span>${bd('A fazer')}</div>`,{c:'g1'}))});
+add('p2','2 · EAP · Estrutura analítica da obra','A obra dividida em entregas e pacotes de trabalho, com responsável, duração, custo orçado e POP. A soma dos pacotes fecha o custo orçado da obra.',{...head(),b:tb(PT,'EAP')+cd('Estrutura analítica (EAP)',tbl(['Código','Entrega / pacote de trabalho','Responsável','Duração','Custo orçado','POP','Situação'],[
+ {cls:'ph',c:['1','Fundação, estrutura e cobertura','','','R$ 62.000','','{ok:Concluída}']},
+ ['1.1','Fundação e estrutura','Sócios','—','R$ 40.000','POP estrutura','{ok:Concluída}'],['1.2','Cobertura','Equipe de cobertura','5 sem','R$ 22.000','POP cobertura','{ok:Concluída}'],
+ {cls:'ph',c:['2','Instalações','','','R$ 38.000','','{info:Em andamento}']},
+ ['2.1','Instalações hidráulicas','Hidráulica','4 sem','R$ 16.000','POP hidráulica','{ok:Concluída}'],['2.2','Instalações elétricas','Eletricistas','6 sem','R$ 22.000','POP elétrica','{info:90%}'],
+ {cls:'ph',c:['3','Revestimentos','','','R$ 60.000','','{info:Em andamento}']},
+ ['3.1','Revestimento interno','Ladrilheiro e pedreiros','6 sem','R$ 38.000','POP revestimento','{info:40%}'],['3.2','Revestimento externo','Pedreiros','5 sem','R$ 22.000','POP revestimento','{info:50%}'],
+ {cls:'ph',c:['4','Pintura e acabamentos','','','R$ 58.000','','{n:A fazer}']},
+ ['4.1','Pintura','Pintores','3 sem','R$ 20.000','POP pintura','{n:A fazer}'],['4.2','Esquadrias e marcenaria','Terceirizado','3 sem','R$ 24.000','—','{warn:Aguardando material}'],['4.3','Acabamentos finais','Pedreiros','2 sem','R$ 14.000','POP acabamento','{n:A fazer}'],
+ {cls:'ph',c:['5','Entrega','','','R$ 32.000','','{n:A fazer}']},
+ ['5.1','Limpeza e vistoria final','Equipe geral','1 sem','R$ 12.000','POP vistoria','{n:A fazer}'],['5.2','Reserva de contingência','Sócios','—','R$ 20.000','—','{n:Reservada}'],
+ {cls:'total',c:['','Total orçado da obra','','','R$ 250.000','','']}],[4],'tree'),{r:bt('Editar EAP','sec')})+nt('info','Como a EAP se liga ao resto do sistema','O custo de cada pacote alimenta o orçado x realizado do Financeiro. As pessoas da Equipe são atribuídas aos pacotes, e cada pacote pode ter um POP com checklist de qualidade.')});
+add('p3','3 · Cronograma com dependências e caminho crítico','Cronograma com linha de base (tracejada), progresso, dependências término-início e caminho crítico em bronze. Etapas atrasadas têm contorno vermelho.',{...head(),b:tb(PT,'Cronograma')+cd('Cronograma macro · '+OBRA,gantt()+lg([['#1F3A5F','Etapa'],['#9A6212','Caminho crítico'],['#B9B4A8','Linha de base'],['#B42318','Atrasada (justificativa registrada)']]),{r:sg(['Semanas','Meses'],'Semanas')+bt('Replanejar','sec')})+rw(nt('info','Como ler','Uma seta liga uma etapa à que depende dela. Se uma etapa crítica atrasa, a entrega move junto, porque a folga é zero.'),nt('warn','Revestimento interno · +1 semana','Atraso por material do cliente. A pintura e os acabamentos dependem dela.'))});
+add('p4','4 · Kanban com limite de trabalho em andamento','Colunas por situação real da etapa. O limite de trabalho em andamento evita abrir frentes demais e a coluna “Em conferência” usa o checklist de qualidade do POP.',{...head(),b:tb(PT,'Kanban')+`<div style="display:flex;justify-content:space-between;align-items:center">${sg(['Todas as fases','1 · Estrutura','2 · Instalações','3 · Revestimentos','4 · Pintura'],'Todas as fases')}<div class="legend"><span><i style="background:var(--accent)"></i>Caminho crítico</span><span>${bd('Material do cliente','warn')}</span></div></div>`+`<div class="kb">`+
+ kc('A fazer','Pronta para iniciar',kd('Pintura',{c:1,tags:[bd('3 · Pintura','info'),bd('Crítica','crit')],sub:'Depende de: Revestimento interno',av:['PI'],d:'15/12 · 3 sem'})+kd('Acabamentos finais',{c:1,tags:[bd('4 · Acabamentos','info'),bd('Crítica','crit')],sub:'Depende de: Pintura e Esquadrias',av:['PE'],d:'05/01 · 2 sem'})+kd('Limpeza e vistoria final',{c:1,tags:[bd('5 · Entrega','info')],sub:'Depende de: Acabamentos finais',av:['EG'],d:'19/01 · 1 sem'}))+
+ kc('Em andamento','3 de 4',kd('Revestimento interno',{c:1,tags:[bd('3 · Revestimentos','info'),bd('Crítica','crit'),bd('+1 sem','bad')],p:40,av:['LA','PE'],d:'Fim 08/12'})+kd('Revestimento externo',{tags:[bd('3 · Revestimentos','info')],p:50,av:['PE'],d:'Fim 15/12'})+kd('Instalações elétricas',{tags:[bd('2 · Instalações','info')],p:90,av:['EL'],d:'Fim 24/11'}))+
+ kc('Aguardando','Bloqueadas',kd('Esquadrias e marcenaria',{tags:[bd('4 · Acabamentos','info'),bd('Material do cliente','warn')],sub:'Material previsto para 15/12',av:['TE'],d:'Início 15/12'}))+
+ kc('Em conferência','Checklist do POP',kd('Instalações hidráulicas',{tags:[bd('2 · Instalações','info')],sub:'Checklist de qualidade 3 de 4',p:75,av:['HI'],d:'Conferir até 22/11'}))+
+ kc('Concluída','',kd('Cobertura',{tags:[bd('1 · Estrutura','info'),bd('+1 sem · chuva','warn')],sub:'Justificativa registrada',av:['EC'],d:'Concluída 03/11'})+kd('Fundação e estrutura',{tags:[bd('1 · Estrutura','info')],sub:'Conferida no prazo',av:['SO'],d:'Concluída'}))+`</div>`+nt('soft','Regras do quadro','Mover uma etapa para “Concluída” exige o checklist de qualidade completo. Mover para “Em andamento” é bloqueado se a etapa anterior da dependência não terminou.')});
+add('p5','5 · Recursos e capacidade da obra','Quem está em qual etapa nas próximas semanas. Mostra a pessoa sem etapa, para realocar ou encaixar em obras satélites.',{...head(),b:tb(PT,'Recursos')+rw(cd('Carga da equipe · próximas 8 semanas',rg(['17/11','24/11','01/12','08/12','15/12','22/12','29/12','05/01'],[['Ladrilheiro','RRRRZZZZ'],['Pedreiro 1','RRRRZZZA'],['Pedreiro 2','XXXZZZZA'],['Eletricista','EZZZZZZZ'],['Pintor 1','ZZZZPPPZ'],['Pintor 2','ZZZZPPPZ'],['Marceneiro','ZZZZMMMZ']],{R:'Rev. int.',X:'Rev. ext.',E:'Elétrica',P:'Pintura',M:'Marcen.',A:'Acabam.',Z:'Sem etapa'})+lg([['#1F3A5F','Etapa normal'],['#9A6212','Pintura e acabamentos'],['#FDECEA','Sem etapa']]),{c:'g2'}),cc(cd('Ociosidade prevista',li('Ladrilheiro','A partir de 15/12')+li('Pedreiros','Parcial até 05/01')+li('Eletricista','A partir de 24/11')+nt('info','Sugestão','Encaixar as pessoas sem etapa em obras satélites ou em outra obra.')),bt('Atribuir pessoa a etapa')))});
+add('p6','6 · Riscos, atrasos e linha de base','Registro de atrasos com justificativa, riscos abertos e comparação entre a linha de base e a previsão atual.',{...head(),b:tb(PT,'Riscos e linha de base')+rw(cd('Atrasos e riscos',tbl(['Etapa','Categoria','Descrição','Impacto','Situação'],[['Cobertura','Chuva','Chuvas intensas impediram a concretagem','+1 semana','{ok:Registrado}'],['Revestimento interno','Material do cliente','Atraso na entrega do porcelanato','+1 semana','{warn:Aberto}'],['Esquadrias e marcenaria','Material do cliente','Prazo do fornecedor para 15/12','Risco','{warn:Aberto}'],['Pintura','Dependência','Depende do revestimento interno (crítico)','Risco','{n:Monitorado}']]),{c:'g2'}),cd('Linha de base x previsão',li('Linha de base v1 · aprovada','10/09/2026')+li('Entrega na linha de base','19/01/2027')+li('Entrega prevista hoje','26/01/2027',1)+li('Variação','+1 semana')+nt('info','Linha de base preservada','O plano original nunca é apagado. Ao replanejar, o sistema pede a justificativa e guarda a versão anterior.')+bt('Replanejar e salvar nova linha de base','sec'),{c:'g1'}))});
+add('p7','7 · Nova etapa com dependência inválida','Ao criar uma etapa, o sistema valida dependências, prazo e responsável. Aqui, uma dependência circular é bloqueada.',{...head(),b:tb(PT,'Cronograma')+cd('Cronograma macro · '+OBRA,'<div style="height:340px;background:var(--bg-subtle);border-radius:10px"></div>'),m:`<div class="modal"><h3>Nova etapa</h3>${two(fd('Nome da etapa','Impermeabilização de varanda'),fd('Fase da EAP','4 · Pintura e acabamentos'))}${two(fd('Responsável','Pedreiros'),fd('Duração','2 semanas'))}${fd('Depende de','Pintura · Acabamentos finais',{e:1,h:'Esta dependência cria um ciclo: Pintura depende desta etapa, que depende de Acabamentos finais, que depende de Pintura. Remova uma das ligações.'})}${two(fd('POP vinculado','Impermeabilização v1.3'),fd('Custo orçado','R$ 6.000'))}${REG}${nt('bad','1 campo precisa de correção','Corrija a dependência para salvar a etapa.')}<div class="acts">${bt('Cancelar','sec')}${bt('Salvar etapa').replace('<button','<button disabled')}</div></div>`});
+/* ---- render ---- */
+document.getElementById('toc').innerHTML=S.map(s=>`<a href="#${s.id}">${s.t}</a>`).join('');
+const side=a=>`<aside class="sidebar"><div class="brand"><div class="logo">P</div><div><b>Pilotis</b><small>Soluções Construtivas</small></div></div>${Object.keys(NAVI).map(n=>`<div class="nav${n===a?' on':''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${NAVI[n]}</svg>${n}</div>`).join('')}</aside>`;
+document.getElementById('out').innerHTML=S.map(s=>{const c=s.c;return `<section class="screen-wrap" id="${s.id}"><h2>${s.t}</h2><p>${s.d}</p><div class="scroller"><div class="app">${side(c.a)}<div class="main"><header class="top"><div class="t"><h1>${c.t}</h1><p>${c.s}</p></div><span class="chip">Protótipo · dados ilustrativos</span>${c.x||''}<div class="who"><i>P</i>Pilotis · acesso da empresa</div></header>${c.b}</div>${c.m?`<div class="overlay">${c.m}</div>`:''}</div></div></section>`}).join('');
+</script>
+</body>
+</html>

@@ -1,0 +1,480 @@
+{
+  "entities": {
+    "CompanySettings": {
+      "title": "CompanySettings",
+      "description": "Configurações gerais, identidade visual e parâmetros tributários/encargos da empresa.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "companyName": { "type": "string", "maxLength": 120 },
+        "cnpj": { "type": "string", "maxLength": 24 },
+        "fiscalAddress": { "type": "string", "maxLength": 240 },
+        "city": { "type": "string", "maxLength": 80 },
+        "email": { "type": "string", "maxLength": 120 },
+        "phone": { "type": "string", "maxLength": 40 },
+        "accentColor": { "type": "string", "maxLength": 20 },
+        "logoDataUrl": { "type": "string", "maxLength": 200000 },
+        "pdfShowLogo": { "type": "boolean" },
+        "inssRate": { "type": "number" },
+        "fgtsRate": { "type": "number" },
+        "vacationRate": { "type": "number" },
+        "thirteenthRate": { "type": "number" },
+        "targetMarginPct": { "type": "number" },
+        "taxParamsEffectiveDate": { "type": "string", "maxLength": 20 },
+        "taxParamsSource": { "type": "string", "maxLength": 120 },
+        "createdBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "companyName", "createdBy", "createdAt", "updatedBy", "updatedAt"]
+    },
+    "Client": {
+      "title": "Client",
+      "description": "Cliente ou potencial cliente da construtora.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 140 },
+        "origin": { "type": "string", "maxLength": 80 },
+        "referredBy": { "type": "string", "maxLength": 140 },
+        "city": { "type": "string", "maxLength": 80 },
+        "phone": { "type": "string", "maxLength": 40 },
+        "email": { "type": "string", "maxLength": 120 },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "status": { "type": "string", "enum": ["Potencial", "Ativo", "Em garantia", "Inativo"] },
+        "referralsCount": { "type": "number" },
+        "testimonialStatus": { "type": "string", "maxLength": 60 },
+        "createdBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "name", "origin", "status", "createdBy", "createdAt", "updatedBy", "updatedAt"]
+    },
+    "Quote": {
+      "title": "Quote",
+      "description": "Orçamento comercial com composição de custos, BDI, impostos, versionamento, contrato e aditivos.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "code": { "type": "string", "maxLength": 30 },
+        "clientId": { "type": "string", "maxLength": 128 },
+        "clientName": { "type": "string", "maxLength": 140 },
+        "title": { "type": "string", "maxLength": 160 },
+        "type": { "type": "string", "enum": ["Casa residencial", "Reforma", "Obra satélite"] },
+        "city": { "type": "string", "maxLength": 80 },
+        "areaM2": { "type": "number" },
+        "estimatedMonths": { "type": "number" },
+        "validityDays": { "type": "number" },
+        "description": { "type": "string", "maxLength": 1500 },
+        "origin": { "type": "string", "maxLength": 80 },
+        "laborCost": { "type": "number" },
+        "subcontractCost": { "type": "number" },
+        "equipmentCost": { "type": "number" },
+        "bdiCost": { "type": "number" },
+        "taxCost": { "type": "number" },
+        "totalValue": { "type": "number" },
+        "downPaymentPct": { "type": "number" },
+        "installmentsCount": { "type": "number" },
+        "probabilityPct": { "type": "number" },
+        "status": { "type": "string", "enum": ["Rascunho", "Enviado", "Em negociação", "Ganho", "Perdido", "Descartado"] },
+        "discardReason": { "type": "string", "maxLength": 300 },
+        "lossReason": { "type": "string", "maxLength": 300 },
+        "version": { "type": "string", "maxLength": 20 },
+        "versionHistory": { "type": "array" },
+        "contractSignStatus": { "type": "string", "enum": ["Não gerado", "Aguardando assinatura", "Assinado pelo cliente", "Assinado pelas partes"] },
+        "contractSignedAt": { "type": "string", "maxLength": 20 },
+        "contractAddenda": { "type": "array" },
+        "addendaTotalValue": { "type": "number" },
+        "projectId": { "type": "string", "maxLength": 128 },
+        "createdBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "code", "clientId", "clientName", "title", "type", "totalValue", "status", "createdBy", "createdAt", "updatedBy", "updatedAt"]
+    },
+    "Project": {
+      "title": "Project",
+      "description": "Obra/Contrato central (Principal ou Satélite) gerada pela confirmação de orçamento ou cadastrada diretamente.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 160 },
+        "quoteId": { "type": "string", "maxLength": 128 },
+        "clientId": { "type": "string", "maxLength": 128 },
+        "clientName": { "type": "string", "maxLength": 140 },
+        "type": { "type": "string", "enum": ["Casa residencial", "Reforma", "Obra satélite"] },
+        "contractKind": { "type": "string", "enum": ["Principal", "Satélite"] },
+        "planningStatus": { "type": "string", "enum": ["Aguardando modelo de cronograma", "Cronograma criado"] },
+        "contractValue": { "type": "number" },
+        "downPaymentPct": { "type": "number" },
+        "installmentsCount": { "type": "number" },
+        "addendaTotalValue": { "type": "number" },
+        "budgetedLabor": { "type": "number" },
+        "budgetedSubcontract": { "type": "number" },
+        "budgetedEquipment": { "type": "number" },
+        "budgetedBdi": { "type": "number" },
+        "budgetedTax": { "type": "number" },
+        "startDate": { "type": "string", "maxLength": 20 },
+        "baselineEndDate": { "type": "string", "maxLength": 20 },
+        "forecastEndDate": { "type": "string", "maxLength": 20 },
+        "status": { "type": "string", "enum": ["Contratada", "Em execução", "Concluída"] },
+        "contractSigned": { "type": "boolean" },
+        "warrantyStartDate": { "type": "string", "maxLength": 20 },
+        "createdBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "name", "type", "contractValue", "status", "createdBy", "createdAt", "updatedBy", "updatedAt"]
+    },
+    "Installment": {
+      "title": "Installment",
+      "description": "Parcela de recebimento da obra (entrada ou parcela mensal) gerada atomicamente na confirmação de orçamento.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "projectId": { "type": "string", "maxLength": 128 },
+        "projectName": { "type": "string", "maxLength": 160 },
+        "quoteId": { "type": "string", "maxLength": 128 },
+        "clientId": { "type": "string", "maxLength": 128 },
+        "clientName": { "type": "string", "maxLength": 140 },
+        "number": { "type": "number" },
+        "label": { "type": "string", "maxLength": 40 },
+        "dueDate": { "type": "string", "maxLength": 20 },
+        "amount": { "type": "number" },
+        "status": { "type": "string", "enum": ["A vencer", "Recebida", "Em atraso"] },
+        "invoiceStatus": { "type": "string", "enum": ["Emitida", "A emitir", "Não emitida", "Não se aplica"] },
+        "receivedDate": { "type": "string", "maxLength": 20 },
+        "transactionId": { "type": "string", "maxLength": 128 },
+        "createdBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "projectId", "quoteId", "clientId", "number", "label", "dueDate", "amount", "status", "createdBy", "createdAt", "updatedBy", "updatedAt"]
+    },
+    "ProjectStage": {
+      "title": "ProjectStage",
+      "description": "Etapa da EAP e cronograma da obra com linha de base preservada, dependências e checklist.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "projectId": { "type": "string", "maxLength": 128 },
+        "wbsCode": { "type": "string", "maxLength": 24 },
+        "phase": { "type": "string", "maxLength": 100 },
+        "name": { "type": "string", "maxLength": 140 },
+        "responsible": { "type": "string", "maxLength": 120 },
+        "durationWeeks": { "type": "number" },
+        "startWeek": { "type": "number" },
+        "baselineStartWeek": { "type": "number" },
+        "baselineDurationWeeks": { "type": "number" },
+        "progressPct": { "type": "number" },
+        "budgetedCost": { "type": "number" },
+        "popId": { "type": "string", "maxLength": 128 },
+        "dependsOn": { "type": "array" },
+        "isMilestone": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["A fazer", "Em andamento", "Aguardando material", "Em conferência", "Concluída"] },
+        "materialExpectedDate": { "type": "string", "maxLength": 20 },
+        "delayCategory": { "type": "string", "maxLength": 60 },
+        "delayJustification": { "type": "string", "maxLength": 500 },
+        "checklistCompleted": { "type": "array" },
+        "createdBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "projectId", "wbsCode", "phase", "name", "status", "createdBy", "createdAt", "updatedBy", "updatedAt"]
+    },
+    "DailyLog": {
+      "title": "DailyLog",
+      "description": "Diário de obra com clima, equipe presente, atividades e ocorrências.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "projectId": { "type": "string", "maxLength": 128 },
+        "date": { "type": "string", "maxLength": 20 },
+        "presentCount": { "type": "number" },
+        "weather": { "type": "string", "enum": ["Sol", "Chuva fraca", "Chuva forte"] },
+        "activities": { "type": "string", "maxLength": 1500 },
+        "occurrences": { "type": "string", "maxLength": 1000 },
+        "photoNotes": { "type": "array" },
+        "createdBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "projectId", "date", "weather", "activities", "createdBy", "createdAt", "updatedBy", "updatedAt"]
+    },
+    "FinancialTransaction": {
+      "title": "FinancialTransaction",
+      "description": "Lançamento financeiro (receita, despesa ou empréstimo separado de receita) com previsto/realizado.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "date": { "type": "string", "maxLength": 20 },
+        "dueDate": { "type": "string", "maxLength": 20 },
+        "description": { "type": "string", "maxLength": 200 },
+        "entryKind": { "type": "string", "enum": ["income", "expense", "loan"] },
+        "category": { "type": "string", "maxLength": 60 },
+        "projectId": { "type": "string", "maxLength": 128 },
+        "projectName": { "type": "string", "maxLength": 160 },
+        "amount": { "type": "number" },
+        "isForecast": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["Recebido", "Pago", "A vencer", "Em atraso", "Não é receita"] },
+        "invoiceStatus": { "type": "string", "enum": ["Emitida", "A emitir", "Não emitida", "Não se aplica"] },
+        "paymentMethod": { "type": "string", "maxLength": 60 },
+        "installmentLabel": { "type": "string", "maxLength": 40 },
+        "installmentId": { "type": "string", "maxLength": 128 },
+        "quoteId": { "type": "string", "maxLength": 128 },
+        "debtId": { "type": "string", "maxLength": 128 },
+        "source": { "type": "string", "enum": ["manual", "orcamento", "planilha", "extrato", "folha"] },
+        "createdBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "date", "description", "entryKind", "category", "projectId", "amount", "isForecast", "status", "createdBy", "createdAt", "updatedBy", "updatedAt"]
+    },
+    "Debt": {
+      "title": "Debt",
+      "description": "Dívida, empréstimo, conta garantida ou passivo fiscal/trabalhista.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "creditor": { "type": "string", "maxLength": 140 },
+        "debtType": { "type": "string", "enum": ["Empréstimo bancário", "Conta garantida", "Tributo em atraso", "Encargos trabalhistas", "Outro"] },
+        "principalBalance": { "type": "number" },
+        "monthlyCost": { "type": "number" },
+        "remainingInstallments": { "type": "number" },
+        "nextDueDate": { "type": "string", "maxLength": 20 },
+        "status": { "type": "string", "enum": ["Em dia", "Em uso", "Em atraso", "A parcelar", "Quitada"] },
+        "notes": { "type": "string", "maxLength": 500 },
+        "createdBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "creditor", "debtType", "principalBalance", "status", "createdBy", "createdAt", "updatedBy", "updatedAt"]
+    },
+    "Employee": {
+      "title": "Employee",
+      "description": "Colaborador da equipe com vínculo, remuneração, segurança (ASO/NR) e férias.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 140 },
+        "role": { "type": "string", "maxLength": 80 },
+        "employmentType": { "type": "string", "enum": ["CLT", "Autônomo", "Diarista"] },
+        "baseSalary": { "type": "number" },
+        "paymentMethod": { "type": "string", "maxLength": 60 },
+        "startDate": { "type": "string", "maxLength": 20 },
+        "currentProjectId": { "type": "string", "maxLength": 128 },
+        "currentProjectName": { "type": "string", "maxLength": 160 },
+        "asoExpiry": { "type": "string", "maxLength": 20 },
+        "nr18Expiry": { "type": "string", "maxLength": 20 },
+        "nr35Expiry": { "type": "string", "maxLength": 20 },
+        "epiStatus": { "type": "string", "enum": ["Em dia", "A repor", "Pendente"] },
+        "onboardingStatus": { "type": "string", "enum": ["Concluída", "Em andamento", "Pendente"] },
+        "vacationPeriod": { "type": "string", "maxLength": 60 },
+        "vacationScheduled": { "type": "string", "maxLength": 60 },
+        "occurrencesNote": { "type": "string", "maxLength": 1000 },
+        "createdBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "name", "role", "employmentType", "baseSalary", "createdBy", "createdAt", "updatedBy", "updatedAt"]
+    },
+    "Allocation": {
+      "title": "Allocation",
+      "description": "Alocação semanal de colaborador em obra ou férias.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "employeeId": { "type": "string", "maxLength": 128 },
+        "employeeName": { "type": "string", "maxLength": 140 },
+        "projectId": { "type": "string", "maxLength": 128 },
+        "projectName": { "type": "string", "maxLength": 160 },
+        "weekStart": { "type": "string", "maxLength": 20 },
+        "status": { "type": "string", "enum": ["Obra", "Férias"] },
+        "createdBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "employeeId", "projectId", "weekStart", "status", "createdBy", "createdAt", "updatedBy", "updatedAt"]
+    },
+    "Pop": {
+      "title": "Pop",
+      "description": "Procedimento Operacional Padrão com passos, critérios de aceite e versionamento.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 160 },
+        "serviceType": { "type": "string", "maxLength": 80 },
+        "version": { "type": "string", "maxLength": 20 },
+        "linkedStagePhase": { "type": "string", "maxLength": 80 },
+        "objective": { "type": "string", "maxLength": 1000 },
+        "materialsAndEpi": { "type": "string", "maxLength": 1000 },
+        "steps": { "type": "array" },
+        "acceptanceCriteria": { "type": "array" },
+        "status": { "type": "string", "enum": ["Vigente", "Em revisão"] },
+        "usedInOnboarding": { "type": "boolean" },
+        "createdBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "title", "serviceType", "version", "status", "createdBy", "createdAt", "updatedBy", "updatedAt"]
+    },
+    "ComplianceItem": {
+      "title": "ComplianceItem",
+      "description": "Obrigação fiscal, certidão, documento obrigatório de obra ou item de licitação.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "kind": { "type": "string", "enum": ["Obrigação", "Certidão", "Documento de obra", "Licitação"] },
+        "title": { "type": "string", "maxLength": 160 },
+        "category": { "type": "string", "maxLength": 80 },
+        "projectId": { "type": "string", "maxLength": 128 },
+        "projectName": { "type": "string", "maxLength": 160 },
+        "competence": { "type": "string", "maxLength": 40 },
+        "dueDate": { "type": "string", "maxLength": 20 },
+        "issuedDate": { "type": "string", "maxLength": 20 },
+        "fileName": { "type": "string", "maxLength": 160 },
+        "mandatory": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["Em dia", "Válida", "Anexado", "Vence em breve", "Em atraso", "Pendente", "Parcial"] },
+        "notes": { "type": "string", "maxLength": 500 },
+        "createdBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "kind", "title", "status", "createdBy", "createdAt", "updatedBy", "updatedAt"]
+    },
+    "Tender": {
+      "title": "Tender",
+      "description": "Edital e acompanhamento de licitação.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "agency": { "type": "string", "maxLength": 140 },
+        "objectTitle": { "type": "string", "maxLength": 200 },
+        "openingDate": { "type": "string", "maxLength": 20 },
+        "estimatedValue": { "type": "number" },
+        "status": { "type": "string", "enum": ["Acompanhando", "Em preparo", "Documentos pendentes", "Enviado", "Encerrado"] },
+        "notes": { "type": "string", "maxLength": 500 },
+        "createdBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "agency", "objectTitle", "openingDate", "estimatedValue", "status", "createdBy", "createdAt", "updatedBy", "updatedAt"]
+    },
+    "WarrantyCall": {
+      "title": "WarrantyCall",
+      "description": "Chamado de pós-obra e garantia contratual.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "projectId": { "type": "string", "maxLength": 128 },
+        "projectName": { "type": "string", "maxLength": 160 },
+        "description": { "type": "string", "maxLength": 400 },
+        "openedDate": { "type": "string", "maxLength": 20 },
+        "deadlineDate": { "type": "string", "maxLength": 20 },
+        "cost": { "type": "number" },
+        "status": { "type": "string", "enum": ["Aberto", "Em atendimento", "Resolvido"] },
+        "createdBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "projectId", "projectName", "description", "status", "createdBy", "createdAt", "updatedBy", "updatedAt"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Trilha de auditoria imutável de criações, alterações e exclusões.",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "registeredBy": { "type": "string", "enum": ["Sócio", "Responsável administrativo"] },
+        "action": { "type": "string", "enum": ["Criação", "Atualização", "Exclusão", "Importação"] },
+        "entityType": { "type": "string", "maxLength": 60 },
+        "summary": { "type": "string", "maxLength": 240 },
+        "beforeValue": { "type": "string", "maxLength": 240 },
+        "afterValue": { "type": "string", "maxLength": 240 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerUid", "registeredBy", "action", "entityType", "summary", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/companySettings/{userId}": {
+      "schema": { "$ref": "#/entities/CompanySettings" },
+      "description": "Configurações da empresa vinculadas ao acesso único."
+    },
+    "/clients/{clientId}": {
+      "schema": { "$ref": "#/entities/Client" },
+      "description": "Clientes e potenciais clientes."
+    },
+    "/quotes/{quoteId}": {
+      "schema": { "$ref": "#/entities/Quote" },
+      "description": "Orçamentos e funil comercial."
+    },
+    "/projects/{projectId}": {
+      "schema": { "$ref": "#/entities/Project" },
+      "description": "Obras/Contratos (Principal ou Satélite) contratadas, em execução ou concluídas."
+    },
+    "/parcelas/{installmentId}": {
+      "schema": { "$ref": "#/entities/Installment" },
+      "description": "Parcelas (entrada + saldo) geradas na confirmação do orçamento."
+    },
+    "/stages/{stageId}": {
+      "schema": { "$ref": "#/entities/ProjectStage" },
+      "description": "Etapas da EAP, cronograma e Kanban."
+    },
+    "/dailyLogs/{logId}": {
+      "schema": { "$ref": "#/entities/DailyLog" },
+      "description": "Diário de obra."
+    },
+    "/transactions/{txId}": {
+      "schema": { "$ref": "#/entities/FinancialTransaction" },
+      "description": "Lançamentos financeiros (receitas, despesas e empréstimos separados)."
+    },
+    "/debts/{debtId}": {
+      "schema": { "$ref": "#/entities/Debt" },
+      "description": "Dívidas, empréstimos e conta garantida."
+    },
+    "/employees/{employeeId}": {
+      "schema": { "$ref": "#/entities/Employee" },
+      "description": "Cadastro da equipe e segurança do trabalho."
+    },
+    "/allocations/{allocationId}": {
+      "schema": { "$ref": "#/entities/Allocation" },
+      "description": "Alocação semanal de equipe por obra."
+    },
+    "/pops/{popId}": {
+      "schema": { "$ref": "#/entities/Pop" },
+      "description": "Biblioteca de POPs com versionamento."
+    },
+    "/complianceItems/{itemId}": {
+      "schema": { "$ref": "#/entities/ComplianceItem" },
+      "description": "Obrigações, certidões, documentos de obra e habilitação."
+    },
+    "/tenders/{tenderId}": {
+      "schema": { "$ref": "#/entities/Tender" },
+      "description": "Editais de licitação."
+    },
+    "/warrantyCalls/{callId}": {
+      "schema": { "$ref": "#/entities/WarrantyCall" },
+      "description": "Chamados de pós-obra e garantia."
+    },
+    "/auditLogs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Histórico de auditoria de alterações."
+    }
+  }
+}

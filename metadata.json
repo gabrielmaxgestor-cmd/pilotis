@@ -1,0 +1,6 @@
+{
+  "name": "Sistema de Gestão Pilotis",
+  "description": "Sistema integrado de gestão financeira, orçamentos, planejamento de obras, equipe, POPs e conformidade para construtora de alto padrão em Valença/RJ.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,128 @@
+@import "tailwindcss";
+
+:root {
+  --bg-app: #F6F5F2;
+  --bg-surface: #FFFFFF;
+  --bg-subtle: #F0EEE9;
+  --bg-sidebar: #101828;
+  --bg-sidebar-active: #1D2A44;
+  --text-primary: #14181F;
+  --text-secondary: #5B6472;
+  --text-inverse: #FFFFFF;
+  --text-on-dark-muted: #A8B0BF;
+  --border-default: #E4E1DA;
+  --brand-primary: #1F3A5F;
+  --brand-primary-hover: #182E4C;
+  --brand-accent: #9A6212;
+  --brand-accent-soft: #F6E7CC;
+  --status-success: #1E7F5C;
+  --status-success-bg: #E3F4EC;
+  --status-warning: #8A5200;
+  --status-warning-bg: #FBF1DC;
+  --status-danger: #B42318;
+  --status-danger-bg: #FDECEA;
+  --status-info: #2455A4;
+  --status-info-bg: #E6EEFB;
+  --status-neutral-bg: #ECEAE4;
+  --radius-control: 8px;
+  --radius-card: 12px;
+}
+
+@theme {
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-app: #F6F5F2;
+  --color-surface: #FFFFFF;
+  --color-subtle: #F0EEE9;
+  --color-sidebar: #101828;
+  --color-sidebar-active: #1D2A44;
+  --color-ink: #14181F;
+  --color-ink-secondary: #5B6472;
+  --color-line: #E4E1DA;
+  --color-primary: #1F3A5F;
+  --color-bronze: #9A6212;
+  --color-bronze-soft: #F6E7CC;
+  --color-success: #1E7F5C;
+  --color-success-bg: #E3F4EC;
+  --color-warning: #8A5200;
+  --color-warning-bg: #FBF1DC;
+  --color-danger: #B42318;
+  --color-danger-bg: #FDECEA;
+  --color-info: #2455A4;
+  --color-info-bg: #E6EEFB;
+  --color-neutral-bg: #ECEAE4;
+
+  --radius-control: 8px;
+  --radius-card: 12px;
+}
+
+@layer base {
+  html {
+    font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+
+  body {
+    font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    background-color: var(--bg-app);
+    color: var(--text-primary);
+    font-size: 14px;
+    line-height: 1.45;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--brand-primary);
+    outline-offset: 2px;
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.font-mono-num {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+@keyframes pilotis-sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+.animate-sheet-up {
+  animation: pilotis-sheet-up 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-sheet-up {
+    animation: none;
+  }
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #FFFFFF !important;
+  }
+  .print-sheet {
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+  }
+}

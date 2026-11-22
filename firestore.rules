@@ -1,0 +1,717 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Ponto único de configuração do e-mail autorizado da empresa
+    function companyEmail() {
+      return 'gabrielmaxgestor@gmail.com';
+    }
+
+    function isSignedIn() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email is string
+        && request.auth.token.email.lower() == companyEmail();
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isValidActor(v) {
+      return v is string && v in ['Sócio', 'Responsável administrativo'];
+    }
+
+    function isValidStr(v, maxLen) {
+      return v is string && v.size() <= maxLen;
+    }
+
+    function isValidNonEmptyStr(v, maxLen) {
+      return v is string && v.size() >= 1 && v.size() <= maxLen;
+    }
+
+    function isValidNum(v) {
+      return v is int || v is float;
+    }
+
+    function isValidNonNegNum(v) {
+      return isValidNum(v) && v >= 0;
+    }
+
+    function isValidStringList(arr, maxItems, maxItemLen) {
+      return arr is list && arr.size() <= maxItems && (arr.size() == 0 || (arr[0] is string && arr[0].size() <= maxItemLen));
+    }
+
+    function hasAuditFields(data) {
+      return data.ownerUid == request.auth.uid
+        && isValidId(data.ownerUid)
+        && isValidActor(data.createdBy)
+        && isValidActor(data.updatedBy)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCompanySettings(data) {
+      return data.keys().hasAll(['ownerUid', 'companyName', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+        && data.keys().hasOnly([
+          'ownerUid', 'companyName', 'cnpj', 'fiscalAddress', 'city', 'email', 'phone',
+          'accentColor', 'logoDataUrl', 'pdfShowLogo', 'inssRate', 'fgtsRate', 'vacationRate',
+          'thirteenthRate', 'targetMarginPct', 'taxParamsEffectiveDate', 'taxParamsSource',
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+        ])
+        && hasAuditFields(data)
+        && isValidNonEmptyStr(data.companyName, 120)
+        && (!('cnpj' in data) || isValidStr(data.cnpj, 24))
+        && (!('fiscalAddress' in data) || isValidStr(data.fiscalAddress, 240))
+        && (!('city' in data) || isValidStr(data.city, 80))
+        && (!('email' in data) || isValidStr(data.email, 120))
+        && (!('phone' in data) || isValidStr(data.phone, 40))
+        && (!('accentColor' in data) || isValidStr(data.accentColor, 20))
+        && (!('logoDataUrl' in data) || isValidStr(data.logoDataUrl, 200000))
+        && (!('pdfShowLogo' in data) || data.pdfShowLogo is bool)
+        && (!('inssRate' in data) || isValidNonNegNum(data.inssRate))
+        && (!('fgtsRate' in data) || isValidNonNegNum(data.fgtsRate))
+        && (!('vacationRate' in data) || isValidNonNegNum(data.vacationRate))
+        && (!('thirteenthRate' in data) || isValidNonNegNum(data.thirteenthRate))
+        && (!('targetMarginPct' in data) || (isValidNonNegNum(data.targetMarginPct) && data.targetMarginPct <= 100))
+        && (!('taxParamsEffectiveDate' in data) || isValidStr(data.taxParamsEffectiveDate, 20))
+        && (!('taxParamsSource' in data) || isValidStr(data.taxParamsSource, 120));
+    }
+
+    function isValidClient(data) {
+      return data.keys().hasAll(['ownerUid', 'name', 'origin', 'status', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+        && data.keys().hasOnly([
+          'ownerUid', 'name', 'origin', 'referredBy', 'city', 'phone', 'email', 'notes', 'status',
+          'referralsCount', 'testimonialStatus', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+        ])
+        && hasAuditFields(data)
+        && isValidNonEmptyStr(data.name, 140)
+        && isValidStr(data.origin, 80)
+        && data.status in ['Potencial', 'Ativo', 'Em garantia', 'Inativo']
+        && (!('referredBy' in data) || isValidStr(data.referredBy, 140))
+        && (!('city' in data) || isValidStr(data.city, 80))
+        && (!('phone' in data) || isValidStr(data.phone, 40))
+        && (!('email' in data) || isValidStr(data.email, 120))
+        && (!('notes' in data) || isValidStr(data.notes, 1000))
+        && (!('referralsCount' in data) || isValidNonNegNum(data.referralsCount))
+        && (!('testimonialStatus' in data) || isValidStr(data.testimonialStatus, 60));
+    }
+
+    function isValidQuote(data) {
+      return data.keys().hasAll([
+        'ownerUid', 'code', 'clientId', 'clientName', 'title', 'type', 'totalValue', 'status',
+        'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+      ])
+        && data.keys().hasOnly([
+          'ownerUid', 'code', 'clientId', 'clientName', 'title', 'type', 'city', 'areaM2',
+          'estimatedMonths', 'validityDays', 'description', 'origin', 'laborCost', 'subcontractCost',
+          'equipmentCost', 'bdiCost', 'taxCost', 'totalValue', 'downPaymentPct', 'installmentsCount',
+          'probabilityPct', 'status', 'discardReason', 'lossReason', 'version', 'versionHistory',
+          'contractSignStatus', 'contractSignedAt', 'contractAddenda', 'addendaTotalValue',
+          'projectId', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+        ])
+        && hasAuditFields(data)
+        && isValidNonEmptyStr(data.code, 30)
+        && isValidId(data.clientId)
+        && isValidNonEmptyStr(data.clientName, 140)
+        && isValidNonEmptyStr(data.title, 160)
+        && data.type in ['Casa residencial', 'Reforma', 'Obra satélite']
+        && isValidNonNegNum(data.totalValue)
+        && data.status in ['Rascunho', 'Enviado', 'Em negociação', 'Ganho', 'Perdido', 'Descartado']
+        && (!('city' in data) || isValidStr(data.city, 80))
+        && (!('areaM2' in data) || isValidNonNegNum(data.areaM2))
+        && (!('estimatedMonths' in data) || isValidNonNegNum(data.estimatedMonths))
+        && (!('validityDays' in data) || isValidNonNegNum(data.validityDays))
+        && (!('description' in data) || isValidStr(data.description, 1500))
+        && (!('origin' in data) || isValidStr(data.origin, 80))
+        && (!('laborCost' in data) || isValidNonNegNum(data.laborCost))
+        && (!('subcontractCost' in data) || isValidNonNegNum(data.subcontractCost))
+        && (!('equipmentCost' in data) || isValidNonNegNum(data.equipmentCost))
+        && (!('bdiCost' in data) || isValidNonNegNum(data.bdiCost))
+        && (!('taxCost' in data) || isValidNonNegNum(data.taxCost))
+        && (!('downPaymentPct' in data) || (isValidNonNegNum(data.downPaymentPct) && data.downPaymentPct <= 100))
+        && (!('installmentsCount' in data) || (isValidNonNegNum(data.installmentsCount) && data.installmentsCount <= 36))
+        && (!('probabilityPct' in data) || (isValidNonNegNum(data.probabilityPct) && data.probabilityPct <= 100))
+        && (!('discardReason' in data) || isValidStr(data.discardReason, 300))
+        && (!('lossReason' in data) || isValidStr(data.lossReason, 300))
+        && (!('version' in data) || isValidStr(data.version, 20))
+        && (!('versionHistory' in data) || isValidStringList(data.versionHistory, 30, 400))
+        && (!('contractSignStatus' in data) || data.contractSignStatus in ['Não gerado', 'Aguardando assinatura', 'Assinado pelo cliente', 'Assinado pelas partes'])
+        && (!('contractSignedAt' in data) || isValidStr(data.contractSignedAt, 20))
+        && (!('contractAddenda' in data) || isValidStringList(data.contractAddenda, 30, 400))
+        && (!('addendaTotalValue' in data) || isValidNum(data.addendaTotalValue))
+        && (!('projectId' in data) || isValidStr(data.projectId, 128));
+    }
+
+    function isValidProject(data) {
+      return data.keys().hasAll([
+        'ownerUid', 'name', 'type', 'contractValue', 'status', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+      ])
+        && data.keys().hasOnly([
+          'ownerUid', 'name', 'quoteId', 'clientId', 'clientName', 'type', 'contractKind', 'planningStatus',
+          'contractValue', 'downPaymentPct', 'installmentsCount', 'addendaTotalValue',
+          'budgetedLabor', 'budgetedSubcontract', 'budgetedEquipment', 'budgetedBdi', 'budgetedTax',
+          'startDate', 'baselineEndDate', 'forecastEndDate', 'status', 'contractSigned',
+          'warrantyStartDate', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+        ])
+        && hasAuditFields(data)
+        && isValidNonEmptyStr(data.name, 160)
+        && data.type in ['Casa residencial', 'Reforma', 'Obra satélite']
+        && (!('contractKind' in data) || data.contractKind in ['Principal', 'Satélite'])
+        && (!('planningStatus' in data) || data.planningStatus in ['Aguardando modelo de cronograma', 'Cronograma criado'])
+        && isValidNonNegNum(data.contractValue)
+        && (!('downPaymentPct' in data) || (isValidNonNegNum(data.downPaymentPct) && data.downPaymentPct <= 100))
+        && (!('installmentsCount' in data) || (isValidNonNegNum(data.installmentsCount) && data.installmentsCount <= 36))
+        && (!('addendaTotalValue' in data) || isValidNum(data.addendaTotalValue))
+        && data.status in ['Contratada', 'Em execução', 'Concluída']
+        && (!('quoteId' in data) || isValidStr(data.quoteId, 128))
+        && (!('clientId' in data) || isValidStr(data.clientId, 128))
+        && (!('clientName' in data) || isValidStr(data.clientName, 140))
+        && (!('budgetedLabor' in data) || isValidNonNegNum(data.budgetedLabor))
+        && (!('budgetedSubcontract' in data) || isValidNonNegNum(data.budgetedSubcontract))
+        && (!('budgetedEquipment' in data) || isValidNonNegNum(data.budgetedEquipment))
+        && (!('budgetedBdi' in data) || isValidNonNegNum(data.budgetedBdi))
+        && (!('budgetedTax' in data) || isValidNonNegNum(data.budgetedTax))
+        && (!('startDate' in data) || isValidStr(data.startDate, 20))
+        && (!('baselineEndDate' in data) || isValidStr(data.baselineEndDate, 20))
+        && (!('forecastEndDate' in data) || isValidStr(data.forecastEndDate, 20))
+        && (!('contractSigned' in data) || data.contractSigned is bool)
+        && (!('warrantyStartDate' in data) || isValidStr(data.warrantyStartDate, 20));
+    }
+
+    function isValidInstallment(data) {
+      return data.keys().hasAll([
+        'ownerUid', 'projectId', 'quoteId', 'clientId', 'number', 'label', 'dueDate', 'amount', 'status',
+        'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+      ])
+        && data.keys().hasOnly([
+          'ownerUid', 'projectId', 'projectName', 'quoteId', 'clientId', 'clientName',
+          'number', 'label', 'dueDate', 'amount', 'status', 'invoiceStatus', 'receivedDate',
+          'transactionId', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+        ])
+        && hasAuditFields(data)
+        && isValidId(data.projectId)
+        && isValidId(data.quoteId)
+        && isValidId(data.clientId)
+        && isValidNonNegNum(data.number)
+        && isValidNonEmptyStr(data.label, 40)
+        && isValidNonEmptyStr(data.dueDate, 20)
+        && isValidNonNegNum(data.amount)
+        && data.status in ['A vencer', 'Recebida', 'Em atraso']
+        && (!('projectName' in data) || isValidStr(data.projectName, 160))
+        && (!('clientName' in data) || isValidStr(data.clientName, 140))
+        && (!('invoiceStatus' in data) || data.invoiceStatus in ['Emitida', 'A emitir', 'Não emitida', 'Não se aplica'])
+        && (!('receivedDate' in data) || isValidStr(data.receivedDate, 20))
+        && (!('transactionId' in data) || isValidStr(data.transactionId, 128));
+    }
+
+    function isValidStage(data) {
+      return data.keys().hasAll([
+        'ownerUid', 'projectId', 'wbsCode', 'phase', 'name', 'status', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+      ])
+        && data.keys().hasOnly([
+          'ownerUid', 'projectId', 'wbsCode', 'phase', 'name', 'responsible', 'durationWeeks',
+          'startWeek', 'baselineStartWeek', 'baselineDurationWeeks', 'progressPct', 'budgetedCost',
+          'popId', 'dependsOn', 'isMilestone', 'status', 'materialExpectedDate', 'delayCategory',
+          'delayJustification', 'checklistCompleted', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+        ])
+        && hasAuditFields(data)
+        && isValidId(data.projectId)
+        && isValidNonEmptyStr(data.wbsCode, 24)
+        && isValidNonEmptyStr(data.phase, 100)
+        && isValidNonEmptyStr(data.name, 140)
+        && data.status in ['A fazer', 'Em andamento', 'Aguardando material', 'Em conferência', 'Concluída']
+        && (!('responsible' in data) || isValidStr(data.responsible, 120))
+        && (!('durationWeeks' in data) || isValidNonNegNum(data.durationWeeks))
+        && (!('startWeek' in data) || isValidNonNegNum(data.startWeek))
+        && (!('baselineStartWeek' in data) || isValidNonNegNum(data.baselineStartWeek))
+        && (!('baselineDurationWeeks' in data) || isValidNonNegNum(data.baselineDurationWeeks))
+        && (!('progressPct' in data) || (isValidNonNegNum(data.progressPct) && data.progressPct <= 100))
+        && (!('budgetedCost' in data) || isValidNonNegNum(data.budgetedCost))
+        && (!('popId' in data) || isValidStr(data.popId, 128))
+        && (!('dependsOn' in data) || isValidStringList(data.dependsOn, 10, 128))
+        && (!('isMilestone' in data) || data.isMilestone is bool)
+        && (!('materialExpectedDate' in data) || isValidStr(data.materialExpectedDate, 20))
+        && (!('delayCategory' in data) || isValidStr(data.delayCategory, 60))
+        && (!('delayJustification' in data) || isValidStr(data.delayJustification, 500))
+        && (!('checklistCompleted' in data) || isValidStringList(data.checklistCompleted, 20, 200));
+    }
+
+    function isValidDailyLog(data) {
+      return data.keys().hasAll([
+        'ownerUid', 'projectId', 'date', 'weather', 'activities', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+      ])
+        && data.keys().hasOnly([
+          'ownerUid', 'projectId', 'date', 'presentCount', 'weather', 'activities',
+          'occurrences', 'photoNotes', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+        ])
+        && hasAuditFields(data)
+        && isValidId(data.projectId)
+        && isValidNonEmptyStr(data.date, 20)
+        && data.weather in ['Sol', 'Chuva fraca', 'Chuva forte']
+        && isValidNonEmptyStr(data.activities, 1500)
+        && (!('presentCount' in data) || isValidNonNegNum(data.presentCount))
+        && (!('occurrences' in data) || isValidStr(data.occurrences, 1000))
+        && (!('photoNotes' in data) || isValidStringList(data.photoNotes, 10, 200));
+    }
+
+    function isValidTransaction(data) {
+      return data.keys().hasAll([
+        'ownerUid', 'date', 'description', 'entryKind', 'category', 'projectId', 'amount', 'isForecast', 'status',
+        'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+      ])
+        && data.keys().hasOnly([
+          'ownerUid', 'date', 'dueDate', 'description', 'entryKind', 'category', 'projectId', 'projectName',
+          'amount', 'isForecast', 'status', 'invoiceStatus', 'paymentMethod', 'installmentLabel',
+          'installmentId', 'quoteId', 'debtId', 'source', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+        ])
+        && hasAuditFields(data)
+        && isValidNonEmptyStr(data.date, 20)
+        && isValidNonEmptyStr(data.description, 200)
+        && data.entryKind in ['income', 'expense', 'loan']
+        && !(data.entryKind == 'income' && data.category == 'Empréstimo')
+        && isValidNonEmptyStr(data.category, 60)
+        && isValidNonEmptyStr(data.projectId, 128)
+        && isValidNonNegNum(data.amount)
+        && data.isForecast is bool
+        && data.status in ['Recebido', 'Pago', 'A vencer', 'Em atraso', 'Não é receita']
+        && (!('dueDate' in data) || isValidStr(data.dueDate, 20))
+        && (!('projectName' in data) || isValidStr(data.projectName, 160))
+        && (!('invoiceStatus' in data) || data.invoiceStatus in ['Emitida', 'A emitir', 'Não emitida', 'Não se aplica'])
+        && (!('paymentMethod' in data) || isValidStr(data.paymentMethod, 60))
+        && (!('installmentLabel' in data) || isValidStr(data.installmentLabel, 40))
+        && (!('installmentId' in data) || isValidStr(data.installmentId, 128))
+        && (!('quoteId' in data) || isValidStr(data.quoteId, 128))
+        && (!('debtId' in data) || isValidStr(data.debtId, 128))
+        && (!('source' in data) || data.source in ['manual', 'orcamento', 'planilha', 'extrato', 'folha']);
+    }
+
+    function isValidDebt(data) {
+      return data.keys().hasAll([
+        'ownerUid', 'creditor', 'debtType', 'principalBalance', 'status', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+      ])
+        && data.keys().hasOnly([
+          'ownerUid', 'creditor', 'debtType', 'principalBalance', 'monthlyCost', 'remainingInstallments',
+          'nextDueDate', 'status', 'notes', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+        ])
+        && hasAuditFields(data)
+        && isValidNonEmptyStr(data.creditor, 140)
+        && data.debtType in ['Empréstimo bancário', 'Conta garantida', 'Tributo em atraso', 'Encargos trabalhistas', 'Outro']
+        && isValidNonNegNum(data.principalBalance)
+        && data.status in ['Em dia', 'Em uso', 'Em atraso', 'A parcelar', 'Quitada']
+        && (!('monthlyCost' in data) || isValidNonNegNum(data.monthlyCost))
+        && (!('remainingInstallments' in data) || isValidNonNegNum(data.remainingInstallments))
+        && (!('nextDueDate' in data) || isValidStr(data.nextDueDate, 20))
+        && (!('notes' in data) || isValidStr(data.notes, 500));
+    }
+
+    function isValidEmployee(data) {
+      return data.keys().hasAll([
+        'ownerUid', 'name', 'role', 'employmentType', 'baseSalary', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+      ])
+        && data.keys().hasOnly([
+          'ownerUid', 'name', 'role', 'employmentType', 'baseSalary', 'paymentMethod', 'startDate',
+          'currentProjectId', 'currentProjectName', 'asoExpiry', 'nr18Expiry', 'nr35Expiry',
+          'epiStatus', 'onboardingStatus', 'vacationPeriod', 'vacationScheduled', 'occurrencesNote',
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+        ])
+        && hasAuditFields(data)
+        && isValidNonEmptyStr(data.name, 140)
+        && isValidNonEmptyStr(data.role, 80)
+        && data.employmentType in ['CLT', 'Autônomo', 'Diarista']
+        && isValidNonNegNum(data.baseSalary)
+        && (!('paymentMethod' in data) || isValidStr(data.paymentMethod, 60))
+        && (!('startDate' in data) || isValidStr(data.startDate, 20))
+        && (!('currentProjectId' in data) || isValidStr(data.currentProjectId, 128))
+        && (!('currentProjectName' in data) || isValidStr(data.currentProjectName, 160))
+        && (!('asoExpiry' in data) || isValidStr(data.asoExpiry, 20))
+        && (!('nr18Expiry' in data) || isValidStr(data.nr18Expiry, 20))
+        && (!('nr35Expiry' in data) || isValidStr(data.nr35Expiry, 20))
+        && (!('epiStatus' in data) || data.epiStatus in ['Em dia', 'A repor', 'Pendente'])
+        && (!('onboardingStatus' in data) || data.onboardingStatus in ['Concluída', 'Em andamento', 'Pendente'])
+        && (!('vacationPeriod' in data) || isValidStr(data.vacationPeriod, 60))
+        && (!('vacationScheduled' in data) || isValidStr(data.vacationScheduled, 60))
+        && (!('occurrencesNote' in data) || isValidStr(data.occurrencesNote, 1000));
+    }
+
+    function isValidAllocation(data) {
+      return data.keys().hasAll([
+        'ownerUid', 'employeeId', 'projectId', 'weekStart', 'status', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+      ])
+        && data.keys().hasOnly([
+          'ownerUid', 'employeeId', 'employeeName', 'projectId', 'projectName', 'weekStart', 'status',
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+        ])
+        && hasAuditFields(data)
+        && isValidId(data.employeeId)
+        && isValidNonEmptyStr(data.projectId, 128)
+        && isValidNonEmptyStr(data.weekStart, 20)
+        && data.status in ['Obra', 'Férias']
+        && (!('employeeName' in data) || isValidStr(data.employeeName, 140))
+        && (!('projectName' in data) || isValidStr(data.projectName, 160));
+    }
+
+    function isValidPop(data) {
+      return data.keys().hasAll([
+        'ownerUid', 'title', 'serviceType', 'version', 'status', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+      ])
+        && data.keys().hasOnly([
+          'ownerUid', 'title', 'serviceType', 'version', 'linkedStagePhase', 'objective',
+          'materialsAndEpi', 'steps', 'acceptanceCriteria', 'status', 'usedInOnboarding',
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+        ])
+        && hasAuditFields(data)
+        && isValidNonEmptyStr(data.title, 160)
+        && isValidNonEmptyStr(data.serviceType, 80)
+        && isValidNonEmptyStr(data.version, 20)
+        && data.status in ['Vigente', 'Em revisão']
+        && (!('linkedStagePhase' in data) || isValidStr(data.linkedStagePhase, 80))
+        && (!('objective' in data) || isValidStr(data.objective, 1000))
+        && (!('materialsAndEpi' in data) || isValidStr(data.materialsAndEpi, 1000))
+        && (!('steps' in data) || isValidStringList(data.steps, 20, 300))
+        && (!('acceptanceCriteria' in data) || isValidStringList(data.acceptanceCriteria, 20, 200))
+        && (!('usedInOnboarding' in data) || data.usedInOnboarding is bool);
+    }
+
+    function isValidComplianceItem(data) {
+      return data.keys().hasAll([
+        'ownerUid', 'kind', 'title', 'status', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+      ])
+        && data.keys().hasOnly([
+          'ownerUid', 'kind', 'title', 'category', 'projectId', 'projectName', 'competence',
+          'dueDate', 'issuedDate', 'fileName', 'mandatory', 'status', 'notes',
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+        ])
+        && hasAuditFields(data)
+        && data.kind in ['Obrigação', 'Certidão', 'Documento de obra', 'Licitação']
+        && isValidNonEmptyStr(data.title, 160)
+        && data.status in ['Em dia', 'Válida', 'Anexado', 'Vence em breve', 'Em atraso', 'Pendente', 'Parcial']
+        && (!('category' in data) || isValidStr(data.category, 80))
+        && (!('projectId' in data) || isValidStr(data.projectId, 128))
+        && (!('projectName' in data) || isValidStr(data.projectName, 160))
+        && (!('competence' in data) || isValidStr(data.competence, 40))
+        && (!('dueDate' in data) || isValidStr(data.dueDate, 20))
+        && (!('issuedDate' in data) || isValidStr(data.issuedDate, 20))
+        && (!('fileName' in data) || isValidStr(data.fileName, 160))
+        && (!('mandatory' in data) || data.mandatory is bool)
+        && (!('notes' in data) || isValidStr(data.notes, 500));
+    }
+
+    function isValidTender(data) {
+      return data.keys().hasAll([
+        'ownerUid', 'agency', 'objectTitle', 'openingDate', 'estimatedValue', 'status',
+        'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+      ])
+        && data.keys().hasOnly([
+          'ownerUid', 'agency', 'objectTitle', 'openingDate', 'estimatedValue', 'status', 'notes',
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+        ])
+        && hasAuditFields(data)
+        && isValidNonEmptyStr(data.agency, 140)
+        && isValidNonEmptyStr(data.objectTitle, 200)
+        && isValidNonEmptyStr(data.openingDate, 20)
+        && isValidNonNegNum(data.estimatedValue)
+        && data.status in ['Acompanhando', 'Em preparo', 'Documentos pendentes', 'Enviado', 'Encerrado']
+        && (!('notes' in data) || isValidStr(data.notes, 500));
+    }
+
+    function isValidWarrantyCall(data) {
+      return data.keys().hasAll([
+        'ownerUid', 'projectId', 'projectName', 'description', 'status',
+        'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+      ])
+        && data.keys().hasOnly([
+          'ownerUid', 'projectId', 'projectName', 'description', 'openedDate', 'deadlineDate', 'cost',
+          'status', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+        ])
+        && hasAuditFields(data)
+        && isValidId(data.projectId)
+        && isValidNonEmptyStr(data.projectName, 160)
+        && isValidNonEmptyStr(data.description, 400)
+        && data.status in ['Aberto', 'Em atendimento', 'Resolvido']
+        && (!('openedDate' in data) || isValidStr(data.openedDate, 20))
+        && (!('deadlineDate' in data) || isValidStr(data.deadlineDate, 20))
+        && (!('cost' in data) || isValidNonNegNum(data.cost));
+    }
+
+    function isValidAuditLog(data) {
+      return data.keys().hasAll(['ownerUid', 'registeredBy', 'action', 'entityType', 'summary', 'createdAt'])
+        && data.keys().hasOnly([
+          'ownerUid', 'registeredBy', 'action', 'entityType', 'summary', 'beforeValue', 'afterValue', 'createdAt'
+        ])
+        && data.ownerUid == request.auth.uid
+        && isValidId(data.ownerUid)
+        && isValidActor(data.registeredBy)
+        && data.action in ['Criação', 'Atualização', 'Exclusão', 'Importação']
+        && isValidNonEmptyStr(data.entityType, 60)
+        && isValidNonEmptyStr(data.summary, 240)
+        && data.createdAt is timestamp
+        && (!('beforeValue' in data) || isValidStr(data.beforeValue, 240))
+        && (!('afterValue' in data) || isValidStr(data.afterValue, 240));
+    }
+
+    match /companySettings/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(userId) && isOwner(userId) && isValidCompanySettings(incoming())
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId) && isOwner(userId) && isValidCompanySettings(incoming())
+        && existing().ownerUid == request.auth.uid
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    match /clients/{clientId} {
+      allow get: if isValidId(clientId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(clientId) && isSignedIn() && isValidClient(incoming())
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(clientId) && isSignedIn() && isValidClient(incoming())
+        && existing().ownerUid == request.auth.uid
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(clientId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+    }
+
+    match /quotes/{quoteId} {
+      allow get: if isValidId(quoteId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(quoteId) && isSignedIn() && isValidQuote(incoming())
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/clients/$(incoming().clientId))
+        && get(/databases/$(database)/documents/clients/$(incoming().clientId)).data.ownerUid == request.auth.uid;
+      allow update: if isValidId(quoteId) && isSignedIn() && isValidQuote(incoming())
+        && existing().ownerUid == request.auth.uid
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time
+        && (
+          existing().status != 'Ganho'
+          || (
+            incoming().status == 'Ganho'
+            && incoming().totalValue == existing().totalValue
+            && (!('laborCost' in existing()) || incoming().laborCost == existing().laborCost)
+            && (!('subcontractCost' in existing()) || incoming().subcontractCost == existing().subcontractCost)
+            && (!('equipmentCost' in existing()) || incoming().equipmentCost == existing().equipmentCost)
+            && (!('bdiCost' in existing()) || incoming().bdiCost == existing().bdiCost)
+            && (!('taxCost' in existing()) || incoming().taxCost == existing().taxCost)
+          )
+        );
+      allow delete: if isValidId(quoteId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+    }
+
+    match /projects/{projectId} {
+      allow get: if isValidId(projectId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(projectId) && isSignedIn() && isValidProject(incoming())
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(projectId) && isSignedIn() && isValidProject(incoming())
+        && existing().ownerUid == request.auth.uid
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(projectId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+    }
+
+    match /parcelas/{installmentId} {
+      allow get: if isValidId(installmentId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(installmentId) && isSignedIn() && isValidInstallment(incoming())
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && existsAfter(/databases/$(database)/documents/projects/$(incoming().projectId))
+        && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.ownerUid == request.auth.uid;
+      allow update: if isValidId(installmentId) && isSignedIn() && isValidInstallment(incoming())
+        && existing().ownerUid == request.auth.uid
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().projectId == existing().projectId
+        && incoming().quoteId == existing().quoteId
+        && incoming().clientId == existing().clientId
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(installmentId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+    }
+
+    match /stages/{stageId} {
+      allow get: if isValidId(stageId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(stageId) && isSignedIn() && isValidStage(incoming())
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && existsAfter(/databases/$(database)/documents/projects/$(incoming().projectId))
+        && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.ownerUid == request.auth.uid;
+      allow update: if isValidId(stageId) && isSignedIn() && isValidStage(incoming())
+        && existing().ownerUid == request.auth.uid
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().projectId == existing().projectId
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(stageId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+    }
+
+    match /dailyLogs/{logId} {
+      allow get: if isValidId(logId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(logId) && isSignedIn() && isValidDailyLog(incoming())
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
+        && get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.ownerUid == request.auth.uid;
+      allow update: if isValidId(logId) && isSignedIn() && isValidDailyLog(incoming())
+        && existing().ownerUid == request.auth.uid
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().projectId == existing().projectId
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(logId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+    }
+
+    match /transactions/{txId} {
+      allow get: if isValidId(txId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(txId) && isSignedIn() && isValidTransaction(incoming())
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(txId) && isSignedIn() && isValidTransaction(incoming())
+        && existing().ownerUid == request.auth.uid
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(txId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+    }
+
+    match /debts/{debtId} {
+      allow get: if isValidId(debtId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(debtId) && isSignedIn() && isValidDebt(incoming())
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(debtId) && isSignedIn() && isValidDebt(incoming())
+        && existing().ownerUid == request.auth.uid
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(debtId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+    }
+
+    match /employees/{employeeId} {
+      allow get: if isValidId(employeeId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(employeeId) && isSignedIn() && isValidEmployee(incoming())
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(employeeId) && isSignedIn() && isValidEmployee(incoming())
+        && existing().ownerUid == request.auth.uid
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(employeeId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+    }
+
+    match /allocations/{allocationId} {
+      allow get: if isValidId(allocationId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(allocationId) && isSignedIn() && isValidAllocation(incoming())
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/employees/$(incoming().employeeId))
+        && get(/databases/$(database)/documents/employees/$(incoming().employeeId)).data.ownerUid == request.auth.uid;
+      allow update: if isValidId(allocationId) && isSignedIn() && isValidAllocation(incoming())
+        && existing().ownerUid == request.auth.uid
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().employeeId == existing().employeeId
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(allocationId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+    }
+
+    match /pops/{popId} {
+      allow get: if isValidId(popId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(popId) && isSignedIn() && isValidPop(incoming())
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(popId) && isSignedIn() && isValidPop(incoming())
+        && existing().ownerUid == request.auth.uid
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(popId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+    }
+
+    match /complianceItems/{itemId} {
+      allow get: if isValidId(itemId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(itemId) && isSignedIn() && isValidComplianceItem(incoming())
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(itemId) && isSignedIn() && isValidComplianceItem(incoming())
+        && existing().ownerUid == request.auth.uid
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(itemId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+    }
+
+    match /tenders/{tenderId} {
+      allow get: if isValidId(tenderId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(tenderId) && isSignedIn() && isValidTender(incoming())
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(tenderId) && isSignedIn() && isValidTender(incoming())
+        && existing().ownerUid == request.auth.uid
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(tenderId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+    }
+
+    match /warrantyCalls/{callId} {
+      allow get: if isValidId(callId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(callId) && isSignedIn() && isValidWarrantyCall(incoming())
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
+        && get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.ownerUid == request.auth.uid;
+      allow update: if isValidId(callId) && isSignedIn() && isValidWarrantyCall(incoming())
+        && existing().ownerUid == request.auth.uid
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().projectId == existing().projectId
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(callId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+    }
+
+    match /auditLogs/{logId} {
+      allow get: if isValidId(logId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(logId) && isSignedIn() && isValidAuditLog(incoming())
+        && incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+  }
+}

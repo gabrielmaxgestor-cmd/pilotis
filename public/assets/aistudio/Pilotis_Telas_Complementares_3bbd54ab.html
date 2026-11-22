@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pilotis · Telas complementares do sistema de gestão</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg-app:#F6F5F2;--bg-surface:#FFFFFF;--bg-subtle:#F0EEE9;--bg-sidebar:#101828;--bg-sidebar-active:#1D2A44;
+  --text:#14181F;--text-2:#5B6472;--text-inv:#FFFFFF;--text-dark-muted:#A8B0BF;--border:#E4E1DA;
+  --primary:#1F3A5F;--accent:#9A6212;--accent-soft:#F6E7CC;
+  --ok:#1E7F5C;--ok-bg:#E3F4EC;--warn:#8A5200;--warn-bg:#FBF1DC;--bad:#B42318;--bad-bg:#FDECEA;--info:#2455A4;--info-bg:#E6EEFB;--neutral-bg:#ECEAE4;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:#E9E7E1;color:var(--text);font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;line-height:1.4}
+:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.doc{max-width:1480px;margin:0 auto;padding:32px 20px 80px}
+.doc h1{font-size:28px;margin:0 0 6px}
+.doc .lead{color:var(--text-2);margin:0 0 20px;max-width:70ch}
+.toc{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:36px}
+.toc a{background:var(--bg-surface);border:1px solid var(--border);border-radius:999px;padding:7px 14px;color:var(--primary);font-weight:600;text-decoration:none;font-size:13px}
+.toc a:hover{background:var(--accent-soft)}
+.screen-wrap{margin-bottom:56px}
+.screen-wrap>h2{font-size:18px;margin:0 0 4px}
+.screen-wrap>p{margin:0 0 14px;color:var(--text-2);max-width:80ch}
+.scroller{overflow-x:auto;padding-bottom:10px}
+.app{display:grid;grid-template-columns:248px 1fr;width:1440px;min-height:980px;background:var(--bg-app);border:1px solid var(--border);border-radius:12px;overflow:hidden;position:relative}
+.sidebar{background:var(--bg-sidebar);padding:24px 16px;display:flex;flex-direction:column;gap:4px}
+.brand{display:flex;gap:10px;align-items:center;padding:8px;margin-bottom:16px}
+.brand .logo{width:36px;height:36px;border-radius:8px;background:var(--accent);color:#fff;font-weight:700;font-size:18px;display:grid;place-items:center}
+.brand b{display:block;color:#fff;font-size:16px}.brand small{color:var(--text-dark-muted);font-size:11px}
+.nav{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:8px;color:var(--text-dark-muted);font-weight:500;position:relative}
+.nav.on{background:var(--bg-sidebar-active);color:#fff;font-weight:600}
+.nav.on::before{content:"";position:absolute;left:0;top:50%;width:3px;height:20px;margin-top:-10px;background:var(--accent);border-radius:2px}
+.nav svg{width:20px;height:20px;flex:none}
+.main{padding:24px 32px;display:flex;flex-direction:column;gap:24px;min-width:0}
+.top{display:flex;align-items:center;gap:12px}
+.top .t{flex:1;min-width:0}.top h1{margin:0;font-size:26px}.top p{margin:4px 0 0;color:var(--text-2)}
+.chip{background:var(--accent-soft);color:var(--accent);font-weight:600;font-size:12px;padding:6px 10px;border-radius:999px;white-space:nowrap}
+.who{display:flex;align-items:center;gap:8px;background:var(--bg-surface);border:1px solid var(--border);border-radius:999px;padding:6px 10px;font-weight:500;font-size:13px;white-space:nowrap}
+.who i{width:28px;height:28px;border-radius:50%;background:var(--primary);color:#fff;display:grid;place-items:center;font-style:normal;font-weight:700;font-size:13px}
+.btn{font:inherit;font-weight:600;border-radius:8px;padding:10px 16px;border:1px solid transparent;cursor:pointer;background:var(--primary);color:#fff;white-space:nowrap}
+.btn.sec{background:var(--bg-surface);color:var(--text);border-color:var(--border)}
+.btn.txt{background:none;color:var(--primary);padding:6px 8px}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.btn.full{width:100%}
+.tabs{display:flex;gap:28px;border-bottom:1px solid var(--border)}
+.tabs span{padding:0 0 10px;color:var(--text-2);font-weight:500;border-bottom:3px solid transparent;margin-bottom:-1px}
+.tabs .on{color:var(--primary);font-weight:600;border-color:var(--accent)}
+.row{display:flex;gap:16px}.row>*{min-width:0}
+.g1{flex:1}.g2{flex:2}
+.kpis{display:flex;gap:16px}
+.kpi{flex:1;background:var(--bg-surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px}
+.kpi small{display:block;color:var(--text-2);font-weight:500;font-size:13px}
+.kpi b{display:block;font-size:28px;margin:6px 0}
+.kpi span{color:var(--text-2);font-size:12px}
+.card{background:var(--bg-surface);border:1px solid var(--border);border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:16px}
+.card>header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.card h3{margin:0;font-size:16px}
+.badge{display:inline-block;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:600;white-space:nowrap;background:var(--neutral-bg);color:var(--text-2)}
+.badge.ok{background:var(--ok-bg);color:var(--ok)}.badge.warn{background:var(--warn-bg);color:var(--warn)}.badge.bad{background:var(--bad-bg);color:var(--bad)}.badge.info{background:var(--info-bg);color:var(--info)}
+.seg{display:inline-flex;background:var(--bg-subtle);padding:3px;border-radius:8px;gap:2px}
+.seg span{padding:6px 14px;border-radius:6px;font-weight:600;font-size:13px;color:var(--text-2)}
+.seg .on{background:var(--bg-surface);color:var(--text);border:1px solid var(--border);padding:5px 13px}
+table{width:100%;border-collapse:collapse}
+th{background:var(--bg-subtle);text-align:left;font-size:12px;font-weight:600;color:var(--text-2);padding:8px 12px}
+th:first-child{border-radius:8px 0 0 8px}th:last-child{border-radius:0 8px 8px 0}
+td{padding:12px;border-bottom:1px solid var(--border);color:var(--text-2);font-size:13px}
+td:first-child{color:var(--text);font-weight:500}
+tr.total td{color:var(--text);font-weight:600}
+.num{text-align:right}
+.li{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:3px 0;font-size:13px;color:var(--text-2)}
+.li b{color:var(--text)}.li.strong{color:var(--text)}
+.bar{height:8px;background:var(--bg-subtle);border-radius:4px;overflow:hidden}.bar i{display:block;height:100%;background:var(--primary);border-radius:4px}
+.note{border-radius:10px;padding:14px 16px;font-size:13px}
+.note b{display:block;margin-bottom:2px}
+.note.warn{background:var(--warn-bg);color:var(--warn)}.note.info{background:var(--info-bg);color:var(--info)}.note.soft{background:var(--accent-soft);color:var(--text)}
+.field{display:flex;flex-direction:column;gap:6px}
+.field label{font-weight:600;font-size:13px}
+.input{border:1px solid var(--border);border-radius:8px;padding:11px 14px;background:var(--bg-surface);font:inherit;color:var(--text);width:100%}
+.field.err .input{border-color:var(--bad);box-shadow:0 0 0 3px var(--bad-bg)}
+.help{font-size:12px;color:var(--text-2)}.field.err .help{color:var(--bad);font-weight:500}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--text-2);flex-wrap:wrap}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px}
+.empty{align-items:center;text-align:center;padding:48px 32px;gap:14px}
+.empty h3{font-size:20px}.empty p{margin:0;color:var(--text-2);max-width:56ch}
+.steps{display:flex;flex-direction:column;gap:10px;text-align:left;width:100%;max-width:560px}
+.step{display:flex;gap:12px;align-items:center;border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+.step i{width:24px;height:24px;border-radius:50%;background:var(--bg-subtle);display:grid;place-items:center;font-style:normal;font-weight:700;font-size:12px;color:var(--text-2);flex:none}
+.step span{flex:1;font-weight:500}
+.overlay{position:absolute;inset:0;background:rgba(16,24,40,.55);display:grid;place-items:center}
+.modal{width:560px;background:var(--bg-surface);border-radius:14px;padding:28px;display:flex;flex-direction:column;gap:18px;box-shadow:0 20px 50px rgba(0,0,0,.3)}
+.modal h3{margin:0;font-size:20px}.modal .acts{display:flex;justify-content:flex-end;gap:10px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.avatar{width:56px;height:56px;border-radius:50%;background:var(--primary);color:#fff;font-weight:700;font-size:18px;display:grid;place-items:center;flex:none}
+.phones{display:flex;gap:40px;flex-wrap:wrap}
+.phone{width:390px;height:800px;background:var(--bg-app);border:10px solid #101828;border-radius:36px;overflow:hidden;display:flex;flex-direction:column;position:relative}
+.ph-head{background:var(--primary);color:#fff;padding:18px 18px 14px}
+.ph-head small{color:#C9D4E6;font-size:12px}.ph-head h4{margin:4px 0 0;font-size:18px}
+.ph-body{padding:16px;display:flex;flex-direction:column;gap:14px;overflow:hidden;flex:1}
+.ph-nav{display:flex;justify-content:space-around;border-top:1px solid var(--border);background:var(--bg-surface);padding:10px 0 14px;font-size:11px;color:var(--text-2);font-weight:500}
+.ph-nav .on{color:var(--primary);font-weight:700}
+.pill{display:inline-block;border:1px solid var(--border);background:var(--bg-surface);border-radius:999px;padding:8px 14px;font-weight:600;font-size:13px;color:var(--text-2)}
+.pill.on{background:var(--primary);color:#fff;border-color:var(--primary)}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.photos{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.photos div{aspect-ratio:1;background:var(--bg-subtle);border-radius:8px;display:grid;place-items:center;color:var(--text-2);font-size:11px;border:1px dashed var(--border)}
+.etapa{background:var(--bg-surface);border:1px solid var(--border);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:8px}
+.etapa .h{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}.etapa b{font-size:14px}
+.etapa small{color:var(--text-2)}
+.offline{background:var(--info-bg);color:var(--info);font-weight:600;font-size:12px;padding:8px 12px;border-radius:8px}
+@media print{body{background:#fff}}
+</style>
+</head>
+<body>
+<div class="doc">
+  <h1>Pilotis · Telas complementares do sistema de gestão</h1>
+  <p class="lead">Sete telas que completam o design do sistema: duas visões do Financeiro, o perfil do colaborador, o estado inicial vazio, uma validação de erro e duas telas de uso em campo no celular. Todos os valores e nomes são ilustrativos; o sistema real começa vazio e só mostra dados cadastrados pela empresa.</p>
+  <nav class="toc" aria-label="Telas">
+    <a href="#s10">10 · A receber</a><a href="#s11">11 · DRE por obra</a><a href="#s12">12 · Perfil do colaborador</a><a href="#s13">13 · Estado vazio</a><a href="#s14">14 · Erro de validação</a><a href="#s15">15 · Diário de obra (celular)</a><a href="#s16">16 · Etapas da obra (celular)</a>
+  </nav>
+
+  <!-- 10 · A RECEBER -->
+  <section class="screen-wrap" id="s10">
+    <h2>10 · Financeiro · A receber</h2>
+    <p>As parcelas nascem sozinhas quando um orçamento é confirmado. Cada uma mostra vencimento, nota fiscal e status.</p>
+    <div class="scroller"><div class="app">
+      <aside class="sidebar" data-active="Financeiro"></aside>
+      <div class="main">
+        <header class="top" data-title="Financeiro" data-sub="Contas a receber geradas a partir dos orçamentos confirmados"><button class="btn">Registrar recebimento</button></header>
+        <div class="tabs"><span>Visão geral</span><span class="on">A receber</span><span>A pagar</span><span>Fluxo de caixa</span><span>Dívidas e crédito</span><span>DRE por obra</span></div>
+        <div class="kpis">
+          <div class="kpi"><small>A receber (30 dias)</small><b>R$ 52.800</b><span>9 parcelas</span></div>
+          <div class="kpi"><small>Recebido no mês</small><b>R$ 17.200</b><span>3 parcelas</span></div>
+          <div class="kpi"><small>Em atraso</small><b>R$ 0</b><span>Inadimplência quase nula</span></div>
+          <div class="kpi"><small>Sem nota emitida</small><b>R$ 12.000</b><span>1 parcela</span></div>
+        </div>
+        <div class="row">
+          <div class="card g2"><header><h3>Parcelas</h3><div class="seg"><span>Todas</span><span class="on">A vencer</span><span>Pagas</span><span>Em atraso</span></div></header>
+            <table><thead><tr><th>Obra · cliente</th><th>Parcela</th><th>Vencimento</th><th>Valor</th><th>Nota fiscal</th><th>Status</th></tr></thead><tbody>
+              <tr><td>Obra A · cliente A</td><td>20/24</td><td>02/12</td><td>R$ 5.200</td><td><span class="badge">A emitir</span></td><td><span class="badge">A vencer</span></td></tr>
+              <tr><td>Obra B · cliente B</td><td>5/15</td><td>04/12</td><td>R$ 12.000</td><td><span class="badge bad">Não emitida</span></td><td><span class="badge">A vencer</span></td></tr>
+              <tr><td>Obra C · cliente C</td><td>3/13</td><td>10/12</td><td>R$ 8.400</td><td><span class="badge">A emitir</span></td><td><span class="badge">A vencer</span></td></tr>
+              <tr><td>Obra A · cliente A</td><td>21/24</td><td>02/01</td><td>R$ 5.200</td><td><span class="badge">A emitir</span></td><td><span class="badge">A vencer</span></td></tr>
+              <tr><td>Obra B · cliente B</td><td>6/15</td><td>04/01</td><td>R$ 12.000</td><td><span class="badge">A emitir</span></td><td><span class="badge">A vencer</span></td></tr>
+            </tbody></table>
+          </div>
+          <div class="card g1"><header><h3>Parcelas pagas por obra</h3></header>
+            <div><div class="li"><b>Obra A</b><span>19 de 24</span></div><div class="bar"><i style="width:79%"></i></div></div>
+            <div><div class="li"><b>Obra B</b><span>4 de 15</span></div><div class="bar"><i style="width:27%"></i></div></div>
+            <div><div class="li"><b>Obra C</b><span>2 de 13</span></div><div class="bar"><i style="width:15%"></i></div></div>
+            <p class="help" style="margin:0">As parcelas são geradas automaticamente quando o orçamento é confirmado.</p>
+          </div>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- 11 · DRE POR OBRA -->
+  <section class="screen-wrap" id="s11">
+    <h2>11 · Financeiro · DRE por obra</h2>
+    <p>Compara o que foi orçado com o que foi realizado e mostra a margem real de cada obra.</p>
+    <div class="scroller"><div class="app">
+      <aside class="sidebar" data-active="Financeiro"></aside>
+      <div class="main">
+        <header class="top" data-title="Financeiro" data-sub="Orçado x realizado por obra e margem real"><div class="seg"><span class="on">Obra A</span><span>Obra B</span><span>Obra C</span></div><button class="btn sec">Exportar PDF</button></header>
+        <div class="tabs"><span>Visão geral</span><span>A receber</span><span>A pagar</span><span>Fluxo de caixa</span><span>Dívidas e crédito</span><span class="on">DRE por obra</span></div>
+        <div class="kpis">
+          <div class="kpi"><small>Receita da obra</small><b>R$ 320.000</b><span>Contrato fechado</span></div>
+          <div class="kpi"><small>Custos diretos</small><b>R$ 262.400</b><span>Orçado: R$ 250.000</span></div>
+          <div class="kpi"><small>Margem real</small><b>18,0%</b><span>Prevista: 22,0%</span></div>
+          <div class="kpi"><small>Resultado acumulado</small><b>R$ 57.600</b><span>Até hoje</span></div>
+        </div>
+        <div class="row">
+          <div class="card g2"><header><h3>DRE · Obra A</h3><span class="badge warn">Margem abaixo do previsto</span></header>
+            <table><thead><tr><th>Linha</th><th class="num">Orçado</th><th class="num">Realizado</th><th>Variação</th></tr></thead><tbody>
+              <tr><td>Receita de obra</td><td class="num">R$ 320.000</td><td class="num">R$ 320.000</td><td><span class="badge">0%</span></td></tr>
+              <tr><td>(−) Mão de obra</td><td class="num">R$ 150.000</td><td class="num">R$ 164.000</td><td><span class="badge bad">+9%</span></td></tr>
+              <tr><td>(−) Subempreitadas</td><td class="num">R$ 46.000</td><td class="num">R$ 44.000</td><td><span class="badge ok">−4%</span></td></tr>
+              <tr><td>(−) Equipamentos e EPI</td><td class="num">R$ 22.000</td><td class="num">R$ 24.400</td><td><span class="badge warn">+11%</span></td></tr>
+              <tr><td>(−) Tributos</td><td class="num">R$ 32.000</td><td class="num">R$ 30.000</td><td><span class="badge ok">−6%</span></td></tr>
+              <tr class="total"><td>Margem da obra</td><td class="num">R$ 70.000</td><td class="num">R$ 57.600</td><td><span class="badge bad">−18%</span></td></tr>
+            </tbody></table>
+          </div>
+          <div class="card g1"><header><h3>Orçado x realizado</h3></header>
+            <div><div class="li"><b>Mão de obra</b></div><div class="bar" style="margin-bottom:4px"><i style="width:87%;background:var(--accent-soft)"></i></div><div class="bar"><i style="width:95%;background:var(--bad)"></i></div></div>
+            <div><div class="li"><b>Subempreitadas</b></div><div class="bar" style="margin-bottom:4px"><i style="width:87%;background:var(--accent-soft)"></i></div><div class="bar"><i style="width:83%"></i></div></div>
+            <div><div class="li"><b>Equipamentos</b></div><div class="bar" style="margin-bottom:4px"><i style="width:87%;background:var(--accent-soft)"></i></div><div class="bar"><i style="width:97%;background:var(--bad)"></i></div></div>
+            <div class="legend"><span><i style="background:var(--accent-soft)"></i>Orçado</span><span><i style="background:var(--primary)"></i>Realizado</span><span><i style="background:var(--bad)"></i>Acima do orçado</span></div>
+          </div>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- 12 · PERFIL DO COLABORADOR -->
+  <section class="screen-wrap" id="s12">
+    <h2>12 · Equipe · Perfil do colaborador</h2>
+    <p>Reúne custo, segurança, alocação, férias, histórico em obras e ocorrências de uma pessoa.</p>
+    <div class="scroller"><div class="app">
+      <aside class="sidebar" data-active="Equipe"></aside>
+      <div class="main">
+        <header class="top" data-title="Colaborador 01 · Pedreiro" data-sub="Equipe › Cadastro › Perfil"><button class="btn sec">Editar</button><button class="btn">Registrar ocorrência</button></header>
+        <div class="card" style="flex-direction:row;align-items:center"><div class="avatar">C1</div><div><h3 style="font-size:18px;margin-bottom:8px">Colaborador 01</h3><span class="badge info">CLT</span> <span class="badge">Obra A</span> <span class="badge ok">Segurança em dia</span></div></div>
+        <div class="row">
+          <div class="card g1"><header><h3>Dados e custo</h3></header>
+            <div class="li"><span>Especialidade</span><b>Pedreiro</b></div><div class="li"><span>Vínculo</span><b>CLT</b></div><div class="li"><span>Salário</span><b>R$ 3.200</b></div><div class="li"><span>Encargos e provisões</span><b>R$ 1.240</b></div><div class="li strong"><b>Custo total por mês</b><b>R$ 4.440</b></div><div class="li"><span>Forma de pagamento</span><b>Transferência</b></div>
+          </div>
+          <div class="card g1"><header><h3>Segurança e capacitação</h3></header>
+            <div class="li"><span>ASO</span><span class="badge ok">Válido até 03/2027</span></div><div class="li"><span>NR-18</span><span class="badge ok">Válida até 08/2027</span></div><div class="li"><span>NR-35</span><span class="badge warn">Vence em 45 dias</span></div><div class="li"><span>EPIs entregues</span><span class="badge ok">Atualizado</span></div>
+          </div>
+          <div class="card g1"><header><h3>Alocação e férias</h3></header>
+            <div class="li"><span>Alocação atual</span><b>Obra A · até jan/2027</b></div><div class="li"><span>Próxima alocação</span><b>A definir</b></div><div class="li"><span>Ociosidade prevista</span><b>A partir de fev/2027</b></div><div class="li"><span>Férias</span><b>Programadas · 02/2027</b></div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="card g1"><header><h3>Histórico de atuação em obras</h3></header>
+            <div class="li"><span>Obra A · residência</span><b>Pedreiro · 2026</b></div><div class="li"><span>Obra satélite · reforma</span><b>Acabamento · 2026</b></div><div class="li"><span>Obra D · residência</span><b>Pedreiro · 2025</b></div>
+          </div>
+          <div class="card g1"><header><h3>Ocorrências</h3></header>
+            <div class="li"><span><span class="badge ok">Elogio</span> Acabamento sem retrabalho</span></div><div class="li"><span><span class="badge">Registro</span> Atraso na chegada</span></div><div class="li"><span><span class="badge info">Registro</span> Treinamento concluído: POP de revestimento</span></div>
+          </div>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- 13 · ESTADO VAZIO -->
+  <section class="screen-wrap" id="s13">
+    <h2>13 · Dashboard · Estado inicial vazio</h2>
+    <p>O sistema começa sem dados. Sem registros, os indicadores aparecem como “sem dados” e não como zero ou como estimativa.</p>
+    <div class="scroller"><div class="app">
+      <aside class="sidebar" data-active="Dashboard"></aside>
+      <div class="main">
+        <header class="top" data-title="Dashboard" data-sub="Visão geral da empresa"><button class="btn sec">Importar planilha</button><button class="btn">Novo orçamento</button></header>
+        <div class="kpis">
+          <div class="kpi"><small>Saldo de caixa</small><b style="color:var(--text-2)">Sem dados</b><span>Registre o primeiro lançamento</span></div>
+          <div class="kpi"><small>A receber (30 dias)</small><b style="color:var(--text-2)">Sem dados</b><span>Confirme um orçamento</span></div>
+          <div class="kpi"><small>Resultado do mês</small><b style="color:var(--text-2)">Sem dados</b><span>Depende dos lançamentos</span></div>
+          <div class="kpi"><small>Obras ativas</small><b style="color:var(--text-2)">Sem dados</b><span>Nenhuma obra cadastrada</span></div>
+        </div>
+        <div class="card empty"><h3>Comece cadastrando os dados reais da empresa</h3><p>Nada aqui é de exemplo. Cada indicador será calculado a partir do que você cadastrar ou importar.</p>
+          <div class="steps">
+            <div class="step"><i>1</i><span>Importar a planilha financeira atual</span><button class="btn sec">Importar</button></div>
+            <div class="step"><i>2</i><span>Cadastrar a equipe e os vínculos</span><button class="btn sec">Cadastrar</button></div>
+            <div class="step"><i>3</i><span>Registrar clientes e orçamentos</span><button class="btn sec">Cadastrar</button></div>
+            <div class="step"><i>4</i><span>Confirmar o primeiro orçamento e abrir a obra</span><button class="btn sec" disabled>Aguardando passo 3</button></div>
+          </div>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- 14 · ERRO DE VALIDAÇÃO -->
+  <section class="screen-wrap" id="s14">
+    <h2>14 · Financeiro · Novo lançamento com erro de validação</h2>
+    <p>O sistema impede que um empréstimo entre como receita e exige a obra ou o centro de custo. Cada erro diz o que aconteceu e como corrigir.</p>
+    <div class="scroller"><div class="app">
+      <aside class="sidebar" data-active="Financeiro"></aside>
+      <div class="main">
+        <header class="top" data-title="Financeiro" data-sub="Entradas, saídas, dívidas e previsão de caixa"><button class="btn sec">Importar extrato</button><button class="btn">Novo lançamento</button></header>
+        <div class="tabs"><span class="on">Visão geral</span><span>A receber</span><span>A pagar</span><span>Fluxo de caixa</span><span>Dívidas e crédito</span><span>DRE por obra</span></div>
+        <div class="kpis"><div class="kpi"><small>Entradas do mês</small><b>R$ 63.700</b><span>Realizado + previsto</span></div><div class="kpi"><small>Saídas do mês</small><b>R$ 56.560</b><span>Folha: 54% das despesas</span></div><div class="kpi"><small>Resultado</small><b>R$ 7.140</b><span>Margem média: 14%</span></div><div class="kpi"><small>Sem nota emitida</small><b>R$ 12.000</b><span>Ver Conformidade</span></div></div>
+        <div class="card"><header><h3>Lançamentos recentes</h3></header><table><thead><tr><th>Data</th><th>Descrição</th><th>Tipo</th><th class="num">Valor</th></tr></thead><tbody><tr><td>02/11</td><td>Parcela 19/24 · cliente A</td><td>Receita de obra</td><td class="num">R$ 5.200,00</td></tr><tr><td>10/11</td><td>Folha CLT e encargos</td><td>Folha</td><td class="num">− R$ 18.300,00</td></tr></tbody></table></div>
+      </div>
+      <div class="overlay"><div class="modal" role="dialog" aria-labelledby="m14">
+        <h3 id="m14">Novo lançamento</h3>
+        <div class="two">
+          <div class="field"><label>Descrição</label><input class="input" value="Empréstimo bancário" readonly></div>
+          <div class="field"><label>Valor</label><input class="input" value="R$ 3.700,00" readonly></div>
+        </div>
+        <div class="field err"><label>Classificar como</label><input class="input" value="Receita de obra" readonly aria-invalid="true"><span class="help">Empréstimo não pode entrar como receita, porque aumentaria o faturamento. Escolha “Empréstimo” para registrar como dívida.</span></div>
+        <div class="field err"><label>Obra ou centro de custo</label><input class="input" value="Selecione uma opção" readonly aria-invalid="true"><span class="help">Escolha a obra ou “Empresa” para continuar.</span></div>
+        <div class="note warn"><b>2 campos precisam de correção</b>Corrija os campos marcados para salvar o lançamento.</div>
+        <div class="acts"><button class="btn sec">Cancelar</button><button class="btn" disabled>Salvar lançamento</button></div>
+      </div></div>
+    </div></div>
+  </section>
+
+  <!-- 15/16 · MOBILE -->
+  <section class="screen-wrap" id="s15">
+    <h2>15 e 16 · Uso em campo no celular</h2>
+    <p>Telas para o registro do dia a dia na obra. Funcionam com internet instável: os registros ficam salvos no aparelho e sincronizam quando houver conexão.</p>
+    <div class="phones">
+      <div class="phone" id="s15p">
+        <div class="ph-head"><small>Obra A · residência</small><h4>Diário de obra</h4></div>
+        <div class="ph-body">
+          <div class="offline">Sem conexão · salvo no aparelho, sincroniza depois</div>
+          <div class="field"><label>Data</label><input class="input" value="20/11/2026" readonly></div>
+          <div class="field"><label>Equipe presente</label><div class="chips"><span class="pill on">9 pessoas</span><span class="pill">Alterar</span></div></div>
+          <div class="field"><label>Clima</label><div class="chips"><span class="pill">Sol</span><span class="pill on">Chuva fraca</span><span class="pill">Chuva forte</span></div></div>
+          <div class="field"><label>Atividades do dia</label><textarea class="input" rows="3" readonly>Revestimento da área de serviço e instalações elétricas do pavimento superior.</textarea></div>
+          <div class="field"><label>Fotos</label><div class="photos"><div>Foto 1</div><div>Foto 2</div><div>+ Adicionar</div></div></div>
+          <button class="btn full">Salvar registro do dia</button>
+        </div>
+        <nav class="ph-nav"><span>Início</span><span class="on">Diário</span><span>Etapas</span><span>Equipe</span></nav>
+      </div>
+      <div class="phone" id="s16p">
+        <div class="ph-head"><small>Obra A · residência</small><h4>Etapas da obra</h4></div>
+        <div class="ph-body">
+          <div class="chips"><span class="pill on">Todas</span><span class="pill">Em andamento</span><span class="pill">Aguardando</span></div>
+          <div class="etapa"><div class="h"><b>Revestimentos</b><span class="badge info">Em andamento</span></div><small>Ladrilheiro · fim previsto 15/12</small><div class="bar"><i style="width:60%"></i></div><button class="btn sec">Registrar progresso</button></div>
+          <div class="etapa"><div class="h"><b>Pintura</b><span class="badge warn">Aguardando material</span></div><small>Material do cliente · prometido para 28/11</small><button class="btn sec">Atualizar data do material</button></div>
+          <div class="etapa"><div class="h"><b>Cobertura</b><span class="badge ok">Concluída</span></div><small>2 dias de atraso · justificativa: chuva</small></div>
+          <div class="etapa"><div class="h"><b>Instalações elétricas</b><span class="badge info">Em andamento</span></div><small>Eletricistas · 90%</small><div class="bar"><i style="width:90%"></i></div><button class="btn full">Marcar como concluída</button></div>
+        </div>
+        <nav class="ph-nav"><span>Início</span><span>Diário</span><span class="on">Etapas</span><span>Equipe</span></nav>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+const icons={
+ 'Dashboard':'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
+ 'IA Operacional':'<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/>',
+ 'Financeiro':'<circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5c0-1 1-1.5 2.5-1.5s2.5.6 2.5 1.7c0 2.3-5 1.3-5 3.8 0 1.1 1 1.7 2.5 1.7s2.5-.6 2.5-1.5"/>',
+ 'Clientes e Orçamentos':'<circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M16 4.5a3.5 3.5 0 010 7M18 14c2 .6 3 2.4 3 6"/>',
+ 'Planejamento de Obras':'<path d="M4 21V8l8-5 8 5v13M9 21v-6h6v6"/>',
+ 'Equipe':'<path d="M3 17h18M5 17a7 7 0 0114 0M12 6v4"/>',
+ 'POPs':'<rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 3h6v3H9zM9 11h6M9 15h6"/>',
+ 'Conformidade':'<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/>'
+};
+document.querySelectorAll('.sidebar').forEach(s=>{
+  const a=s.dataset.active;
+  s.innerHTML='<div class="brand"><div class="logo">P</div><div><b>Pilotis</b><small>Soluções Construtivas</small></div></div>'+
+  Object.keys(icons).map(n=>`<div class="nav${n===a?' on':''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${icons[n]}</svg>${n}</div>`).join('');
+});
+document.querySelectorAll('.top').forEach(t=>{
+  const acts=t.innerHTML;
+  t.innerHTML=`<div class="t"><h1>${t.dataset.title}</h1><p>${t.dataset.sub}</p></div><span class="chip">Protótipo · dados ilustrativos</span>${acts}<div class="who"><i>P</i>Pilotis · acesso da empresa</div>`;
+});
+</script>
+</body>
+</html>
