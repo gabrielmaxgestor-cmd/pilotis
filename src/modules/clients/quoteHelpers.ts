@@ -1,5 +1,7 @@
-import { formatBRL, formatDateBR } from '../../utils/formatters';
+import { formatBRL, formatDateBR as domainFormatDateBR } from '../../domain';
 import type { ActorRole } from '../../types/pilotis';
+
+const formatDateBR = (val: string | null | undefined) => domainFormatDateBR(val, '—');
 
 export interface ParsedQuoteVersion {
   version: string;

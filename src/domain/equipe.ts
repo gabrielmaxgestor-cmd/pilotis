@@ -1,4 +1,4 @@
-import { isValidISODate, roundCents } from './formatters';
+import { diffDaysISO, formatDateBR, isValidISODate, roundCents } from './formatters';
 import type { ColaboradorRecord, TaxChargeParameters } from './types';
 
 export interface EncargosColaboradorResult {
@@ -124,8 +124,12 @@ export interface ResumoFolhaEquipe {
   totalColaboradores: number;
   cltCount: number;
   outrosCount: number;
+  recorrentesNaoCltCount: number;
   configurado: boolean;
   rotuloStatus: string;
+  cltSalarioBase: number;
+  outrosSalarioBase: number;
+  cltCustoTotal: number | null;
   folhaBase: number;
   encargosMensais: number | null;
   provisoesMensais: number | null;
@@ -142,8 +146,12 @@ export function resumoFolhaEquipe(
       totalColaboradores: 0,
       cltCount: 0,
       outrosCount: 0,
+      recorrentesNaoCltCount: 0,
       configurado: isParametrosEncargosVigente(parametros, dataReferencia),
       rotuloStatus: 'Sem dados',
+      cltSalarioBase: 0,
+      outrosSalarioBase: 0,
+      cltCustoTotal: 0,
       folhaBase: 0,
       encargosMensais: 0,
       provisoesMensais: 0,
@@ -153,6 +161,9 @@ export function resumoFolhaEquipe(
 
   let cltCount = 0;
   let outrosCount = 0;
+  let recorrentesNaoCltCount = 0;
+  let cltSalarioBase = 0;
+  let outrosSalarioBase = 0;
   let folhaBase = 0;
   let encargosSum = 0;
   let provisoesSum = 0;
@@ -161,8 +172,16 @@ export function resumoFolhaEquipe(
   for (const colab of colaboradores) {
     const res = calcularEncargos(colab, parametros, dataReferencia);
     folhaBase += res.salarioBase;
-    if (colab.vinculo === 'CLT') cltCount++;
-    else outrosCount++;
+    if (colab.vinculo === 'CLT') {
+      cltCount++;
+      cltSalarioBase += res.salarioBase;
+    } else {
+      outrosCount++;
+      outrosSalarioBase += res.salarioBase;
+      if (colab.vinculo === 'Autônomo' && res.salarioBase > 0) {
+        recorrentesNaoCltCount++;
+      }
+    }
 
     if (res.status === 'nao_configurado') {
       hasUnconfiguredClt = true;
@@ -177,8 +196,12 @@ export function resumoFolhaEquipe(
       totalColaboradores: colaboradores.length,
       cltCount,
       outrosCount,
+      recorrentesNaoCltCount,
       configurado: false,
       rotuloStatus: 'não configurado',
+      cltSalarioBase: roundCents(cltSalarioBase),
+      outrosSalarioBase: roundCents(outrosSalarioBase),
+      cltCustoTotal: null,
       folhaBase: roundCents(folhaBase),
       encargosMensais: null,
       provisoesMensais: null,
@@ -188,16 +211,65 @@ export function resumoFolhaEquipe(
 
   const encargosMensais = roundCents(encargosSum);
   const provisoesMensais = roundCents(provisoesSum);
+  const cltBaseRounded = roundCents(cltSalarioBase);
 
   return {
     totalColaboradores: colaboradores.length,
     cltCount,
     outrosCount,
+    recorrentesNaoCltCount,
     configurado: true,
     rotuloStatus: 'Configurado',
+    cltSalarioBase: cltBaseRounded,
+    outrosSalarioBase: roundCents(outrosSalarioBase),
+    cltCustoTotal: roundCents(cltBaseRounded + encargosMensais + provisoesMensais),
     folhaBase: roundCents(folhaBase),
     encargosMensais,
     provisoesMensais,
     custoTotalMensal: roundCents(folhaBase + encargosMensais + provisoesMensais),
   };
+}
+
+export interface StatusValidadeSst {
+  label: string;
+  expiredOrSoon: boolean;
+}
+
+export function avaliarValidadeSst(
+  dateStr: string | undefined,
+  dataReferencia: string,
+): StatusValidadeSst {
+  if (!dateStr || !dateStr.trim()) {
+    return { label: 'Não informado', expiredOrSoon: false };
+  }
+  const days = diffDaysISO(dateStr.trim().slice(0, 10), dataReferencia);
+  if (days === null) {
+    return { label: formatDateBR(dateStr), expiredOrSoon: false };
+  }
+  if (days < 0) {
+    return { label: 'Vencido', expiredOrSoon: true };
+  }
+  if (days <= 45) {
+    return { label: `Vence em ${days}d`, expiredOrSoon: true };
+  }
+  return { label: formatDateBR(dateStr), expiredOrSoon: false };
+}
+
+export function contarPendenciasSegurancaEquipe(
+  colaboradores: Array<
+    Pick<
+      ColaboradorRecord,
+      'asoValidade' | 'nr18Validade' | 'nr35Validade' | 'statusEpi'
+    >
+  >,
+  dataReferencia: string,
+): number {
+  let count = 0;
+  for (const colab of colaboradores) {
+    if (avaliarValidadeSst(colab.asoValidade, dataReferencia).expiredOrSoon) count++;
+    if (avaliarValidadeSst(colab.nr18Validade, dataReferencia).expiredOrSoon) count++;
+    if (avaliarValidadeSst(colab.nr35Validade, dataReferencia).expiredOrSoon) count++;
+    if (colab.statusEpi !== 'Em dia') count++;
+  }
+  return count;
 }

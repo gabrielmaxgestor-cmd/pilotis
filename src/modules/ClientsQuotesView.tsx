@@ -21,9 +21,18 @@ import {
 import { useToast } from '../components/ui/Toast';
 import {
   avaliarMargemContraMeta,
+  calcularProntidaoLicitacao,
+  calcularProntidaoLicitacaoPorCategoria,
+  calcularResumoFolhaEquipe,
+  calcularResumoFunilOrcamentos,
+  clampStr,
   composicaoOrcamento,
+  formatBRL,
+  formatBRLCompact,
+  formatDateBR as domainFormatDateBR,
   simularPagamentoOrcamento,
-} from '../domain/orcamentos';
+  todayISO,
+} from '../domain';
 import { createRecord, updateRecord } from '../services/pilotisService';
 import type {
   ActorRole,
@@ -37,17 +46,8 @@ import type {
   WarrantyCall,
   WarrantyStatus,
 } from '../types/pilotis';
-import {
-  computeTeamPayrollSummary,
-  computeTenderReadinessPct,
-} from '../utils/calculations';
-import {
-  clampStr,
-  formatBRL,
-  formatBRLCompact,
-  formatDateBR,
-  todayISO,
-} from '../utils/formatters';
+
+const formatDateBR = (val: string | null | undefined) => domainFormatDateBR(val, '—');
 import { ConfirmQuoteModal } from './clients/ConfirmQuoteModal';
 import { ContractModal } from './clients/ContractModal';
 import { QuoteEditorModal } from './clients/QuoteEditorModal';
@@ -195,33 +195,18 @@ export function ClientsQuotesView({
     [data.quotes]
   );
 
-  const funnelTotal = useMemo(
-    () => openQuotes.reduce((s, q) => s + q.totalValue, 0),
-    [openQuotes]
-  );
-
-  const weightedFunnel = useMemo(
-    () =>
-      openQuotes.reduce(
-        (s, q) => s + q.totalValue * ((q.probabilityPct || 0) / 100),
-        0
-      ),
-    [openQuotes]
-  );
-
-  const closedQuotes = useMemo(
-    () => data.quotes.filter((q) => q.status === 'Ganho' || q.status === 'Perdido'),
+  const funnelSummary = useMemo(
+    () => calcularResumoFunilOrcamentos(data.quotes),
     [data.quotes]
   );
+  const funnelTotal = funnelSummary.valorFunil;
+  const weightedFunnel = funnelSummary.previsaoPonderada;
+  const closedQuotesCount = funnelSummary.fechadosCount;
   const wonQuotes = useMemo(
     () => data.quotes.filter((q) => q.status === 'Ganho'),
     [data.quotes]
   );
-
-  const conversionRate =
-    closedQuotes.length > 0
-      ? Math.round((wonQuotes.length / closedQuotes.length) * 100)
-      : null;
+  const conversionRate = funnelSummary.taxaConversaoPct;
 
   const { topOrigin, digitalOriginSummary } = useMemo(() => {
     const counts = new Map<string, number>();
@@ -248,42 +233,17 @@ export function ClientsQuotesView({
     [data.clients, selectedClientId]
   );
 
-  const payrollMonthly = useMemo(
-    () => computeTeamPayrollSummary(data.employees, data.settings).totalMonthlyCost,
-    [data.employees, data.settings]
+  const payrollMonthly = useMemo(() => {
+    const res = calcularResumoFolhaEquipe(data.employees, data.settings);
+    return res.custoTotalMensal ?? res.folhaBase;
+  }, [data.employees, data.settings]);
+
+  const tenderReadiness = calcularProntidaoLicitacao(data.complianceItems);
+
+  const tenderReadinessByCategory = useMemo(
+    () => calcularProntidaoLicitacaoPorCategoria(data.complianceItems),
+    [data.complianceItems]
   );
-
-  const tenderReadiness = computeTenderReadinessPct(data.complianceItems);
-
-  const tenderReadinessByCategory = useMemo(() => {
-    const tenderItems = data.complianceItems.filter((c) => c.kind === 'Licitação');
-    if (tenderItems.length === 0) return [];
-    const grouped = new Map<string, { total: number; ready: number }>();
-    for (const item of tenderItems) {
-      const cat = item.category || 'Documentação geral';
-      const entry = grouped.get(cat) || { total: 0, ready: 0 };
-      entry.total += 1;
-      if (
-        item.status === 'Em dia' ||
-        item.status === 'Válida' ||
-        item.status === 'Anexado'
-      ) {
-        entry.ready += 1;
-      }
-      grouped.set(cat, entry);
-    }
-    return [...grouped.entries()].map(([category, counts]) => {
-      const pct = Math.round((counts.ready / counts.total) * 100);
-      return {
-        category,
-        pct,
-        ready: counts.ready,
-        total: counts.total,
-        statusLabel:
-          pct === 100 ? 'Em dia' : pct === 0 ? 'Pendente' : 'Parcial',
-      };
-    });
-  }, [data.complianceItems]);
 
   const filteredQuotes = useMemo(
     () =>
@@ -1083,7 +1043,7 @@ export function ClientsQuotesView({
             <KpiCard
               label="Taxa de conversão"
               value={conversionRate !== null ? `${conversionRate}%` : 'Sem dados'}
-              subtext={`${wonQuotes.length} ganho(s) de ${closedQuotes.length} encerrado(s)`}
+              subtext={`${wonQuotes.length} ganho(s) de ${closedQuotesCount} encerrado(s)`}
               isEmpty={conversionRate === null}
             />
             <KpiCard
@@ -1898,11 +1858,11 @@ export function ClientsQuotesView({
             ) : (
               <div className="flex flex-col gap-3 pt-1">
                 {tenderReadinessByCategory.map((cat) => (
-                  <div key={cat.category} className="flex flex-col gap-1">
+                  <div key={cat.categoria} className="flex flex-col gap-1">
                     <div className="flex items-center justify-between text-xs">
-                      <span className="font-medium text-[#14181F]">{cat.category}</span>
+                      <span className="font-medium text-[#14181F]">{cat.categoria}</span>
                       <span className="text-[#5B6472] tabular-nums">
-                        {cat.statusLabel} ({cat.ready}/{cat.total})
+                        {cat.statusRotulo} ({cat.prontos}/{cat.total})
                       </span>
                     </div>
                     <ProgressBar

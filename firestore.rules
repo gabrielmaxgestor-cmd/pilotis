@@ -18,8 +18,9 @@ service cloud.firestore {
     }
 
     // Ponto único de configuração do e-mail autorizado da empresa
+    // Deve coincidir exatamente com COMPANY_EMAIL / VITE_COMPANY_EMAIL em src/config/companyAuth.ts
     function companyEmail() {
-      return 'gabrielmaxgestor@gmail.com';
+      return 'empresa@pilotis.com.br';
     }
 
     function isSignedIn() {
@@ -212,7 +213,7 @@ service cloud.firestore {
         && isValidNonEmptyStr(data.label, 40)
         && isValidNonEmptyStr(data.dueDate, 20)
         && isValidNonNegNum(data.amount)
-        && data.status in ['A vencer', 'Recebida', 'Em atraso']
+        && data.status in ['A vencer', 'Recebida']
         && (!('projectName' in data) || isValidStr(data.projectName, 160))
         && (!('clientName' in data) || isValidStr(data.clientName, 140))
         && (!('invoiceStatus' in data) || data.invoiceStatus in ['Emitida', 'A emitir', 'Não emitida', 'Não se aplica'])
@@ -277,7 +278,7 @@ service cloud.firestore {
       ])
         && data.keys().hasOnly([
           'ownerUid', 'date', 'dueDate', 'description', 'entryKind', 'category', 'projectId', 'projectName',
-          'amount', 'isForecast', 'status', 'invoiceStatus', 'paymentMethod', 'installmentLabel',
+          'amount', 'isForecast', 'status', 'invoiceStatus', 'paymentMethod', 'receiptRef', 'installmentLabel',
           'installmentId', 'quoteId', 'debtId', 'source', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
         ])
         && hasAuditFields(data)
@@ -289,11 +290,12 @@ service cloud.firestore {
         && isValidNonEmptyStr(data.projectId, 128)
         && isValidNonNegNum(data.amount)
         && data.isForecast is bool
-        && data.status in ['Recebido', 'Pago', 'A vencer', 'Em atraso', 'Não é receita']
+        && data.status in ['Recebido', 'Pago', 'A vencer', 'Não é receita']
         && (!('dueDate' in data) || isValidStr(data.dueDate, 20))
         && (!('projectName' in data) || isValidStr(data.projectName, 160))
         && (!('invoiceStatus' in data) || data.invoiceStatus in ['Emitida', 'A emitir', 'Não emitida', 'Não se aplica'])
         && (!('paymentMethod' in data) || isValidStr(data.paymentMethod, 60))
+        && (!('receiptRef' in data) || isValidStr(data.receiptRef, 160))
         && (!('installmentLabel' in data) || isValidStr(data.installmentLabel, 40))
         && (!('installmentId' in data) || isValidStr(data.installmentId, 128))
         && (!('quoteId' in data) || isValidStr(data.quoteId, 128))
@@ -313,7 +315,7 @@ service cloud.firestore {
         && isValidNonEmptyStr(data.creditor, 140)
         && data.debtType in ['Empréstimo bancário', 'Conta garantida', 'Tributo em atraso', 'Encargos trabalhistas', 'Outro']
         && isValidNonNegNum(data.principalBalance)
-        && data.status in ['Em dia', 'Em uso', 'Em atraso', 'A parcelar', 'Quitada']
+        && data.status in ['Em dia', 'Em uso', 'A parcelar', 'Quitada']
         && (!('monthlyCost' in data) || isValidNonNegNum(data.monthlyCost))
         && (!('remainingInstallments' in data) || isValidNonNegNum(data.remainingInstallments))
         && (!('nextDueDate' in data) || isValidStr(data.nextDueDate, 20))
@@ -400,7 +402,7 @@ service cloud.firestore {
         && hasAuditFields(data)
         && data.kind in ['Obrigação', 'Certidão', 'Documento de obra', 'Licitação']
         && isValidNonEmptyStr(data.title, 160)
-        && data.status in ['Em dia', 'Válida', 'Anexado', 'Vence em breve', 'Em atraso', 'Pendente', 'Parcial']
+        && data.status in ['Em dia', 'Válida', 'Anexado', 'Vence em breve', 'Pendente', 'Parcial']
         && (!('category' in data) || isValidStr(data.category, 80))
         && (!('projectId' in data) || isValidStr(data.projectId, 128))
         && (!('projectName' in data) || isValidStr(data.projectName, 160))

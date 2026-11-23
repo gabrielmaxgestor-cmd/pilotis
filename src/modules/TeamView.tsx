@@ -23,18 +23,22 @@ import type {
   OnboardingStatus,
   PilotisDataState,
 } from '../types/pilotis';
-import { computeTeamPayrollSummary } from '../utils/calculations';
 import {
   addDaysISO,
+  avaliarValidadeSst,
+  calcularEncargosColaborador,
+  calcularPendenciasSegurancaEquipe,
+  calcularResumoFolhaEquipe,
   clampStr,
-  diffDaysFromToday,
   formatBRL,
-  formatDateBR,
+  formatDateBR as domainFormatDateBR,
   formatShortDateBR,
   monthKey,
   parseCurrencyInput,
   todayISO,
-} from '../utils/formatters';
+} from '../domain';
+
+const formatDateBR = (val: string | null | undefined) => domainFormatDateBR(val, '—');
 
 const TEAM_TABS = [
   'Cadastro',
@@ -58,15 +62,6 @@ function getNext8Mondays(): string[] {
     weeks.push(`${y}-${m}-${dd}`);
   }
   return weeks;
-}
-
-function getSafetyBadge(dateStr: string): { label: string; expiredOrSoon: boolean } {
-  if (!dateStr) return { label: 'Não informado', expiredOrSoon: false };
-  const days = diffDaysFromToday(dateStr);
-  if (days === null) return { label: formatDateBR(dateStr), expiredOrSoon: false };
-  if (days < 0) return { label: 'Vencido', expiredOrSoon: true };
-  if (days <= 45) return { label: `Vence em ${days}d`, expiredOrSoon: true };
-  return { label: formatDateBR(dateStr), expiredOrSoon: false };
 }
 
 export function TeamView({
@@ -149,7 +144,11 @@ export function TeamView({
   // Send payroll actor
   const [payrollActor, setPayrollActor] = useState<ActorRole>('Responsável administrativo');
 
-  const payroll = computeTeamPayrollSummary(data.employees, data.settings);
+  const todayStr = todayISO();
+  const payroll = useMemo(
+    () => calcularResumoFolhaEquipe(data.employees, data.settings, todayStr),
+    [data.employees, data.settings, todayStr]
+  );
 
   const selectedEmployee = data.employees.find((e) => e.id === selectedEmployeeId) || null;
 
@@ -158,16 +157,10 @@ export function TeamView({
     return e.employmentType === filterType;
   });
 
-  const expiringTrainingCount = useMemo(() => {
-    let count = 0;
-    for (const e of data.employees) {
-      if (getSafetyBadge(e.asoExpiry).expiredOrSoon) count++;
-      if (getSafetyBadge(e.nr18Expiry).expiredOrSoon) count++;
-      if (getSafetyBadge(e.nr35Expiry).expiredOrSoon) count++;
-      if (e.epiStatus !== 'Em dia') count++;
-    }
-    return count;
-  }, [data.employees]);
+  const expiringTrainingCount = useMemo(
+    () => calcularPendenciasSegurancaEquipe(data.employees, todayStr),
+    [data.employees, todayStr]
+  );
 
   const unallocatedEmployeesCount = useMemo(() => {
     if (data.employees.length === 0) return null;
@@ -455,7 +448,8 @@ export function TeamView({
 
   async function handleSendPayrollToFinance(e: React.FormEvent) {
     e.preventDefault();
-    if (payroll.totalMonthlyCost <= 0) return;
+    if (payroll.custoTotalMensal === null || payroll.custoTotalMensal <= 0) return;
+    const totalAmount = payroll.custoTotalMensal;
     setSaving(true);
     try {
       const today = todayISO();
@@ -466,12 +460,12 @@ export function TeamView({
         {
           date: today,
           dueDate: today,
-          description: clampStr(`Folha e encargos (${payroll.totalHeadcount} pessoas)`, 200),
+          description: clampStr(`Folha e encargos (${payroll.totalColaboradores} pessoas)`, 200),
           entryKind: 'expense',
           category: 'Folha',
           projectId: 'Empresa',
           projectName: 'Empresa',
-          amount: Math.round(payroll.totalMonthlyCost * 100) / 100,
+          amount: Math.round(totalAmount * 100) / 100,
           isForecast: false,
           status: 'Pago',
           invoiceStatus: 'Não se aplica',
@@ -481,13 +475,13 @@ export function TeamView({
           debtId: '',
           source: 'folha',
         },
-        `Folha do mês enviada ao Financeiro: ${formatBRL(payroll.totalMonthlyCost)}`
+        `Folha do mês enviada ao Financeiro: ${formatBRL(totalAmount)}`
       );
       setPayrollModalOpen(false);
       setFeedback({
         tone: 'ok',
         title: 'Folha enviada ao Financeiro',
-        text: `Lançamento de ${formatBRL(payroll.totalMonthlyCost)} criado em Contas pagas.`,
+        text: `Lançamento de ${formatBRL(totalAmount)} criado em Contas pagas.`,
       });
     } finally {
       setSaving(false);
@@ -497,18 +491,10 @@ export function TeamView({
   // Collaborator Profile View
   if (selectedEmployee) {
     const isClt = selectedEmployee.employmentType === 'CLT';
-    const chargesRate = isClt
-      ? ((data.settings?.inssRate ?? 0) +
-          (data.settings?.fgtsRate ?? 0) +
-          (data.settings?.vacationRate ?? 0) +
-          (data.settings?.thirteenthRate ?? 0)) /
-        100
-      : 0;
-    const chargesValue = selectedEmployee.baseSalary * chargesRate;
-    const totalEmpCost = selectedEmployee.baseSalary + chargesValue;
-    const asoStatus = getSafetyBadge(selectedEmployee.asoExpiry);
-    const nr18Status = getSafetyBadge(selectedEmployee.nr18Expiry);
-    const nr35Status = getSafetyBadge(selectedEmployee.nr35Expiry);
+    const empCharges = calcularEncargosColaborador(selectedEmployee, data.settings, todayStr);
+    const asoStatus = avaliarValidadeSst(selectedEmployee.asoExpiry, todayStr);
+    const nr18Status = avaliarValidadeSst(selectedEmployee.nr18Expiry, todayStr);
+    const nr35Status = avaliarValidadeSst(selectedEmployee.nr35Expiry, todayStr);
     const initials = selectedEmployee.name
       .split(' ')
       .filter(Boolean)
@@ -601,12 +587,20 @@ export function TeamView({
             <div className="flex justify-between text-[13px] py-1 border-b border-[#E4E1DA]">
               <span className="text-[#5B6472]">Encargos e provisões</span>
               <strong className="text-[#14181F] tabular-nums">
-                {isClt ? formatBRL(chargesValue) : 'Não se aplica'}
+                {!empCharges.aplicavel
+                  ? 'Não se aplica'
+                  : empCharges.status === 'nao_configurado'
+                  ? 'não configurado'
+                  : formatBRL((empCharges.encargosMensais ?? 0) + (empCharges.provisoesMensais ?? 0))}
               </strong>
             </div>
             <div className="flex justify-between text-[13px] py-1 border-b border-[#E4E1DA]">
               <strong className="text-[#14181F]">Custo total por mês</strong>
-              <strong className="text-[#1F3A5F] tabular-nums">{formatBRL(totalEmpCost)}</strong>
+              <strong className="text-[#1F3A5F] tabular-nums">
+                {empCharges.custoTotalMensal !== null
+                  ? formatBRL(empCharges.custoTotalMensal)
+                  : 'não configurado'}
+              </strong>
             </div>
             <div className="flex justify-between text-[13px] py-1">
               <span className="text-[#5B6472]">Forma de pagamento</span>
@@ -1008,17 +1002,23 @@ export function TeamView({
           value={data.employees.length > 0 ? String(data.employees.length) : 'Sem dados'}
           subtext={
             data.employees.length > 0
-              ? `${payroll.cltCount} CLT · ${payroll.otherCount} autônomos/diaristas`
+              ? `${payroll.cltCount} CLT · ${payroll.outrosCount} autônomos/diaristas`
               : 'Cadastre os colaboradores'
           }
           isEmpty={data.employees.length === 0}
         />
         <KpiCard
           label="Custo da folha (mês)"
-          value={data.employees.length > 0 ? formatBRL(payroll.totalMonthlyCost) : 'Sem dados'}
+          value={
+            data.employees.length === 0
+              ? 'Sem dados'
+              : payroll.custoTotalMensal !== null
+              ? formatBRL(payroll.custoTotalMensal)
+              : 'Não configurado'
+          }
           subtext={
             data.employees.length > 0
-              ? payroll.paramsConfigured
+              ? payroll.configurado
                 ? 'Salários + encargos e provisões'
                 : 'Configure as alíquotas em Folha e encargos'
               : 'Calculado pelos vínculos'
@@ -1076,9 +1076,9 @@ export function TeamView({
                   <tbody>
                     {filteredEmployees.map((emp) => {
                       const hasIssue =
-                        getSafetyBadge(emp.asoExpiry).expiredOrSoon ||
-                        getSafetyBadge(emp.nr18Expiry).expiredOrSoon ||
-                        getSafetyBadge(emp.nr35Expiry).expiredOrSoon ||
+                        avaliarValidadeSst(emp.asoExpiry, todayStr).expiredOrSoon ||
+                        avaliarValidadeSst(emp.nr18Expiry, todayStr).expiredOrSoon ||
+                        avaliarValidadeSst(emp.nr35Expiry, todayStr).expiredOrSoon ||
                         emp.epiStatus !== 'Em dia';
                       return (
                         <tr
@@ -1317,7 +1317,9 @@ export function TeamView({
                   <div className="flex justify-between text-[13px] py-1">
                     <span className="text-[#5B6472]">Provisão mensal calculada</span>
                     <strong className="text-[#14181F] tabular-nums">
-                      {payroll.paramsConfigured ? formatBRL(payroll.provisionsTotal) : 'Configure parâmetros'}
+                      {payroll.provisoesMensais !== null
+                        ? formatBRL(payroll.provisoesMensais)
+                        : 'não configurado'}
                     </strong>
                   </div>
                 </section>
@@ -1371,9 +1373,9 @@ export function TeamView({
                     </thead>
                     <tbody>
                       {data.employees.map((emp) => {
-                        const aso = getSafetyBadge(emp.asoExpiry);
-                        const nr18 = getSafetyBadge(emp.nr18Expiry);
-                        const nr35 = getSafetyBadge(emp.nr35Expiry);
+                        const aso = avaliarValidadeSst(emp.asoExpiry, todayStr);
+                        const nr18 = avaliarValidadeSst(emp.nr18Expiry, todayStr);
+                        const nr35 = avaliarValidadeSst(emp.nr35Expiry, todayStr);
                         return (
                           <tr key={emp.id} className="border-b border-[#E4E1DA] text-[13px]">
                             <td className="py-3 px-3 font-medium text-[#14181F]">{emp.name}</td>
@@ -1404,7 +1406,7 @@ export function TeamView({
                     <div key={emp.id} className="border border-[#E4E1DA] rounded-xl p-4 flex flex-col gap-2">
                       <strong className="text-sm text-[#14181F]">{emp.name}</strong>
                       <div className="flex flex-wrap gap-1.5">
-                        <StatusBadge label={`ASO: ${getSafetyBadge(emp.asoExpiry).label}`} />
+                        <StatusBadge label={`ASO: ${avaliarValidadeSst(emp.asoExpiry, todayStr).label}`} />
                         <StatusBadge label={`EPI: ${emp.epiStatus || 'Pendente'}`} />
                         <StatusBadge label={`Integração: ${emp.onboardingStatus || 'Pendente'}`} />
                       </div>
@@ -1422,9 +1424,9 @@ export function TeamView({
                   <div>
                     <h2 className="text-base font-semibold text-[#14181F]">Folha calculada do mês</h2>
                     <p className="text-xs text-[#5B6472]">
-                      {payroll.paramsConfigured
+                      {payroll.configurado
                         ? `Alíquotas vigentes desde ${formatDateBR(data.settings?.taxParamsEffectiveDate)} (${data.settings?.taxParamsSource || 'Configurado'})`
-                        : 'Configure as alíquotas validadas com o contador em “Parâmetros de encargos”.'}
+                        : 'Configure as alíquotas e vigência validadas com o contador em “Parâmetros de encargos”.'}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -1434,7 +1436,7 @@ export function TeamView({
                     <button
                       type="button"
                       onClick={() => setPayrollModalOpen(true)}
-                      disabled={payroll.totalMonthlyCost <= 0}
+                      disabled={payroll.custoTotalMensal === null || payroll.custoTotalMensal <= 0}
                       className="px-4 py-2 rounded-lg bg-[#1F3A5F] text-white text-xs font-semibold hover:bg-[#182E4C] cursor-pointer disabled:opacity-50"
                     >
                       Enviar folha do mês ao Financeiro
@@ -1459,56 +1461,54 @@ export function TeamView({
                           CLT ({payroll.cltCount})
                         </td>
                         <td className="py-3 px-3 text-right tabular-nums">
-                          {formatBRL(
-                            data.employees
-                              .filter((e) => e.employmentType === 'CLT')
-                              .reduce((s, e) => s + e.baseSalary, 0)
-                          )}
+                          {formatBRL(payroll.cltSalarioBase)}
                         </td>
                         <td className="py-3 px-3 text-right tabular-nums">
-                          {formatBRL(payroll.chargesTotal)}
+                          {payroll.encargosMensais !== null
+                            ? formatBRL(payroll.encargosMensais)
+                            : 'não configurado'}
                         </td>
                         <td className="py-3 px-3 text-right tabular-nums">
-                          {formatBRL(payroll.provisionsTotal)}
+                          {payroll.provisoesMensais !== null
+                            ? formatBRL(payroll.provisoesMensais)
+                            : 'não configurado'}
                         </td>
                         <td className="py-3 px-3 text-right font-semibold text-[#14181F] tabular-nums">
-                          {formatBRL(
-                            data.employees
-                              .filter((e) => e.employmentType === 'CLT')
-                              .reduce((s, e) => s + e.baseSalary, 0) +
-                              payroll.chargesTotal +
-                              payroll.provisionsTotal
-                          )}
+                          {payroll.cltCustoTotal !== null
+                            ? formatBRL(payroll.cltCustoTotal)
+                            : 'não configurado'}
                         </td>
                       </tr>
                       <tr className="border-b border-[#E4E1DA] text-[13px]">
                         <td className="py-3 px-3 font-medium text-[#14181F]">
-                          Autônomos e diaristas ({payroll.otherCount})
+                          Autônomos e diaristas ({payroll.outrosCount})
                         </td>
                         <td className="py-3 px-3 text-right tabular-nums">
-                          {formatBRL(
-                            data.employees
-                              .filter((e) => e.employmentType !== 'CLT')
-                              .reduce((s, e) => s + e.baseSalary, 0)
-                          )}
+                          {formatBRL(payroll.outrosSalarioBase)}
                         </td>
                         <td className="py-3 px-3 text-right text-[#5B6472]">—</td>
                         <td className="py-3 px-3 text-right text-[#5B6472]">—</td>
                         <td className="py-3 px-3 text-right font-semibold text-[#14181F] tabular-nums">
-                          {formatBRL(
-                            data.employees
-                              .filter((e) => e.employmentType !== 'CLT')
-                              .reduce((s, e) => s + e.baseSalary, 0)
-                          )}
+                          {formatBRL(payroll.outrosSalarioBase)}
                         </td>
                       </tr>
                       <tr className="text-[13px] font-bold bg-[#F6F5F2]">
                         <td className="py-3 px-3 text-[#14181F]">Total mensal</td>
-                        <td className="py-3 px-3 text-right tabular-nums">{formatBRL(payroll.basePayroll)}</td>
-                        <td className="py-3 px-3 text-right tabular-nums">{formatBRL(payroll.chargesTotal)}</td>
-                        <td className="py-3 px-3 text-right tabular-nums">{formatBRL(payroll.provisionsTotal)}</td>
+                        <td className="py-3 px-3 text-right tabular-nums">{formatBRL(payroll.folhaBase)}</td>
+                        <td className="py-3 px-3 text-right tabular-nums">
+                          {payroll.encargosMensais !== null
+                            ? formatBRL(payroll.encargosMensais)
+                            : 'não configurado'}
+                        </td>
+                        <td className="py-3 px-3 text-right tabular-nums">
+                          {payroll.provisoesMensais !== null
+                            ? formatBRL(payroll.provisoesMensais)
+                            : 'não configurado'}
+                        </td>
                         <td className="py-3 px-3 text-right text-[#1F3A5F] tabular-nums">
-                          {formatBRL(payroll.totalMonthlyCost)}
+                          {payroll.custoTotalMensal !== null
+                            ? formatBRL(payroll.custoTotalMensal)
+                            : 'não configurado'}
                         </td>
                       </tr>
                     </tbody>
@@ -1520,9 +1520,9 @@ export function TeamView({
                 <AlertNote tone="info" title="Parâmetros validados com o contador">
                   Alíquotas e regras por vínculo ficam parametrizadas com data de vigência e fonte, nunca fixas no código.
                 </AlertNote>
-                {payroll.recurringNonCltCount > 0 && (
+                {payroll.recorrentesNaoCltCount > 0 && (
                   <AlertNote tone="warn" title="Atenção a vínculos autônomos recorrentes">
-                    {payroll.recurringNonCltCount} autônomo(s) possuem valor mensal recorrente cadastrado. Avalie o enquadramento com contador ou advogado.
+                    {payroll.recorrentesNaoCltCount} autônomo(s) possuem valor mensal recorrente cadastrado. Avalie o enquadramento com contador ou advogado.
                   </AlertNote>
                 )}
               </div>
@@ -1948,7 +1948,13 @@ export function TeamView({
       >
         <form onSubmit={handleSendPayrollToFinance} className="flex flex-col gap-4">
           <AlertNote tone="info" title="Lançamento integrado">
-            Será registrada uma saída de <strong>{formatBRL(payroll.totalMonthlyCost)}</strong> na categoria <strong>Folha</strong> para {payroll.totalHeadcount} colaborador(es).
+            Será registrada uma saída de{' '}
+            <strong>
+              {payroll.custoTotalMensal !== null
+                ? formatBRL(payroll.custoTotalMensal)
+                : 'não configurado'}
+            </strong>{' '}
+            na categoria <strong>Folha</strong> para {payroll.totalColaboradores} colaborador(es).
           </AlertNote>
           <RegisteredBySelect value={payrollActor} onChange={setPayrollActor} id="pay-actor" />
           <div className="flex justify-end gap-2 pt-2">

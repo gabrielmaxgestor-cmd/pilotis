@@ -6,16 +6,22 @@ import {
   SegmentedControl,
   StatusBadge,
 } from '../components/ui/PilotisUI';
-import type { ModuleKey, PilotisDataState } from '../types/pilotis';
 import {
-  computeCashFlowProjection,
-  computeDashboardMetrics,
-  computeDebtSummary,
-  computeProjectDre,
-  computeSystemAlerts,
-  computeTeamPayrollSummary,
-  computeTenderReadinessPct,
-} from '../utils/calculations';
+  calcularAlertasSistema,
+  calcularDreObra,
+  calcularIndicadoresDashboard,
+  calcularPrevisaoCaixa,
+  calcularProntidaoLicitacao,
+  calcularResumoDividas,
+  calcularResumoFolhaEquipe,
+  classifyAiQuestionTopics,
+  deduplicarReceitasEParcelas,
+  sanitizeAiContextSnapshot,
+  toDomainInstallments,
+  toDomainTransactions,
+} from '../domain';
+import { auth } from '../lib/firebase';
+import type { ModuleKey, PilotisDataState } from '../types/pilotis';
 
 interface ChatMessage {
   id: string;
@@ -47,29 +53,52 @@ export function OperationalAiView({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
 
-  const alerts = computeSystemAlerts(data);
+  const alerts = calcularAlertasSistema(data);
 
-  function buildContextSnapshot() {
-    const metrics = computeDashboardMetrics(data);
-    const projection = computeCashFlowProjection(data, 5);
-    const payroll = computeTeamPayrollSummary(data.employees, data.settings);
-    const debtSummary = computeDebtSummary(data.debts);
+  function buildContextSnapshot(questionText: string, isWeeklySummary: boolean) {
+    const topics = classifyAiQuestionTopics(questionText, isWeeklySummary);
+    const raw: Record<string, unknown> = {};
 
-    return {
-      resumoExecutivo: metrics,
-      fluxoCaixaProjetado5Meses: projection,
-      folhaEquipe: payroll,
-      dividasResumo: debtSummary,
-      obras: data.projects.map((p) => ({
+    if (
+      topics.has('finance_summary') ||
+      topics.has('cashflow') ||
+      topics.has('projects') ||
+      topics.has('weekly_summary')
+    ) {
+      raw.resumoExecutivo = calcularIndicadoresDashboard(data);
+    }
+
+    if (topics.has('cashflow') || topics.has('weekly_summary')) {
+      const forecast = calcularPrevisaoCaixa(data, 5);
+      raw.fluxoCaixaProjetado5Meses = forecast.possuiDados ? forecast.meses : [];
+    }
+
+    if (
+      topics.has('payroll_aggregate') ||
+      topics.has('team_allocation') ||
+      topics.has('weekly_summary')
+    ) {
+      raw.folhaEquipe = calcularResumoFolhaEquipe(data.employees, data.settings);
+    }
+
+    if (topics.has('debts') || topics.has('weekly_summary')) {
+      raw.dividasResumo = calcularResumoDividas(data.debts);
+    }
+
+    if (topics.has('projects') || topics.has('stages') || topics.has('weekly_summary')) {
+      raw.obras = data.projects.map((p) => ({
         nome: p.name,
         tipo: p.type,
         status: p.status,
         valorContrato: p.contractValue,
-        dre: computeProjectDre(p, data.transactions),
-      })),
-      etapasEmAndamentoOuAtrasadas: data.stages
+        dre: calcularDreObra(p, data.transactions),
+      }));
+    }
+
+    if (topics.has('stages') || topics.has('weekly_summary')) {
+      raw.etapasEmAndamentoOuAtrasadas = data.stages
         .filter((s) => s.status !== 'Concluída' || s.delayJustification)
-        .slice(0, 40)
+        .slice(0, 30)
         .map((s) => ({
           obraId: s.projectId,
           codigo: s.wbsCode,
@@ -78,42 +107,69 @@ export function OperationalAiView({
           progressoPct: s.progressPct,
           atrasoCategoria: s.delayCategory,
           atrasoJustificativa: s.delayJustification,
-        })),
-      orcamentosAbertos: data.quotes
+        }));
+    }
+
+    if (topics.has('quotes') || topics.has('weekly_summary')) {
+      raw.orcamentosAbertos = data.quotes
         .filter((q) => q.status !== 'Descartado')
-        .slice(0, 25)
+        .slice(0, 20)
         .map((q) => ({
           codigo: q.code,
-          cliente: q.clientName,
+          titulo: q.title,
+          tipo: q.type,
           valor: q.totalValue,
           probabilidadePct: q.probabilityPct,
           status: q.status,
-        })),
-      colaboradoresResumo: data.employees.map((e) => ({
+        }));
+    }
+
+    if (topics.has('team_allocation')) {
+      raw.colaboradoresAlocacao = data.employees.map((e) => ({
         nome: e.name,
         funcao: e.role,
         vinculo: e.employmentType,
         obraAtual: e.currentProjectName || 'Sem alocação',
-        asoValidade: e.asoExpiry,
-        nr18Validade: e.nr18Expiry,
-        nr35Validade: e.nr35Expiry,
-      })),
-      conformidade: data.complianceItems.slice(0, 30).map((c) => ({
+      }));
+    }
+
+    if (topics.has('compliance') || topics.has('weekly_summary')) {
+      raw.conformidade = data.complianceItems.slice(0, 25).map((c) => ({
         tipo: c.kind,
         titulo: c.title,
         vencimento: c.dueDate,
         status: c.status,
         obra: c.projectName,
-      })),
-      prontidaoLicitacoesPct: computeTenderReadinessPct(data.complianceItems),
-      recebimentosSemNota: data.transactions
-        .filter((t) => t.entryKind === 'income' && t.invoiceStatus === 'Não emitida')
+      }));
+    }
+
+    if (topics.has('compliance') || topics.has('quotes') || topics.has('weekly_summary')) {
+      raw.prontidaoLicitacoesPct = calcularProntidaoLicitacao(data.complianceItems);
+    }
+
+    if (topics.has('invoices') || topics.has('weekly_summary')) {
+      const { lancamentosUnicos, parcelasAbertas } = deduplicarReceitasEParcelas(
+        toDomainTransactions(data.transactions),
+        toDomainInstallments(data.installments),
+      );
+      const fromTxs = lancamentosUnicos
+        .filter((t) => t.tipo === 'receita' && t.notaFiscal === 'Não emitida')
         .map((t) => ({
-          descricao: t.description,
-          valor: t.amount,
-          vencimento: t.dueDate || t.date,
-        })),
-    };
+          descricao: t.descricao,
+          valor: t.valor,
+          vencimento: t.vencimento || t.data,
+        }));
+      const fromParcelas = parcelasAbertas
+        .filter((p) => p.notaFiscal === 'Não emitida')
+        .map((p) => ({
+          descricao: `Parcela ${p.rotulo}`,
+          valor: p.valor,
+          vencimento: p.vencimento,
+        }));
+      raw.recebimentosSemNota = [...fromTxs, ...fromParcelas];
+    }
+
+    return sanitizeAiContextSnapshot(raw, questionText, isWeeklySummary);
   }
 
   async function askAi(questionText: string, isWeeklySummary = false) {
@@ -121,6 +177,12 @@ export function OperationalAiView({
     setErrorMsg(null);
 
     if (!isWeeklySummary && !questionText.trim()) return;
+
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setErrorMsg('Sessão não autenticada. Faça login novamente para consultar a IA Operacional.');
+      return;
+    }
 
     const userMsg: ChatMessage = {
       id: `u_${Date.now()}`,
@@ -132,14 +194,20 @@ export function OperationalAiView({
     setLoading(true);
 
     try {
+      const idToken = await currentUser.getIdToken();
+      const contextSnapshot = buildContextSnapshot(questionText.trim(), isWeeklySummary);
+
       const resp = await fetch('/api/ai/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
         body: JSON.stringify({
           mode,
           question: questionText.trim(),
           isWeeklySummary,
-          contextSnapshot: buildContextSnapshot(),
+          contextSnapshot,
         }),
       });
       const payload = (await resp.json()) as { answer?: string; error?: string };
@@ -282,11 +350,11 @@ export function OperationalAiView({
                   <button
                     key={al.id}
                     type="button"
-                    onClick={() => onNavigate(al.module)}
+                    onClick={() => onNavigate(al.modulo)}
                     className="bg-[#F6F5F2] border border-[#E4E1DA] rounded-lg p-3 text-left flex flex-col gap-1.5 hover:bg-[#F0EEE9] cursor-pointer"
                   >
-                    <StatusBadge label={al.level} />
-                    <span className="text-xs text-[#14181F] font-medium">{al.text}</span>
+                    <StatusBadge label={al.nivel} />
+                    <span className="text-xs text-[#14181F] font-medium">{al.mensagem}</span>
                   </button>
                 ))}
               </div>

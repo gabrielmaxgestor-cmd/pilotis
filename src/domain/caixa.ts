@@ -1,4 +1,5 @@
 import { resumoFolhaEquipe } from './equipe';
+import { deduplicarReceitasEParcelas } from './financeiro';
 import {
   addMonthsISO,
   formatMonthLabelBR,
@@ -113,8 +114,9 @@ export function previsaoCaixa(
     }
   }
 
-  const linkedParcelaIds = new Set(
-    input.lancamentos.map((l) => l.parcelaId).filter(Boolean) as string[],
+  const { lancamentosUnicos, parcelasAbertas } = deduplicarReceitasEParcelas(
+    input.lancamentos,
+    parcelas,
   );
 
   let runningBalance = roundCents(input.saldoInicial ?? 0);
@@ -125,7 +127,7 @@ export function previsaoCaixa(
 
   for (let i = 0; i < mesesCount; i++) {
     const mk = monthKey(addMonthsISO(input.dataBase, i));
-    const txsInMonth = input.lancamentos.filter(
+    const txsInMonth = lancamentosUnicos.filter(
       (l) => monthKey(l.previsto ? l.vencimento || l.data : l.data) === mk,
     );
 
@@ -146,13 +148,8 @@ export function previsaoCaixa(
       .filter((l) => l.tipo === 'receita' && l.previsto)
       .reduce((s, l) => s + l.valor, 0);
 
-    const parcelasContratadas = parcelas
-      .filter(
-        (p) =>
-          !linkedParcelaIds.has(p.id) &&
-          p.status !== 'Recebida' &&
-          monthKey(p.vencimento) === mk,
-      )
+    const parcelasContratadas = parcelasAbertas
+      .filter((p) => monthKey(p.vencimento) === mk)
       .reduce((s, p) => s + p.valor, 0);
 
     const contratadoEntradas = roundCents(

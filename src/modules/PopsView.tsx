@@ -12,7 +12,7 @@ import {
 } from '../components/ui/PilotisUI';
 import { createRecord, updateRecord } from '../services/pilotisService';
 import type { ActorRole, PilotisDataState, Pop, PopStatus } from '../types/pilotis';
-import { clampStr, formatTimestampBR } from '../utils/formatters';
+import { clampStr, formatTimestampBR } from '../domain';
 
 function incrementVersion(v: string): string {
   const m = /^v?(\d+)\.(\d+)$/.exec(v.trim());

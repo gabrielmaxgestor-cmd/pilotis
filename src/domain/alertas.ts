@@ -1,4 +1,5 @@
 import { previsaoCaixa } from './caixa';
+import { isParcelaEmAtraso } from './financeiro';
 import { diffDaysISO, formatDateBR } from './formatters';
 import type { DomainCollections } from './types';
 
@@ -7,12 +8,22 @@ export type AlertaCategoria =
   | 'caixa'
   | 'vencimento'
   | 'certidao'
-  | 'treinamento';
+  | 'treinamento'
+  | 'planejamento'
+  | 'garantia';
+
+export type AlertaModulo =
+  | 'financial'
+  | 'compliance'
+  | 'planning'
+  | 'clients'
+  | 'team';
 
 export interface AlertaDominio {
   id: string;
   nivel: AlertaNivel;
   categoria: AlertaCategoria;
+  modulo: AlertaModulo;
   mensagem: string;
   referenciaId?: string;
 }
@@ -46,6 +57,8 @@ export function alertas(
   const capacitacoes = estado.capacitacoes ?? [];
   const obrigacoes = estado.obrigacoes ?? [];
   const certidoes = estado.certidoes ?? [];
+  const etapas = estado.etapas ?? [];
+  const garantias = estado.garantias ?? [];
 
   // 1. Caixa negativo projetado
   const caixa = previsaoCaixa(mesesPrevisao, {
@@ -65,6 +78,7 @@ export function alertas(
         id: `caixa-negativo-${mes.mesKey}`,
         nivel: 'Urgente',
         categoria: 'caixa',
+        modulo: 'financial',
         mensagem: `Caixa projetado negativo em ${mes.rotulo}`,
       });
     }
@@ -75,11 +89,12 @@ export function alertas(
     if (cp.status === 'Paga') continue;
     const dias = diffDaysISO(cp.vencimento, refDate);
     if (dias === null) continue;
-    if (dias < 0 || cp.status === 'Em atraso') {
+    if (dias < 0) {
       resultado.push({
         id: `cp-atraso-${cp.id}`,
         nivel: 'Urgente',
         categoria: 'vencimento',
+        modulo: 'financial',
         mensagem: `Conta a pagar "${cp.descricao}" vencida em ${formatDateBR(cp.vencimento)}`,
         referenciaId: cp.id,
       });
@@ -88,6 +103,7 @@ export function alertas(
         id: `cp-vence-${cp.id}`,
         nivel: 'Atenção',
         categoria: 'vencimento',
+        modulo: 'financial',
         mensagem: `Conta a pagar "${cp.descricao}" vence em ${dias} dia(s)`,
         referenciaId: cp.id,
       });
@@ -97,11 +113,12 @@ export function alertas(
   for (const ob of obrigacoes) {
     if (ob.status === 'Em dia') continue;
     const dias = diffDaysISO(ob.vencimento, refDate);
-    if (ob.status === 'Em atraso' || (dias !== null && dias < 0)) {
+    if (dias !== null && dias < 0) {
       resultado.push({
         id: `ob-atraso-${ob.id}`,
         nivel: 'Urgente',
         categoria: 'vencimento',
+        modulo: 'compliance',
         mensagem: `Obrigação "${ob.titulo}" em atraso (${formatDateBR(ob.vencimento)})`,
         referenciaId: ob.id,
       });
@@ -110,6 +127,7 @@ export function alertas(
         id: `ob-vence-${ob.id}`,
         nivel: 'Atenção',
         categoria: 'vencimento',
+        modulo: 'compliance',
         mensagem: `Obrigação "${ob.titulo}" vence em ${dias} dia(s)`,
         referenciaId: ob.id,
       });
@@ -117,13 +135,12 @@ export function alertas(
   }
 
   for (const p of parcelas) {
-    if (p.status === 'Recebida') continue;
-    const dias = diffDaysISO(p.vencimento, refDate);
-    if (p.status === 'Em atraso' || (dias !== null && dias < 0)) {
+    if (isParcelaEmAtraso(p, refDate)) {
       resultado.push({
         id: `parcela-atraso-${p.id}`,
         nivel: 'Urgente',
         categoria: 'vencimento',
+        modulo: 'financial',
         mensagem: `Parcela ${p.rotulo} vencida em ${formatDateBR(p.vencimento)}`,
         referenciaId: p.id,
       });
@@ -138,6 +155,7 @@ export function alertas(
         id: `cert-vencida-${cert.id}`,
         nivel: 'Urgente',
         categoria: 'certidao',
+        modulo: 'compliance',
         mensagem: `Certidão "${cert.titulo}" vencida em ${formatDateBR(cert.dataValidade)}`,
         referenciaId: cert.id,
       });
@@ -146,6 +164,7 @@ export function alertas(
         id: `cert-vence-${cert.id}`,
         nivel: 'Atenção',
         categoria: 'certidao',
+        modulo: 'compliance',
         mensagem: `Certidão "${cert.titulo}" vence em ${dias} dia(s)`,
         referenciaId: cert.id,
       });
@@ -170,6 +189,7 @@ export function alertas(
           id: `sst-vencido-${colab.id}-${chk.label}`,
           nivel: 'Urgente',
           categoria: 'treinamento',
+          modulo: 'team',
           mensagem: `${chk.label} de ${colab.nome} vencido em ${formatDateBR(chk.date)}`,
           referenciaId: colab.id,
         });
@@ -178,6 +198,7 @@ export function alertas(
           id: `sst-vence-${colab.id}-${chk.label}`,
           nivel: 'Atenção',
           categoria: 'treinamento',
+          modulo: 'team',
           mensagem: `${chk.label} de ${colab.nome} vence em ${dias} dia(s)`,
           referenciaId: colab.id,
         });
@@ -195,6 +216,7 @@ export function alertas(
         id: `cap-vencida-${cap.id}`,
         nivel: 'Urgente',
         categoria: 'treinamento',
+        modulo: 'team',
         mensagem: `Capacitação "${cap.titulo}" (${colabName}) vencida em ${formatDateBR(cap.dataValidade)}`,
         referenciaId: cap.id,
       });
@@ -203,10 +225,37 @@ export function alertas(
         id: `cap-vence-${cap.id}`,
         nivel: 'Atenção',
         categoria: 'treinamento',
+        modulo: 'team',
         mensagem: `Capacitação "${cap.titulo}" (${colabName}) vence em ${dias} dia(s)`,
         referenciaId: cap.id,
       });
     }
+  }
+
+  // 5. Etapas com atraso justificado
+  for (const st of etapas) {
+    if (st.justificativaAtraso && st.status !== 'Concluída') {
+      resultado.push({
+        id: `stage-delay-${st.id}`,
+        nivel: 'Info',
+        categoria: 'planejamento',
+        modulo: 'planning',
+        mensagem: `Etapa "${st.nome}" com atraso registrado (${st.categoriaAtraso || 'Justificado'})`,
+        referenciaId: st.id,
+      });
+    }
+  }
+
+  // 6. Chamados de garantia em aberto
+  const openWarranties = garantias.filter((w) => w.status !== 'Resolvido');
+  if (openWarranties.length > 0) {
+    resultado.push({
+      id: 'warranty-open',
+      nivel: 'Neutro',
+      categoria: 'garantia',
+      modulo: 'clients',
+      mensagem: `Garantia: ${openWarranties.length} chamado(s) em aberto`,
+    });
   }
 
   const order: Record<AlertaNivel, number> = {

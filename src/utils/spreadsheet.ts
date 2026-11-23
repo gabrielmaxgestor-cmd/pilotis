@@ -1,13 +1,19 @@
-import * as XLSX from 'xlsx';
-import { classificarLancamento } from '../domain/financeiro';
+import type { CellObject, Sheet, SheetData } from 'write-excel-file/browser';
 import type { PilotisDataState, TransactionKind } from '../types/pilotis';
 import {
-  formatDateBR,
+  classificarLancamento,
+  formatDateBR as domainFormatDateBR,
   formatTimestampBR,
   normalizeBRDateToISO,
   parseCurrencyInput,
+  resolverStatusConformidade,
+  resolverStatusDivida,
+  resolverStatusLancamento,
+  resolverStatusParcela,
   todayISO,
-} from './formatters';
+} from '../domain';
+
+const formatDateBR = (val: string | null | undefined) => domainFormatDateBR(val, '—');
 
 export interface ColumnMapping {
   dateCol: number;
@@ -180,21 +186,21 @@ function formatExcelCellValue(cell: unknown): string {
 
 export async function parseSpreadsheetFile(file: File): Promise<ParsedSheetData> {
   const lower = file.name.toLowerCase();
-  if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
-    const firstSheetName = workbook.SheetNames[0];
-    if (!firstSheetName) {
+  if (lower.endsWith('.xls')) {
+    throw new Error(
+      'Formato .xls legado não é mais suportado por segurança. Salve a planilha como .xlsx ou .csv e tente novamente.'
+    );
+  }
+
+  if (lower.endsWith('.xlsx')) {
+    const { default: readXlsxFile } = await import('read-excel-file/browser');
+    const sheets = await readXlsxFile(file);
+    const firstSheet = sheets[0];
+    if (!firstSheet) {
       return parseCsvText('', file.name);
     }
-    const sheet = workbook.Sheets[firstSheetName];
-    const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
-      header: 1,
-      raw: true,
-      defval: '',
-    });
 
-    const stringRows = matrix
+    const stringRows = firstSheet.data
       .map((row) => (Array.isArray(row) ? row.map(formatExcelCellValue) : []))
       .filter((row) => row.some((cell) => cell !== ''));
 
@@ -211,7 +217,7 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedSheetData>
 
     return {
       fileName: file.name,
-      sheetName: firstSheetName,
+      sheetName: firstSheet.sheet || 'Planilha1',
       headers,
       rawRows,
       suggestedMapping: autoSuggestColumnMapping(headers),
@@ -349,6 +355,29 @@ function sanitizeSheetRows(rows: Array<Record<string, unknown>>): Array<Record<s
   });
 }
 
+function toWriteExcelCell(val: unknown): CellObject {
+  const safe = sanitizeSpreadsheetCell(val);
+  if (typeof safe === 'number') {
+    return Number.isFinite(safe) ? { value: safe, type: Number } : { value: '', type: String };
+  }
+  if (typeof safe === 'boolean') {
+    return { value: safe, type: Boolean };
+  }
+  return { value: safe, type: String };
+}
+
+function recordsToSheetData(rows: Array<Record<string, unknown>>): SheetData {
+  const sourceRows = rows.length > 0 ? sanitizeSheetRows(rows) : [{ Status: 'Sem registros' }];
+  const headers = Object.keys(sourceRows[0]);
+  const headerRow = headers.map((header) => ({
+    value: String(sanitizeSpreadsheetCell(header)),
+    type: String,
+    fontWeight: 'bold' as const,
+  }));
+  const bodyRows = sourceRows.map((row) => headers.map((header) => toWriteExcelCell(row[header])));
+  return [headerRow, ...bodyRows];
+}
+
 export function exportBackupJson(data: PilotisDataState): void {
   const payload = {
     exportedAt: new Date().toISOString(),
@@ -364,13 +393,15 @@ export function exportBackupJson(data: PilotisDataState): void {
   URL.revokeObjectURL(url);
 }
 
-export function exportBackupWorkbookXlsx(data: PilotisDataState): void {
-  const wb = XLSX.utils.book_new();
+export function buildBackupWorkbookSheets(data: PilotisDataState): Sheet<File | Blob | ArrayBuffer>[] {
+  const sheets: Sheet<File | Blob | ArrayBuffer>[] = [];
+  const todayRef = todayISO();
 
   const appendSheet = (name: string, rows: Array<Record<string, unknown>>) => {
-    const safeRows = rows.length > 0 ? sanitizeSheetRows(rows) : [{ Status: 'Sem registros' }];
-    const ws = XLSX.utils.json_to_sheet(safeRows);
-    XLSX.utils.book_append_sheet(wb, ws, name.slice(0, 31));
+    sheets.push({
+      sheet: name.slice(0, 31),
+      data: recordsToSheetData(rows),
+    });
   };
 
   appendSheet(
@@ -408,7 +439,21 @@ export function exportBackupWorkbookXlsx(data: PilotisDataState): void {
       Obra: t.projectName,
       Valor: t.amount,
       Natureza: t.isForecast ? 'Previsto' : 'Realizado',
-      Status: t.status,
+      Status: resolverStatusLancamento(
+        {
+          tipo:
+            t.entryKind === 'income'
+              ? 'receita'
+              : t.entryKind === 'loan'
+              ? 'emprestimo'
+              : 'despesa',
+          status: t.status,
+          previsto: t.isForecast,
+          vencimento: t.dueDate || t.date,
+          data: t.date,
+        },
+        todayRef,
+      ),
       NotaFiscal: t.invoiceStatus,
       Origem: t.source,
       RegistradoPor: t.createdBy,
@@ -424,7 +469,10 @@ export function exportBackupWorkbookXlsx(data: PilotisDataState): void {
       CustoMensal: d.monthlyCost,
       ParcelasRestantes: d.remainingInstallments,
       ProximoVencimento: formatDateBR(d.nextDueDate),
-      Status: d.status,
+      Status: resolverStatusDivida(
+        { status: d.status, proximoVencimento: d.nextDueDate },
+        todayRef,
+      ),
       RegistradoPor: d.createdBy,
     }))
   );
@@ -485,7 +533,10 @@ export function exportBackupWorkbookXlsx(data: PilotisDataState): void {
       Vencimento: formatDateBR(inst.dueDate),
       Valor: inst.amount,
       NotaFiscal: inst.invoiceStatus,
-      Status: inst.status,
+      Status: resolverStatusParcela(
+        { status: inst.status, vencimento: inst.dueDate },
+        todayRef,
+      ),
       RecebidaEm: inst.receivedDate ? formatDateBR(inst.receivedDate) : '',
       RegistradoPor: inst.createdBy,
     }))
@@ -539,7 +590,10 @@ export function exportBackupWorkbookXlsx(data: PilotisDataState): void {
       Titulo: c.title,
       Obra: c.projectName,
       Vencimento: formatDateBR(c.dueDate),
-      Status: c.status,
+      Status: resolverStatusConformidade(
+        { status: c.status, vencimento: c.dueDate },
+        todayRef,
+      ),
       Obrigatorio: c.mandatory ? 'Sim' : 'Não',
     }))
   );
@@ -557,10 +611,17 @@ export function exportBackupWorkbookXlsx(data: PilotisDataState): void {
     }))
   );
 
-  XLSX.writeFile(wb, `pilotis-backup-${todayISO()}.xlsx`);
+  return sheets;
+}
+
+export async function exportBackupWorkbookXlsx(data: PilotisDataState): Promise<void> {
+  const { default: writeXlsxFile } = await import('write-excel-file/browser');
+  const sheets = buildBackupWorkbookSheets(data);
+  await writeXlsxFile(sheets).toFile(`pilotis-backup-${todayISO()}.xlsx`);
 }
 
 export function exportTransactionsCsv(data: PilotisDataState): void {
+  const todayRef = todayISO();
   const headers = [
     'Data',
     'Vencimento',
@@ -586,7 +647,21 @@ export function exportTransactionsCsv(data: PilotisDataState): void {
         t.projectName,
         t.amount.toFixed(2).replace('.', ','),
         t.isForecast ? 'Previsto' : 'Realizado',
-        t.status,
+        resolverStatusLancamento(
+          {
+            tipo:
+              t.entryKind === 'income'
+                ? 'receita'
+                : t.entryKind === 'loan'
+                ? 'emprestimo'
+                : 'despesa',
+            status: t.status,
+            previsto: t.isForecast,
+            vencimento: t.dueDate || t.date,
+            data: t.date,
+          },
+          todayRef,
+        ),
         t.source,
         t.createdBy,
       ]

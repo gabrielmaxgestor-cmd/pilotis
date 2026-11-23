@@ -11,7 +11,35 @@ import {
   SegmentedControl,
   StatusBadge,
   Tabs,
+  type BadgeTone,
 } from '../components/ui/PilotisUI';
+import {
+  addMonthsISO,
+  calcularDreEmpresa,
+  calcularDreObra,
+  calcularPrevisaoCaixa,
+  calcularResumoDividas,
+  calcularResumoFinanceiroPeriodo,
+  calcularResumoFolhaEquipe,
+  clampStr,
+  classificarLancamento,
+  conciliarExtratoPilotis,
+  formatBRL,
+  formatDateBR as domainFormatDateBR,
+  formatMonthLabelBR,
+  formatPercentBR,
+  formatShortDateBR,
+  monthKey,
+  normalizeBRDateToISO,
+  resolverStatusDivida,
+  resolverStatusLancamento,
+  resolverStatusParcela,
+  simularPagamentoOrcamento,
+  todayISO,
+  validarLancamentoFinanceiro,
+  type ExtratoLinhaConciliada,
+  type StatusConciliacaoExtrato,
+} from '../domain';
 import {
   createRecord,
   importTransactionsBatch,
@@ -20,6 +48,7 @@ import {
 } from '../services/pilotisService';
 import type {
   ActorRole,
+  Debt,
   DebtStatus,
   DebtType,
   FinancialTransaction,
@@ -29,21 +58,8 @@ import type {
   TransactionKind,
   TransactionStatus,
 } from '../types/pilotis';
-import {
-  computeCashFlowProjection,
-  computeDebtSummary,
-  computeProjectDre,
-  computeTeamPayrollSummary,
-} from '../utils/calculations';
-import {
-  clampStr,
-  formatBRL,
-  formatDateBR,
-  formatShortDateBR,
-  monthKey,
-  normalizeBRDateToISO,
-  todayISO,
-} from '../utils/formatters';
+
+const formatDateBR = (val: string | null | undefined) => domainFormatDateBR(val, '—');
 
 const FIN_TABS = [
   'Visão geral',
@@ -65,6 +81,21 @@ const EXPENSE_CATEGORIES = [
   'Retirada de sócio',
   'Outros',
 ];
+
+const RECONCILIATION_TONE: Record<StatusConciliacaoExtrato, BadgeTone> = {
+  Conciliado: 'ok',
+  Sugerido: 'info',
+  Revisar: 'bad',
+  Classificar: 'warn',
+};
+
+function domainKindToPilotis(
+  tipo: 'receita' | 'despesa' | 'emprestimo',
+): TransactionKind {
+  if (tipo === 'receita') return 'income';
+  if (tipo === 'emprestimo') return 'loan';
+  return 'expense';
+}
 
 export function FinancialView({
   uid,
@@ -88,11 +119,17 @@ export function FinancialView({
       setTab(initialTab);
     }
   }, [initialTab]);
+
   const [receivableFilter, setReceivableFilter] = useState('A vencer');
   const [payableFilter, setPayableFilter] = useState('A vencer');
   const [selectedDreProjectId, setSelectedDreProjectId] = useState<string>('');
 
-  // Commercial simulator state (Rule 4: outputs derived)
+  // DRE da empresa (período)
+  const todayStr = todayISO();
+  const [drePeriodStart, setDrePeriodStart] = useState(`${monthKey(todayStr)}-01`);
+  const [drePeriodEnd, setDrePeriodEnd] = useState(todayStr);
+
+  // Commercial simulator state (Rule 4: outputs derived via src/domain)
   const [simValue, setSimValue] = useState('380000');
   const [simDownPct, setSimDownPct] = useState('20');
   const [simParcels, setSimParcels] = useState('18');
@@ -109,6 +146,7 @@ export function FinancialView({
   const [txIsForecast, setTxIsForecast] = useState(false);
   const [txInvoiceStatus, setTxInvoiceStatus] = useState<InvoiceStatus>('A emitir');
   const [txPaymentMethod, setTxPaymentMethod] = useState('Transferência');
+  const [txReceiptRef, setTxReceiptRef] = useState('');
   const [txActor, setTxActor] = useState<ActorRole>('Sócio');
   const [txSaving, setTxSaving] = useState(false);
   const [txSubmitError, setTxSubmitError] = useState<string | null>(null);
@@ -125,20 +163,9 @@ export function FinancialView({
   const [debtActor, setDebtActor] = useState<ActorRole>('Sócio');
   const [debtSaving, setDebtSaving] = useState(false);
 
-  // Import Statement Modal state
+  // Import Statement Modal state (OFX / CSV with assisted reconciliation from src/domain)
   const [importModalOpen, setImportModalOpen] = useState(false);
-  const [importRows, setImportRows] = useState<
-    Array<{
-      id: string;
-      date: string;
-      description: string;
-      amount: number;
-      entryKind: TransactionKind;
-      category: string;
-      projectId: string;
-      flaggedLoan: boolean;
-    }>
-  >([]);
+  const [importRows, setImportRows] = useState<ExtratoLinhaConciliada[]>([]);
   const [importActor, setImportActor] = useState<ActorRole>('Sócio');
   const [importError, setImportError] = useState<string | null>(null);
   const [importSaving, setImportSaving] = useState(false);
@@ -149,44 +176,72 @@ export function FinancialView({
   const [receivingSaving, setReceivingSaving] = useState(false);
   const [receivingError, setReceivingError] = useState<string | null>(null);
 
-  const currentMonth = monthKey(todayISO());
+  // Confirm Pay / Receive Standalone Transaction Modal state
+  const [settlingTx, setSettlingTx] = useState<FinancialTransaction | null>(null);
+  const [settlingActor, setSettlingActor] = useState<ActorRole>('Sócio');
+  const [settlingSaving, setSettlingSaving] = useState(false);
+  const [settlingError, setSettlingError] = useState<string | null>(null);
+
+  // Confirm Settle Debt Modal state
+  const [settlingDebt, setSettlingDebt] = useState<Debt | null>(null);
+  const [settlingDebtActor, setSettlingDebtActor] = useState<ActorRole>('Sócio');
+  const [settlingDebtSaving, setSettlingDebtSaving] = useState(false);
+
+  const parcelaIdsSet = useMemo(
+    () => new Set(data.installments.map((inst) => inst.id)),
+    [data.installments],
+  );
+
   const transactionsSorted = useMemo(
-    () => [...data.transactions].sort((a, b) => (b.dueDate || b.date).localeCompare(a.dueDate || a.date)),
-    [data.transactions]
+    () =>
+      data.transactions
+        .filter(
+          (t) =>
+            !(
+              t.entryKind === 'income' &&
+              t.isForecast &&
+              t.installmentId &&
+              parcelaIdsSet.has(t.installmentId)
+            ),
+        )
+        .sort((a, b) =>
+          (b.dueDate || b.date).localeCompare(a.dueDate || a.date),
+        ),
+    [data.transactions, parcelaIdsSet],
   );
 
-  // Rule 6: Loans are NEVER included in income!
-  const monthTxs = transactionsSorted.filter(
-    (t) => t.entryKind !== 'loan' && monthKey(t.dueDate || t.date) === currentMonth
+  // Derived metrics from src/domain
+  const periodSummary = useMemo(
+    () => calcularResumoFinanceiroPeriodo(data, todayStr),
+    [data, todayStr],
   );
-  const hasTxs = data.transactions.length > 0;
-  const monthIncomes = monthTxs.filter((t) => t.entryKind === 'income').reduce((s, t) => s + t.amount, 0);
-  const monthExpenses = monthTxs.filter((t) => t.entryKind === 'expense').reduce((s, t) => s + t.amount, 0);
-  const monthPayrollExpenses = monthTxs
-    .filter((t) => t.entryKind === 'expense' && (t.category === 'Folha' || t.source === 'folha'))
-    .reduce((s, t) => s + t.amount, 0);
-  const monthResult = monthTxs.length > 0 ? monthIncomes - monthExpenses : null;
-  const unissuedInvoicesSum = data.transactions
-    .filter((t) => t.entryKind === 'income' && t.invoiceStatus === 'Não emitida')
-    .reduce((s, t) => s + t.amount, 0);
-  const hasUnissued = data.transactions.some((t) => t.entryKind === 'income');
+  const cashForecast = useMemo(
+    () => calcularPrevisaoCaixa(data, 5, todayStr),
+    [data, todayStr],
+  );
+  const projection = cashForecast.meses;
+  const debtSummary = useMemo(() => calcularResumoDividas(data.debts), [data.debts]);
+  const payrollSummary = useMemo(
+    () => calcularResumoFolhaEquipe(data.employees, data.settings, todayStr),
+    [data.employees, data.settings, todayStr],
+  );
 
-  // Strict Rule 6 Validation in New Transaction Modal
-  const loanInIncomeError = useMemo(() => {
-    const lowerDesc = txDesc.toLowerCase();
-    const looksLikeLoan =
-      lowerDesc.includes('empréstimo') ||
-      lowerDesc.includes('emprestimo') ||
-      lowerDesc.includes('financiamento') ||
-      txCategory === 'Empréstimo';
-    if (txKind === 'income' && looksLikeLoan) {
-      return 'Empréstimo não pode entrar como receita, porque aumentaria o faturamento. Selecione "Empréstimo" acima para registrar como dívida.';
-    }
-    return null;
-  }, [txKind, txCategory, txDesc]);
-
-  const missingCenterError = !txProjectId ? 'Escolha a obra ou "Empresa" para continuar.' : null;
-  const validationErrorsCount = (loanInIncomeError ? 1 : 0) + (missingCenterError ? 1 : 0);
+  // Strict Rule 6 & Cost-Center Validation in New Transaction Modal via src/domain
+  const parsedNumericAmount = Number(txAmount.replace(',', '.'));
+  const txValidation = useMemo(
+    () =>
+      validarLancamentoFinanceiro({
+        descricao: txDesc,
+        categoria: txCategory,
+        tipoInformado: txKind,
+        obraId: txProjectId,
+        valor: Number.isFinite(parsedNumericAmount) ? parsedNumericAmount : 0,
+      }),
+    [txDesc, txCategory, txKind, txProjectId, parsedNumericAmount],
+  );
+  const loanInIncomeError = txValidation.erroEmprestimoComoReceita;
+  const missingCenterError = txValidation.erroCentroCusto;
+  const formRulesErrorCount = (loanInIncomeError ? 1 : 0) + (missingCenterError ? 1 : 0);
 
   function closeTxModal() {
     setTxModalOpen(false);
@@ -196,26 +251,34 @@ export function FinancialView({
 
   async function handleSaveTransaction(e: React.FormEvent) {
     e.preventDefault();
-    if (validationErrorsCount > 0) return;
-    const numericAmount = Number(txAmount.replace(',', '.'));
-    if (!txDesc.trim() || !Number.isFinite(numericAmount) || numericAmount <= 0) {
-      setTxSubmitError('Preencha a descrição e um valor maior que zero.');
+    if (formRulesErrorCount > 0) return;
+    if (txValidation.erroValorOuDescricao) {
+      setTxSubmitError(txValidation.erroValorOuDescricao);
+      return;
+    }
+
+    const classified = classificarLancamento({
+      descricao: txDesc,
+      categoria: txCategory,
+      tipoInformado: txKind,
+      valor: parsedNumericAmount,
+      previsto: txIsForecast,
+    });
+
+    if (classified.rejeitadoComoReceita) {
+      setTxSubmitError(
+        classified.motivo || 'Empréstimo não pode ser lançado como receita.',
+      );
       return;
     }
 
     setTxSaving(true);
     setTxSubmitError(null);
     try {
+      const finalKind = domainKindToPilotis(classified.tipo);
       const selectedProj = data.projects.find((p) => p.id === txProjectId);
       const projectName = txProjectId === 'Empresa' ? 'Empresa' : selectedProj?.name || 'Obra';
-      const status: TransactionStatus =
-        txKind === 'loan'
-          ? 'Não é receita'
-          : txIsForecast
-          ? 'A vencer'
-          : txKind === 'income'
-          ? 'Recebido'
-          : 'Pago';
+      const status: TransactionStatus = classified.status;
 
       await createRecord(
         'transactions',
@@ -225,24 +288,25 @@ export function FinancialView({
           date: txDate,
           dueDate: txDate,
           description: clampStr(txDesc, 200),
-          entryKind: txKind,
-          category: txKind === 'loan' ? 'Empréstimo' : txCategory,
+          entryKind: finalKind,
+          category: classified.categoria,
           projectId: txProjectId,
           projectName: clampStr(projectName, 160),
-          amount: numericAmount,
-          isForecast: txKind === 'loan' ? false : txIsForecast,
+          amount: classified.valor,
+          isForecast: finalKind === 'loan' ? false : txIsForecast,
           status,
-          invoiceStatus: txKind === 'income' ? txInvoiceStatus : 'Não se aplica',
+          invoiceStatus: finalKind === 'income' ? txInvoiceStatus : 'Não se aplica',
           paymentMethod: clampStr(txPaymentMethod, 60),
+          receiptRef: clampStr(txReceiptRef, 160),
           installmentLabel: '',
           quoteId: '',
           debtId: '',
           source: 'manual',
         },
-        `Lançamento ${txDesc} (${formatBRL(numericAmount)})`
+        `Lançamento ${txDesc} (${formatBRL(classified.valor)})`,
       );
 
-      if (txKind === 'loan') {
+      if (finalKind === 'loan') {
         await createRecord(
           'debts',
           uid,
@@ -250,20 +314,21 @@ export function FinancialView({
           {
             creditor: clampStr(txDesc, 140),
             debtType: 'Empréstimo bancário',
-            principalBalance: numericAmount,
+            principalBalance: classified.valor,
             monthlyCost: 0,
             remainingInstallments: 12,
             nextDueDate: txDate,
             status: 'Em dia',
             notes: 'Registrado via Financeiro (Empréstimo separado de receita)',
           },
-          `Dívida registrada: ${txDesc}`
+          `Dívida registrada: ${txDesc}`,
         );
       }
 
       setTxDesc('');
       setTxAmount('');
       setTxProjectId('');
+      setTxReceiptRef('');
       closeTxModal();
     } catch (err) {
       setTxSubmitError(err instanceof Error ? err.message : 'Erro ao salvar lançamento.');
@@ -272,18 +337,51 @@ export function FinancialView({
     }
   }
 
-  async function handleMarkPaidOrReceived(tx: FinancialTransaction, actor: ActorRole = 'Sócio') {
-    const newStatus: TransactionStatus = tx.entryKind === 'income' ? 'Recebido' : 'Pago';
-    await updateRecord(
-      'transactions',
-      tx.id,
-      uid,
-      actor,
-      { isForecast: false, status: newStatus },
-      `Baixa de lançamento: ${tx.description}`,
-      tx.status,
-      newStatus
-    );
+  async function handleConfirmSettleTransaction(e: React.FormEvent) {
+    e.preventDefault();
+    if (!settlingTx) return;
+    setSettlingSaving(true);
+    setSettlingError(null);
+    try {
+      const newStatus: TransactionStatus =
+        settlingTx.entryKind === 'income' ? 'Recebido' : 'Pago';
+      await updateRecord(
+        'transactions',
+        settlingTx.id,
+        uid,
+        settlingActor,
+        { isForecast: false, status: newStatus },
+        `Baixa de lançamento: ${settlingTx.description}`,
+        settlingTx.status,
+        newStatus,
+      );
+      setSettlingTx(null);
+    } catch (err) {
+      setSettlingError(err instanceof Error ? err.message : 'Erro ao registrar baixa.');
+    } finally {
+      setSettlingSaving(false);
+    }
+  }
+
+  async function handleConfirmSettleDebt(e: React.FormEvent) {
+    e.preventDefault();
+    if (!settlingDebt) return;
+    setSettlingDebtSaving(true);
+    try {
+      await updateRecord(
+        'debts',
+        settlingDebt.id,
+        uid,
+        settlingDebtActor,
+        { status: 'Quitada', principalBalance: 0, remainingInstallments: 0 },
+        `Dívida quitada: ${settlingDebt.creditor}`,
+        `${settlingDebt.status} · ${formatBRL(settlingDebt.principalBalance)}`,
+        'Quitada · R$ 0,00',
+      );
+      setSettlingDebt(null);
+    } finally {
+      setSettlingDebtSaving(false);
+    }
   }
 
   async function handleSaveDebt(e: React.FormEvent) {
@@ -307,7 +405,7 @@ export function FinancialView({
           status: debtStatus,
           notes: '',
         },
-        `Nova dívida: ${debtCreditor}`
+        `Nova dívida: ${debtCreditor}`,
       );
       setDebtCreditor('');
       setDebtBalance('');
@@ -322,7 +420,12 @@ export function FinancialView({
     const reader = new FileReader();
     reader.onload = () => {
       const text = String(reader.result || '');
-      const parsed: typeof importRows = [];
+      const rawLines: Array<{
+        id: string;
+        data: string;
+        descricao: string;
+        valorAssinado: number;
+      }> = [];
 
       if (file.name.toLowerCase().endsWith('.ofx') || text.includes('<STMTTRN>')) {
         const blocks = text.split('<STMTTRN>').slice(1);
@@ -333,17 +436,11 @@ export function FinancialView({
           const amt = Number(amtStr || 0);
           if (!amt) return;
           const iso = dt ? `${dt.slice(0, 4)}-${dt.slice(4, 6)}-${dt.slice(6, 8)}` : todayISO();
-          const flaggedLoan =
-            memo.toLowerCase().includes('emprest') || memo.toLowerCase().includes('emprést');
-          parsed.push({
+          rawLines.push({
             id: `imp_${idx}`,
-            date: iso,
-            description: memo.trim().slice(0, 180),
-            amount: Math.abs(amt),
-            entryKind: flaggedLoan ? 'loan' : amt > 0 ? 'income' : 'expense',
-            category: flaggedLoan ? 'Empréstimo' : amt > 0 ? 'Receita de obra' : 'Outros',
-            projectId: 'Empresa',
-            flaggedLoan,
+            data: iso,
+            descricao: memo.trim().slice(0, 180),
+            valorAssinado: amt,
           });
         });
       } else {
@@ -357,73 +454,91 @@ export function FinancialView({
           const desc = cols[1] || 'Movimento importado';
           const rawVal = Number(cols[2].replace(/\./g, '').replace(',', '.'));
           if (!Number.isFinite(rawVal) || rawVal === 0) return;
-          const flaggedLoan =
-            desc.toLowerCase().includes('emprest') || desc.toLowerCase().includes('emprést');
-          parsed.push({
+          rawLines.push({
             id: `imp_${idx}`,
-            date: iso,
-            description: desc.slice(0, 180),
-            amount: Math.abs(rawVal),
-            entryKind: flaggedLoan ? 'loan' : rawVal > 0 ? 'income' : 'expense',
-            category: flaggedLoan ? 'Empréstimo' : rawVal > 0 ? 'Receita de obra' : 'Outros',
-            projectId: 'Empresa',
-            flaggedLoan,
+            data: iso,
+            descricao: desc.slice(0, 180),
+            valorAssinado: rawVal,
           });
         });
       }
 
-      if (parsed.length === 0) {
+      if (rawLines.length === 0) {
         setImportError('Nenhuma linha válida encontrada. Use CSV (Data;Descrição;Valor) ou OFX.');
+        setImportRows([]);
       } else {
         setImportError(null);
-        setImportRows(parsed);
+        setImportRows(conciliarExtratoPilotis(data, rawLines));
       }
     };
     reader.readAsText(file, 'utf-8');
   }
 
+  const selectedImportRows = importRows.filter((r) => r.incluirNaImportacao);
+
   async function handleConfirmImport() {
-    if (importRows.length === 0) return;
-    const invalidLoan = importRows.find(
-      (r) => r.entryKind === 'income' && r.category === 'Empréstimo'
-    );
+    if (selectedImportRows.length === 0) return;
+
+    const invalidLoan = selectedImportRows.find((r) => {
+      const check = validarLancamentoFinanceiro({
+        descricao: r.descricao,
+        categoria: r.categoria,
+        tipoInformado: r.tipo,
+        obraId: r.obraId,
+        valor: r.valor,
+      });
+      return Boolean(check.erroEmprestimoComoReceita);
+    });
     if (invalidLoan) {
-      setImportError('Reclassifique os movimentos de empréstimo para o tipo "Empréstimo" antes de importar.');
+      setImportError(
+        `Reclassifique "${invalidLoan.descricao}" para o tipo "Empréstimo (dívida)" antes de importar.`,
+      );
       return;
     }
+
+    const missingCenter = selectedImportRows.find((r) => !r.obraId);
+    if (missingCenter) {
+      setImportError('Selecione uma obra ou "Empresa" em todas as linhas marcadas para importação.');
+      return;
+    }
+
     setImportSaving(true);
     setImportError(null);
     try {
       await importTransactionsBatch(
         uid,
         importActor,
-        importRows.map((r) => ({
-          date: r.date,
-          dueDate: r.date,
-          description: r.description,
-          entryKind: r.entryKind,
-          category: r.entryKind === 'loan' ? 'Empréstimo' : r.category,
-          projectId: r.projectId,
-          projectName:
-            r.projectId === 'Empresa'
-              ? 'Empresa'
-              : data.projects.find((p) => p.id === r.projectId)?.name || 'Obra',
-          amount: r.amount,
-          isForecast: false,
-          status:
-            r.entryKind === 'loan'
-              ? 'Não é receita'
-              : r.entryKind === 'income'
-              ? 'Recebido'
-              : 'Pago',
-          invoiceStatus: r.entryKind === 'income' ? 'A emitir' : 'Não se aplica',
-          paymentMethod: 'Extrato',
-          installmentLabel: '',
-          quoteId: '',
-          debtId: '',
-          source: 'extrato',
-        })),
-        'extrato bancário'
+        selectedImportRows.map((r) => {
+          const entryKind = domainKindToPilotis(r.tipo);
+          return {
+            date: r.data,
+            dueDate: r.data,
+            description: r.descricao,
+            entryKind,
+            category: entryKind === 'loan' ? 'Empréstimo' : r.categoria,
+            projectId: r.obraId,
+            projectName:
+              r.obraId === 'Empresa'
+                ? 'Empresa'
+                : data.projects.find((p) => p.id === r.obraId)?.name || 'Obra',
+            amount: r.valor,
+            isForecast: false,
+            status:
+              entryKind === 'loan'
+                ? 'Não é receita'
+                : entryKind === 'income'
+                ? 'Recebido'
+                : 'Pago',
+            invoiceStatus: entryKind === 'income' ? 'A emitir' : 'Não se aplica',
+            paymentMethod: 'Extrato',
+            receiptRef: '',
+            installmentLabel: '',
+            quoteId: '',
+            debtId: '',
+            source: 'extrato',
+          };
+        }),
+        'extrato bancário',
       );
       setImportRows([]);
       setImportModalOpen(false);
@@ -434,97 +549,107 @@ export function FinancialView({
     }
   }
 
-  // Commercial simulator math (Rule 4)
-  const simNumVal = Number(simValue) || 0;
+  // Commercial simulator backed by src/domain/orcamentos.ts
+  const simNumVal = Math.max(0, Number(simValue) || 0);
   const simNumDown = Math.max(0, Math.min(100, Number(simDownPct) || 0));
-  const simNumParcels = Math.max(1, Number(simParcels) || 18);
-  const simDownAmount = simNumVal * (simNumDown / 100);
-  const simParcelAmount = (simNumVal - simDownAmount) / simNumParcels;
-  const payrollSummary = computeTeamPayrollSummary(data.employees, data.settings);
-  const quarterlyPayroll = payrollSummary.totalMonthlyCost * 3;
-  const quarterlySimulatedInflow = simDownAmount + simParcelAmount * 2;
+  const simNumParcels = Math.max(1, Math.min(36, Math.round(Number(simParcels) || 18)));
+  const effectivePayrollMonthly = payrollSummary.custoTotalMensal ?? payrollSummary.folhaBase;
+  const simulatorResult = useMemo(
+    () =>
+      simularPagamentoOrcamento({
+        valorTotal: simNumVal,
+        entradaPct: simNumDown,
+        nParcelas: simNumParcels,
+        dataInicio: todayStr,
+        folhaMensalEstimada:
+          payrollSummary.totalColaboradores > 0 ? effectivePayrollMonthly : 0,
+      }),
+    [simNumVal, simNumDown, simNumParcels, todayStr, payrollSummary.totalColaboradores, effectivePayrollMonthly],
+  );
+  const quarterlyPayroll = effectivePayrollMonthly * 3;
+  const quarterlySimulatedInflow =
+    simulatorResult.valorEntrada + simulatorResult.parcelaMensalMedia * 2;
   const simulatedQuarterGap =
-    payrollSummary.totalHeadcount > 0
+    payrollSummary.totalColaboradores > 0
       ? Math.max(0, quarterlyPayroll - quarterlySimulatedInflow)
       : null;
 
-  const projection = computeCashFlowProjection(data, 5);
-  const debtSummary = computeDebtSummary(data.debts);
-
-  // A receber filtering: /parcelas é a fonte principal das parcelas de contrato;
-  // lançamentos manuais/extrato sem installmentId complementam sem duplicidade.
+  // A receber filtering
   const installmentsSorted = useMemo(
     () =>
       [...data.installments].sort(
-        (a, b) => a.dueDate.localeCompare(b.dueDate) || a.number - b.number
+        (a, b) => a.dueDate.localeCompare(b.dueDate) || a.number - b.number,
       ),
-    [data.installments]
+    [data.installments],
   );
 
   const installmentsFiltered = installmentsSorted.filter((inst) => {
+    const resolved = resolverStatusParcela(
+      { status: inst.status, vencimento: inst.dueDate },
+      todayStr,
+    );
     if (receivableFilter === 'Todas') return true;
-    if (receivableFilter === 'Pagas') return inst.status === 'Recebida';
-    if (receivableFilter === 'Em atraso') return inst.status === 'Em atraso';
-    return inst.status === 'A vencer';
+    if (receivableFilter === 'Pagas') return resolved === 'Recebida';
+    if (receivableFilter === 'Em atraso') return resolved === 'Em atraso';
+    return resolved === 'A vencer';
   });
 
   const receivablesAll = transactionsSorted.filter((t) => t.entryKind === 'income');
   const manualReceivablesAll = receivablesAll.filter((t) => !t.installmentId);
   const manualReceivablesFiltered = manualReceivablesAll.filter((t) => {
+    const resolved = resolverStatusLancamento(
+      {
+        tipo: 'receita',
+        status: t.status,
+        previsto: t.isForecast,
+        vencimento: t.dueDate || t.date,
+        data: t.date,
+      },
+      todayStr,
+    );
     if (receivableFilter === 'Todas') return true;
-    if (receivableFilter === 'Pagas') return t.status === 'Recebido';
-    if (receivableFilter === 'Em atraso') return t.status === 'Em atraso';
-    return t.status === 'A vencer';
+    if (receivableFilter === 'Pagas') return resolved === 'Recebido';
+    if (receivableFilter === 'Em atraso') return resolved === 'Em atraso';
+    return resolved === 'A vencer';
   });
 
-  const hasReceivablesData =
-    data.installments.length > 0 || manualReceivablesAll.length > 0;
-  const openInstallmentsCount =
-    data.installments.filter((i) => i.status !== 'Recebida').length +
-    manualReceivablesAll.filter((t) => t.status !== 'Recebido').length;
-  const openReceivablesSum =
-    data.installments
-      .filter((i) => i.status === 'A vencer' || i.status === 'Em atraso')
-      .reduce((s, i) => s + i.amount, 0) +
-    manualReceivablesAll
-      .filter((t) => t.status === 'A vencer' || t.status === 'Em atraso')
-      .reduce((s, t) => s + t.amount, 0);
-  const receivedMonthSum =
-    data.installments
-      .filter(
-        (i) =>
-          i.status === 'Recebida' &&
-          monthKey(i.receivedDate || i.dueDate) === currentMonth
-      )
-      .reduce((s, i) => s + i.amount, 0) +
-    manualReceivablesAll
-      .filter(
-        (t) =>
-          t.status === 'Recebido' && monthKey(t.dueDate || t.date) === currentMonth
-      )
-      .reduce((s, t) => s + t.amount, 0);
-  const overdueReceivablesSum =
-    data.installments
-      .filter((i) => i.status === 'Em atraso')
-      .reduce((s, i) => s + i.amount, 0) +
-    manualReceivablesAll
-      .filter((t) => t.status === 'Em atraso')
-      .reduce((s, t) => s + t.amount, 0);
-
-  // A pagar filtering
+  // A pagar filtering & overdue tax highlighting
   const payablesAll = transactionsSorted.filter((t) => t.entryKind === 'expense');
+
   const payablesFiltered = payablesAll.filter((t) => {
+    const resolved = resolverStatusLancamento(
+      {
+        tipo: 'despesa',
+        status: t.status,
+        previsto: t.isForecast,
+        vencimento: t.dueDate || t.date,
+        data: t.date,
+      },
+      todayStr,
+    );
     if (payableFilter === 'Todas') return true;
-    if (payableFilter === 'Pagas') return t.status === 'Pago';
-    if (payableFilter === 'Em atraso') return t.status === 'Em atraso';
-    return t.status === 'A vencer';
+    if (payableFilter === 'Pagas') return resolved === 'Pago';
+    if (payableFilter === 'Em atraso') return resolved === 'Em atraso';
+    return resolved === 'A vencer';
   });
 
+  // DRE por obra & DRE da empresa via src/domain/dre.ts
   const activeDreProject =
     data.projects.find((p) => p.id === selectedDreProjectId) || data.projects[0] || null;
-  const activeDre = activeDreProject
-    ? computeProjectDre(activeDreProject, data.transactions)
-    : null;
+  const activeDre = useMemo(
+    () => (activeDreProject ? calcularDreObra(activeDreProject, data.transactions) : null),
+    [activeDreProject, data.transactions],
+  );
+
+  const companyDre = useMemo(
+    () => calcularDreEmpresa(data, drePeriodStart, drePeriodEnd),
+    [data, drePeriodStart, drePeriodEnd],
+  );
+  const companyDreCategories = Object.entries(companyDre.despesasPorCategoria);
+  const companyDreHasData =
+    companyDre.receitas.orcado > 0 ||
+    companyDre.receitas.realizado > 0 ||
+    companyDreCategories.length > 0;
 
   return (
     <div className="flex flex-col gap-6">
@@ -559,55 +684,69 @@ export function FinancialView({
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <KpiCard
               label="Entradas do mês"
-              value={hasTxs ? formatBRL(monthIncomes) : 'Sem dados'}
+              value={periodSummary.possuiLancamentos ? formatBRL(periodSummary.entradasMes) : 'Sem dados'}
               subtext="Realizado + previsto (sem empréstimos)"
-              isEmpty={!hasTxs}
+              isEmpty={!periodSummary.possuiLancamentos}
             />
             <KpiCard
               label="Saídas do mês"
-              value={hasTxs ? formatBRL(monthExpenses) : 'Sem dados'}
+              value={periodSummary.possuiLancamentos ? formatBRL(periodSummary.saidasMes) : 'Sem dados'}
               subtext={
-                monthExpenses > 0
-                  ? `Folha: ${Math.round((monthPayrollExpenses / monthExpenses) * 100)}% das despesas`
+                periodSummary.folhaParticipacaoPct !== null
+                  ? `Folha: ${periodSummary.folhaParticipacaoPct}% das despesas`
                   : 'Sem despesas no mês'
               }
-              isEmpty={!hasTxs}
+              isEmpty={!periodSummary.possuiLancamentos}
             />
             <KpiCard
               label="Resultado do mês"
-              value={formatBRL(monthResult)}
+              value={formatBRL(periodSummary.resultadoMes)}
               subtext="Entradas menos saídas"
-              isEmpty={monthResult === null}
+              isEmpty={periodSummary.resultadoMes === null}
             />
             <KpiCard
               label="Receita sem nota emitida"
-              value={hasUnissued ? formatBRL(unissuedInvoicesSum) : 'Sem dados'}
+              value={
+                periodSummary.possuiReceitasComNf
+                  ? formatBRL(periodSummary.receitaSemNota)
+                  : 'Sem dados'
+              }
               subtext="Sincronizado com Conformidade"
-              isEmpty={!hasUnissued}
+              isEmpty={!periodSummary.possuiReceitasComNf}
             />
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <section className="lg:col-span-2 bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
                 <h2 className="text-base font-semibold text-[#14181F]">Fluxo de caixa mensal</h2>
-                <StatusBadge label="Previsto separado do realizado" tone="neutral" />
+                <div className="flex items-center gap-2">
+                  {cashForecast.mesesNegativos.length > 0 && (
+                    <StatusBadge
+                      label={`${cashForecast.mesesNegativos.length} mês(es) negativo(s)`}
+                      tone="bad"
+                    />
+                  )}
+                  <StatusBadge label="Previsto separado do realizado" tone="neutral" />
+                </div>
               </div>
 
               {projection.length === 0 ? (
                 <p className="text-sm text-[#5B6472] py-10 text-center">
-                  Sem lançamentos suficientes para exibir o fluxo mensal.
+                  Sem dados suficientes para exibir o fluxo mensal.
                 </p>
               ) : (
                 <div className="grid grid-cols-5 gap-3 items-end h-44 pt-3 pb-2 border-b border-[#E4E1DA]">
                   {projection.map((pt) => {
                     const maxV = Math.max(
                       1,
-                      ...projection.map((x) => Math.max(x.realizedIn + x.contractedIn, x.outflows))
+                      ...projection.map((x) =>
+                        Math.max(x.realizadoEntradas + x.contratadoEntradas, x.saidasTotais),
+                      ),
                     );
-                    const inVal = pt.realizedIn + pt.contractedIn;
+                    const inVal = pt.realizadoEntradas + pt.contratadoEntradas;
                     return (
-                      <div key={pt.monthKey} className="flex flex-col items-center gap-2">
+                      <div key={pt.mesKey} className="flex flex-col items-center gap-2">
                         <div className="flex items-end gap-1.5 h-32">
                           <div
                             className="w-5 rounded-t bg-[#1F3A5F]"
@@ -616,11 +755,17 @@ export function FinancialView({
                           />
                           <div
                             className="w-5 rounded-t bg-[#9A6212]"
-                            style={{ height: `${Math.max(3, (pt.outflows / maxV) * 120)}px` }}
-                            title={`Saídas: ${formatBRL(pt.outflows)}`}
+                            style={{ height: `${Math.max(3, (pt.saidasTotais / maxV) * 120)}px` }}
+                            title={`Saídas: ${formatBRL(pt.saidasTotais)}`}
                           />
                         </div>
-                        <span className="text-xs text-[#5B6472] font-medium">{pt.label}</span>
+                        <span
+                          className={`text-xs font-medium ${
+                            pt.negativo ? 'text-[#B42318] font-bold' : 'text-[#5B6472]'
+                          }`}
+                        >
+                          {pt.rotulo}
+                        </span>
                       </div>
                     );
                   })}
@@ -666,16 +811,26 @@ export function FinancialView({
                   />
                 </div>
               </div>
-              <div className="rounded-xl bg-[#F6E7CC] p-3.5 mt-1">
-                <span className="block text-xs text-[#8A5200] font-medium">
-                  Parcela simulada: <strong className="tabular-nums">{formatBRL(simParcelAmount)}</strong>
-                </span>
+              <div className="rounded-xl bg-[#F6E7CC] p-3.5 mt-1 flex flex-col gap-1">
+                <div className="flex justify-between text-xs text-[#8A5200]">
+                  <span>Entrada ({simNumDown}%):</span>
+                  <strong className="tabular-nums">{formatBRL(simulatorResult.valorEntrada)}</strong>
+                </div>
+                <div className="flex justify-between text-xs text-[#8A5200]">
+                  <span>Parcela mensal ({simNumParcels}x):</span>
+                  <strong className="tabular-nums">
+                    {formatBRL(simulatorResult.parcelaMensalMedia)}
+                  </strong>
+                </div>
                 <span className="block text-xs text-[#8A5200] mt-1">
                   Gap frente à folha no 1º trimestre:
                 </span>
-                <strong className="block text-lg font-bold text-[#14181F] tabular-nums mt-0.5">
-                  {simulatedQuarterGap !== null ? formatBRL(simulatedQuarterGap) : 'Cadastre a equipe'}
+                <strong className="block text-lg font-bold text-[#14181F] tabular-nums">
+                  {simulatedQuarterGap !== null ? formatBRL(simulatedQuarterGap) : 'Sem dados'}
                 </strong>
+                <span className="text-[11px] text-[#8A5200] leading-snug">
+                  {simulatorResult.mensagemCaixa}
+                </span>
               </div>
             </section>
           </div>
@@ -702,24 +857,37 @@ export function FinancialView({
                         <th className="py-2.5 px-3 rounded-l-lg">Data</th>
                         <th className="py-2.5 px-3">Descrição</th>
                         <th className="py-2.5 px-3">Obra / centro</th>
-                        <th className="py-2.5 px-3">Tipo</th>
+                        <th className="py-2.5 px-3">Categoria</th>
                         <th className="py-2.5 px-3">Nota fiscal</th>
+                        <th className="py-2.5 px-3">Comprovante</th>
                         <th className="py-2.5 px-3 text-right">Valor</th>
                         <th className="py-2.5 px-3 rounded-r-lg">Status</th>
                       </tr>
                     </thead>
                     <tbody>
                       {transactionsSorted.slice(0, 15).map((tx) => (
-                        <tr key={tx.id} className="border-b border-[#E4E1DA] text-[13px] hover:bg-[#F6F5F2]/60">
+                        <tr
+                          key={tx.id}
+                          className="border-b border-[#E4E1DA] text-[13px] hover:bg-[#F6F5F2]/60"
+                        >
                           <td className="py-3 px-3 text-[#14181F] font-medium tabular-nums">
                             {formatShortDateBR(tx.dueDate || tx.date)}
                           </td>
                           <td className="py-3 px-3 text-[#14181F]">{tx.description}</td>
-                          <td className="py-3 px-3 text-[#5B6472]">{tx.projectName || tx.projectId}</td>
+                          <td className="py-3 px-3 text-[#5B6472]">
+                            {tx.projectName || tx.projectId}
+                          </td>
                           <td className="py-3 px-3 text-[#5B6472]">{tx.category}</td>
                           <td className="py-3 px-3">
                             {tx.invoiceStatus && tx.invoiceStatus !== 'Não se aplica' ? (
                               <StatusBadge label={tx.invoiceStatus} />
+                            ) : (
+                              '—'
+                            )}
+                          </td>
+                          <td className="py-3 px-3 text-xs text-[#5B6472]">
+                            {tx.receiptRef ? (
+                              <StatusBadge label={tx.receiptRef} tone="neutral" />
                             ) : (
                               '—'
                             )}
@@ -729,7 +897,23 @@ export function FinancialView({
                             {formatBRL(tx.amount)}
                           </td>
                           <td className="py-3 px-3">
-                            <StatusBadge label={tx.status} />
+                            <StatusBadge
+                              label={resolverStatusLancamento(
+                                {
+                                  tipo:
+                                    tx.entryKind === 'income'
+                                      ? 'receita'
+                                      : tx.entryKind === 'loan'
+                                      ? 'emprestimo'
+                                      : 'despesa',
+                                  status: tx.status,
+                                  previsto: tx.isForecast,
+                                  vencimento: tx.dueDate || tx.date,
+                                  data: tx.date,
+                                },
+                                todayStr,
+                              )}
+                            />
                           </td>
                         </tr>
                       ))}
@@ -745,7 +929,23 @@ export function FinancialView({
                     >
                       <div className="flex items-center justify-between gap-2">
                         <strong className="text-sm text-[#14181F] truncate">{tx.description}</strong>
-                        <StatusBadge label={tx.status} />
+                        <StatusBadge
+                          label={resolverStatusLancamento(
+                            {
+                              tipo:
+                                tx.entryKind === 'income'
+                                  ? 'receita'
+                                  : tx.entryKind === 'loan'
+                                  ? 'emprestimo'
+                                  : 'despesa',
+                              status: tx.status,
+                              previsto: tx.isForecast,
+                              vencimento: tx.dueDate || tx.date,
+                              data: tx.date,
+                            },
+                            todayStr,
+                          )}
+                        />
                       </div>
                       <div className="flex items-center justify-between text-xs text-[#5B6472]">
                         <span>
@@ -770,27 +970,43 @@ export function FinancialView({
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <KpiCard
               label="A receber em aberto"
-              value={hasReceivablesData ? formatBRL(openReceivablesSum) : 'Sem dados'}
-              subtext={`${openInstallmentsCount} parcela(s) em aberto`}
-              isEmpty={!hasReceivablesData}
+              value={
+                periodSummary.possuiRecebiveis
+                  ? formatBRL(periodSummary.recebiveisEmAbertoValor)
+                  : 'Sem dados'
+              }
+              subtext={`${periodSummary.recebiveisEmAbertoQtd} parcela(s) em aberto`}
+              isEmpty={!periodSummary.possuiRecebiveis}
             />
             <KpiCard
               label="Recebido no mês"
-              value={hasReceivablesData ? formatBRL(receivedMonthSum) : 'Sem dados'}
+              value={
+                periodSummary.possuiRecebiveis
+                  ? formatBRL(periodSummary.recebidosNoMesValor)
+                  : 'Sem dados'
+              }
               subtext="Realizado no mês atual"
-              isEmpty={!hasReceivablesData}
+              isEmpty={!periodSummary.possuiRecebiveis}
             />
             <KpiCard
               label="Em atraso"
-              value={hasReceivablesData ? formatBRL(overdueReceivablesSum) : 'Sem dados'}
+              value={
+                periodSummary.possuiRecebiveis
+                  ? formatBRL(periodSummary.recebiveisEmAtrasoValor)
+                  : 'Sem dados'
+              }
               subtext="Parcelas vencidas"
-              isEmpty={!hasReceivablesData}
+              isEmpty={!periodSummary.possuiRecebiveis}
             />
             <KpiCard
               label="Sem nota emitida"
-              value={hasUnissued ? formatBRL(unissuedInvoicesSum) : 'Sem dados'}
+              value={
+                periodSummary.possuiReceitasComNf
+                  ? formatBRL(periodSummary.receitaSemNota)
+                  : 'Sem dados'
+              }
               subtext="Recebimentos sem NF"
-              isEmpty={!hasUnissued}
+              isEmpty={!periodSummary.possuiReceitasComNf}
             />
           </div>
 
@@ -831,50 +1047,62 @@ export function FinancialView({
                       </tr>
                     </thead>
                     <tbody>
-                      {installmentsFiltered.map((inst) => (
-                        <tr key={inst.id} className="border-b border-[#E4E1DA] text-[13px]">
-                          <td className="py-3 px-3">
-                            <strong className="block font-medium text-[#14181F]">
-                              {inst.projectName}
-                            </strong>
-                            {inst.clientName && (
-                              <span className="text-xs text-[#5B6472]">{inst.clientName}</span>
-                            )}
-                          </td>
-                          <td className="py-3 px-3 text-[#5B6472] font-medium">{inst.label}</td>
-                          <td className="py-3 px-3 text-[#5B6472] tabular-nums">
-                            {formatDateBR(inst.dueDate)}
-                          </td>
-                          <td className="py-3 px-3 text-right font-semibold text-[#14181F] tabular-nums">
-                            {formatBRL(inst.amount)}
-                          </td>
-                          <td className="py-3 px-3">
-                            <StatusBadge label={inst.invoiceStatus || 'A emitir'} />
-                          </td>
-                          <td className="py-3 px-3">
-                            <StatusBadge label={inst.status} />
-                          </td>
-                          <td className="py-3 px-3 text-right">
-                            {inst.status !== 'Recebida' ? (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setReceivingInstallment(inst);
-                                  setReceivingActor('Sócio');
-                                  setReceivingError(null);
-                                }}
-                                className="px-2.5 py-1 rounded-md border border-[#E4E1DA] text-xs font-semibold text-[#1F3A5F] hover:bg-[#F0EEE9] cursor-pointer whitespace-nowrap"
-                              >
-                                Receber
-                              </button>
-                            ) : (
-                              <span className="text-[11px] text-[#5B6472] tabular-nums">
-                                {inst.receivedDate ? formatDateBR(inst.receivedDate) : 'Recebida'}
-                              </span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
+                      {installmentsFiltered.map((inst) => {
+                        const resolvedStatus = resolverStatusParcela(
+                          { status: inst.status, vencimento: inst.dueDate },
+                          todayStr,
+                        );
+                        const overdue = resolvedStatus === 'Em atraso';
+                        return (
+                          <tr key={inst.id} className="border-b border-[#E4E1DA] text-[13px]">
+                            <td className="py-3 px-3">
+                              <strong className="block font-medium text-[#14181F]">
+                                {inst.projectName}
+                              </strong>
+                              {inst.clientName && (
+                                <span className="text-xs text-[#5B6472]">{inst.clientName}</span>
+                              )}
+                            </td>
+                            <td className="py-3 px-3 text-[#5B6472] font-medium">{inst.label}</td>
+                            <td className="py-3 px-3 text-[#5B6472] tabular-nums">
+                              {formatDateBR(inst.dueDate)}
+                            </td>
+                            <td className="py-3 px-3 text-right font-semibold text-[#14181F] tabular-nums">
+                              {formatBRL(inst.amount)}
+                            </td>
+                            <td className="py-3 px-3">
+                              <StatusBadge label={inst.invoiceStatus || 'A emitir'} />
+                            </td>
+                            <td className="py-3 px-3">
+                              <StatusBadge
+                                label={resolvedStatus}
+                                tone={overdue ? 'bad' : undefined}
+                              />
+                            </td>
+                            <td className="py-3 px-3 text-right">
+                              {inst.status !== 'Recebida' ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setReceivingInstallment(inst);
+                                    setReceivingActor('Sócio');
+                                    setReceivingError(null);
+                                  }}
+                                  className="px-2.5 py-1 rounded-md border border-[#E4E1DA] text-xs font-semibold text-[#1F3A5F] hover:bg-[#F0EEE9] cursor-pointer whitespace-nowrap"
+                                >
+                                  Receber
+                                </button>
+                              ) : (
+                                <span className="text-[11px] text-[#5B6472] tabular-nums">
+                                  {inst.receivedDate
+                                    ? formatDateBR(inst.receivedDate)
+                                    : 'Recebida'}
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -909,13 +1137,28 @@ export function FinancialView({
                               {formatBRL(tx.amount)}
                             </td>
                             <td className="py-2.5 px-3">
-                              <StatusBadge label={tx.status} />
+                              <StatusBadge
+                                label={resolverStatusLancamento(
+                                  {
+                                    tipo: 'receita',
+                                    status: tx.status,
+                                    previsto: tx.isForecast,
+                                    vencimento: tx.dueDate || tx.date,
+                                    data: tx.date,
+                                  },
+                                  todayStr,
+                                )}
+                              />
                             </td>
                             <td className="py-2.5 px-3 text-right">
                               {tx.status !== 'Recebido' && (
                                 <button
                                   type="button"
-                                  onClick={() => handleMarkPaidOrReceived(tx)}
+                                  onClick={() => {
+                                    setSettlingTx(tx);
+                                    setSettlingActor('Sócio');
+                                    setSettlingError(null);
+                                  }}
                                   className="px-2.5 py-1 rounded-md border border-[#E4E1DA] text-xs font-semibold text-[#1F3A5F] hover:bg-[#F0EEE9] cursor-pointer whitespace-nowrap"
                                 >
                                   Receber
@@ -934,14 +1177,14 @@ export function FinancialView({
             <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
               <h2 className="text-base font-semibold text-[#14181F]">Parcelas pagas por obra</h2>
               {data.projects.length === 0 ? (
-                <p className="text-sm text-[#5B6472]">Sem obras cadastradas.</p>
+                <p className="text-sm text-[#5B6472]">Sem dados de obras cadastradas.</p>
               ) : (
                 data.projects.map((proj) => {
                   const projParcels = data.installments.filter(
-                    (inst) => inst.projectId === proj.id
+                    (inst) => inst.projectId === proj.id,
                   );
                   const paid = projParcels.filter(
-                    (inst) => inst.status === 'Recebida'
+                    (inst) => inst.status === 'Recebida',
                   ).length;
                   const pct =
                     projParcels.length > 0
@@ -972,128 +1215,211 @@ export function FinancialView({
       )}
 
       {tab === 'A pagar' && (
-        <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-base font-semibold text-[#14181F]">Contas a pagar</h2>
-            <SegmentedControl
-              items={['Todas', 'A vencer', 'Pagas', 'Em atraso']}
-              active={payableFilter}
-              onChange={setPayableFilter}
-            />
-          </div>
-
-          {payablesFiltered.length === 0 ? (
-            <EmptySection
-              title="Sem contas a pagar neste filtro"
-              description="Cadastre uma despesa prevista ou realizada clicando em Novo lançamento."
-              actionLabel="Nova conta a pagar"
-              onAction={() => {
-                setTxKind('expense');
-                setTxCategory('Tributos');
-                setTxIsForecast(true);
-                setTxModalOpen(true);
-              }}
-            />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="bg-[#F0EEE9] text-left text-xs font-semibold text-[#5B6472]">
-                    <th className="py-2.5 px-3 rounded-l-lg">Vencimento</th>
-                    <th className="py-2.5 px-3">Descrição</th>
-                    <th className="py-2.5 px-3">Categoria</th>
-                    <th className="py-2.5 px-3">Obra / centro</th>
-                    <th className="py-2.5 px-3 text-right">Valor</th>
-                    <th className="py-2.5 px-3">Status</th>
-                    <th className="py-2.5 px-3 rounded-r-lg text-right">Ação</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {payablesFiltered.map((tx) => (
-                    <tr key={tx.id} className="border-b border-[#E4E1DA] text-[13px]">
-                      <td className="py-3 px-3 tabular-nums text-[#14181F] font-medium">
-                        {formatDateBR(tx.dueDate || tx.date)}
-                      </td>
-                      <td className="py-3 px-3 text-[#14181F]">{tx.description}</td>
-                      <td className="py-3 px-3 text-[#5B6472]">{tx.category}</td>
-                      <td className="py-3 px-3 text-[#5B6472]">{tx.projectName || tx.projectId}</td>
-                      <td className="py-3 px-3 text-right font-semibold text-[#14181F] tabular-nums">
-                        {formatBRL(tx.amount)}
-                      </td>
-                      <td className="py-3 px-3">
-                        <StatusBadge label={tx.status} />
-                      </td>
-                      <td className="py-3 px-3 text-right">
-                        {tx.status !== 'Pago' && (
-                          <button
-                            type="button"
-                            onClick={() => handleMarkPaidOrReceived(tx)}
-                            className="px-2.5 py-1 rounded-md border border-[#E4E1DA] text-xs font-semibold text-[#1F3A5F] hover:bg-[#F0EEE9] cursor-pointer"
-                          >
-                            Pagar
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+        <div className="flex flex-col gap-4">
+          {periodSummary.tributosEmAtrasoQtd > 0 && (
+            <AlertNote tone="bad" title="Tributos em atraso em destaque">
+              Há <strong>{periodSummary.tributosEmAtrasoQtd}</strong> guia(s) de tributos em
+              atraso somando <strong>{formatBRL(periodSummary.tributosEmAtrasoValor)}</strong>.
+              Priorize a regularização para preservar certidões negativas e evitar multas.
+            </AlertNote>
           )}
-        </section>
+
+          <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-base font-semibold text-[#14181F]">Contas a pagar</h2>
+              <SegmentedControl
+                items={['Todas', 'A vencer', 'Pagas', 'Em atraso']}
+                active={payableFilter}
+                onChange={setPayableFilter}
+              />
+            </div>
+
+            {payablesFiltered.length === 0 ? (
+              <EmptySection
+                title="Sem contas a pagar neste filtro"
+                description="Cadastre uma despesa prevista ou realizada clicando em Novo lançamento."
+                actionLabel="Nova conta a pagar"
+                onAction={() => {
+                  setTxKind('expense');
+                  setTxCategory('Tributos');
+                  setTxIsForecast(true);
+                  setTxModalOpen(true);
+                }}
+              />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr className="bg-[#F0EEE9] text-left text-xs font-semibold text-[#5B6472]">
+                      <th className="py-2.5 px-3 rounded-l-lg">Vencimento</th>
+                      <th className="py-2.5 px-3">Descrição</th>
+                      <th className="py-2.5 px-3">Categoria</th>
+                      <th className="py-2.5 px-3">Obra / centro</th>
+                      <th className="py-2.5 px-3 text-right">Valor</th>
+                      <th className="py-2.5 px-3">Status</th>
+                      <th className="py-2.5 px-3 rounded-r-lg text-right">Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {payablesFiltered.map((tx) => {
+                      const resolvedStatus = resolverStatusLancamento(
+                        {
+                          tipo: 'despesa',
+                          status: tx.status,
+                          previsto: tx.isForecast,
+                          vencimento: tx.dueDate || tx.date,
+                          data: tx.date,
+                        },
+                        todayStr,
+                      );
+                      const overdue = resolvedStatus === 'Em atraso';
+                      const isOverdueTax =
+                        overdue && tx.category.trim().toLowerCase() === 'tributos';
+                      return (
+                        <tr
+                          key={tx.id}
+                          className={`border-b border-[#E4E1DA] text-[13px] ${
+                            isOverdueTax ? 'bg-[#FDECEA]/60' : ''
+                          }`}
+                        >
+                          <td className="py-3 px-3 tabular-nums text-[#14181F] font-medium">
+                            {formatDateBR(tx.dueDate || tx.date)}
+                          </td>
+                          <td className="py-3 px-3 text-[#14181F]">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span>{tx.description}</span>
+                              {isOverdueTax && (
+                                <StatusBadge label="Tributo em atraso" tone="bad" />
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-3 px-3 text-[#5B6472]">{tx.category}</td>
+                          <td className="py-3 px-3 text-[#5B6472]">
+                            {tx.projectName || tx.projectId}
+                          </td>
+                          <td className="py-3 px-3 text-right font-semibold text-[#14181F] tabular-nums">
+                            {formatBRL(tx.amount)}
+                          </td>
+                          <td className="py-3 px-3">
+                            <StatusBadge
+                              label={resolvedStatus}
+                              tone={overdue ? 'bad' : undefined}
+                            />
+                          </td>
+                          <td className="py-3 px-3 text-right">
+                            {tx.status !== 'Pago' && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSettlingTx(tx);
+                                  setSettlingActor('Sócio');
+                                  setSettlingError(null);
+                                }}
+                                className="px-2.5 py-1 rounded-md border border-[#E4E1DA] text-xs font-semibold text-[#1F3A5F] hover:bg-[#F0EEE9] cursor-pointer"
+                              >
+                                Pagar
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </div>
       )}
 
       {tab === 'Fluxo de caixa' && (
-        <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold text-[#14181F]">Projeção de 5 meses</h2>
-            <StatusBadge label="Contratado separado do funil" tone="info" />
-          </div>
-
-          {projection.length === 0 ? (
-            <p className="text-sm text-[#5B6472] py-6">
-              Sem registros financeiros, equipe ou orçamentos para projetar fluxo de caixa.
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="bg-[#F0EEE9] text-left text-xs font-semibold text-[#5B6472]">
-                    <th className="py-2.5 px-3 rounded-l-lg">Mês</th>
-                    <th className="py-2.5 px-3 text-right">Realizado</th>
-                    <th className="py-2.5 px-3 text-right">Entradas contratadas</th>
-                    <th className="py-2.5 px-3 text-right">Funil (ponderado)</th>
-                    <th className="py-2.5 px-3 text-right">Saídas + folha</th>
-                    <th className="py-2.5 px-3 text-right">Provisões incluídas</th>
-                    <th className="py-2.5 px-3 rounded-r-lg text-right">Saldo projetado</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {projection.map((p) => (
-                    <tr key={p.monthKey} className="border-b border-[#E4E1DA] text-[13px]">
-                      <td className="py-3 px-3 font-medium text-[#14181F]">{p.label}</td>
-                      <td className="py-3 px-3 text-right tabular-nums">{formatBRL(p.realizedIn)}</td>
-                      <td className="py-3 px-3 text-right tabular-nums">{formatBRL(p.contractedIn)}</td>
-                      <td className="py-3 px-3 text-right tabular-nums">
-                        {p.funnelWeightedIn > 0 ? formatBRL(p.funnelWeightedIn) : '—'}
-                      </td>
-                      <td className="py-3 px-3 text-right tabular-nums">{formatBRL(p.outflows)}</td>
-                      <td className="py-3 px-3 text-right tabular-nums">
-                        {formatBRL(p.provisionsIncluded)}
-                      </td>
-                      <td className="py-3 px-3 text-right tabular-nums">
-                        <StatusBadge
-                          label={formatBRL(p.projectedBalance)}
-                          tone={p.projectedBalance < 0 ? 'bad' : 'ok'}
-                        />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+        <div className="flex flex-col gap-4">
+          {cashForecast.mesesNegativos.length > 0 && (
+            <AlertNote tone="bad" title="Alerta de caixa negativo projetado">
+              Saldo projetado negativo nos meses:{' '}
+              <strong>
+                {cashForecast.mesesNegativos.map(formatMonthLabelBR).join(', ')}
+              </strong>
+              . Avalie antecipar entradas, ajustar parcelas ou conter saídas antes do vencimento.
+            </AlertNote>
           )}
-        </section>
+
+          {cashForecast.possuiDados && !cashForecast.encargosConfigurados && data.employees.length > 0 && (
+            <AlertNote tone="warn" title="Encargos trabalhistas não configurados">
+              A projeção considera apenas o salário-base da equipe até que INSS, FGTS, férias e 13º
+              sejam configurados em Configurações.
+            </AlertNote>
+          )}
+
+          <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <h2 className="text-base font-semibold text-[#14181F]">Projeção de 5 meses</h2>
+              <StatusBadge label="Contratado separado do funil" tone="info" />
+            </div>
+
+            {!cashForecast.possuiDados || projection.length === 0 ? (
+              <EmptySection
+                title="Sem dados para projetar fluxo de caixa"
+                description="Cadastre lançamentos, parcelas, orçamentos no funil ou colaboradores para projetar os próximos 5 meses."
+              />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr className="bg-[#F0EEE9] text-left text-xs font-semibold text-[#5B6472]">
+                      <th className="py-2.5 px-3 rounded-l-lg">Mês</th>
+                      <th className="py-2.5 px-3 text-right">Realizado</th>
+                      <th className="py-2.5 px-3 text-right">Entradas contratadas</th>
+                      <th className="py-2.5 px-3 text-right">Funil (ponderado)</th>
+                      <th className="py-2.5 px-3 text-right">Saídas + folha</th>
+                      <th className="py-2.5 px-3 text-right">Provisões incluídas</th>
+                      <th className="py-2.5 px-3 text-right">Saldo projetado</th>
+                      <th className="py-2.5 px-3 rounded-r-lg text-right">Com funil</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {projection.map((p) => (
+                      <tr
+                        key={p.mesKey}
+                        className={`border-b border-[#E4E1DA] text-[13px] ${
+                          p.negativo ? 'bg-[#FDECEA]/50' : ''
+                        }`}
+                      >
+                        <td className="py-3 px-3 font-medium text-[#14181F]">{p.rotulo}</td>
+                        <td className="py-3 px-3 text-right tabular-nums">
+                          {formatBRL(p.realizadoEntradas)}
+                        </td>
+                        <td className="py-3 px-3 text-right tabular-nums">
+                          {formatBRL(p.contratadoEntradas)}
+                        </td>
+                        <td className="py-3 px-3 text-right tabular-nums">
+                          {p.funilPonderadoEntradas > 0
+                            ? formatBRL(p.funilPonderadoEntradas)
+                            : '—'}
+                        </td>
+                        <td className="py-3 px-3 text-right tabular-nums">
+                          {formatBRL(p.saidasTotais)}
+                        </td>
+                        <td className="py-3 px-3 text-right tabular-nums">
+                          {formatBRL(p.provisoesFolhaIncluidas)}
+                        </td>
+                        <td className="py-3 px-3 text-right tabular-nums">
+                          <StatusBadge
+                            label={formatBRL(p.saldoProjetado)}
+                            tone={p.negativo ? 'bad' : 'ok'}
+                          />
+                        </td>
+                        <td className="py-3 px-3 text-right tabular-nums text-[#5B6472]">
+                          {formatBRL(p.saldoProjetadoComFunil)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </div>
       )}
 
       {tab === 'Dívidas e crédito' && (
@@ -1108,10 +1434,44 @@ export function FinancialView({
             </button>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <KpiCard label="Dívida total" value={formatBRL(debtSummary.totalDebt)} subtext="Bancos, tributos e encargos" />
-            <KpiCard label="Custo financeiro" value={formatBRL(debtSummary.monthlyCost)} subtext="Juros e encargos mensais" />
-            <KpiCard label="Tributos em atraso" value={formatBRL(debtSummary.overdueTaxes)} subtext="Passivo fiscal" />
-            <KpiCard label="Conta garantida" value={formatBRL(debtSummary.guaranteedCredit)} subtext="Limite em uso" />
+            <KpiCard
+              label="Dívida total"
+              value={debtSummary.dividaTotal !== null ? formatBRL(debtSummary.dividaTotal) : 'Sem dados'}
+              subtext={
+                debtSummary.proximoVencimento
+                  ? `Próximo vencimento: ${formatDateBR(debtSummary.proximoVencimento)}`
+                  : 'Bancos, tributos e encargos'
+              }
+              isEmpty={debtSummary.dividaTotal === null}
+            />
+            <KpiCard
+              label="Custo financeiro"
+              value={
+                debtSummary.custoMensal !== null ? formatBRL(debtSummary.custoMensal) : 'Sem dados'
+              }
+              subtext="Juros e encargos mensais"
+              isEmpty={debtSummary.custoMensal === null}
+            />
+            <KpiCard
+              label="Tributos em atraso"
+              value={
+                debtSummary.tributosEmAtraso !== null
+                  ? formatBRL(debtSummary.tributosEmAtraso)
+                  : 'Sem dados'
+              }
+              subtext="Passivo fiscal"
+              isEmpty={debtSummary.tributosEmAtraso === null}
+            />
+            <KpiCard
+              label="Conta garantida"
+              value={
+                debtSummary.contaGarantida !== null
+                  ? formatBRL(debtSummary.contaGarantida)
+                  : 'Sem dados'
+              }
+              subtext="Limite em uso"
+              isEmpty={debtSummary.contaGarantida === null}
+            />
           </div>
 
           <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
@@ -1133,7 +1493,8 @@ export function FinancialView({
                       <th className="py-2.5 px-3 text-right">Saldo devedor</th>
                       <th className="py-2.5 px-3">Parcelas</th>
                       <th className="py-2.5 px-3">Vencimento</th>
-                      <th className="py-2.5 px-3 rounded-r-lg">Status</th>
+                      <th className="py-2.5 px-3">Status</th>
+                      <th className="py-2.5 px-3 rounded-r-lg text-right">Ação</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1149,7 +1510,26 @@ export function FinancialView({
                           {formatDateBR(d.nextDueDate)}
                         </td>
                         <td className="py-3 px-3">
-                          <StatusBadge label={d.status} />
+                          <StatusBadge
+                            label={resolverStatusDivida(
+                              { status: d.status, proximoVencimento: d.nextDueDate },
+                              todayStr,
+                            )}
+                          />
+                        </td>
+                        <td className="py-3 px-3 text-right">
+                          {d.status !== 'Quitada' && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSettlingDebt(d);
+                                setSettlingDebtActor('Sócio');
+                              }}
+                              className="px-2.5 py-1 rounded-md border border-[#E4E1DA] text-xs font-semibold text-[#1F3A5F] hover:bg-[#F0EEE9] cursor-pointer"
+                            >
+                              Quitar
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -1162,7 +1542,7 @@ export function FinancialView({
       )}
 
       {tab === 'DRE por obra' && (
-        <>
+        <div className="flex flex-col gap-6">
           {data.projects.length === 0 || !activeDreProject || !activeDre ? (
             <EmptySection
               title="Nenhuma obra para calcular DRE"
@@ -1190,24 +1570,24 @@ export function FinancialView({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <KpiCard
-                  label="Receita da obra"
-                  value={formatBRL(activeDre.revenueBudgeted)}
-                  subtext="Contrato fechado"
+                  label="Receita realizada"
+                  value={formatBRL(activeDre.receita.realizado)}
+                  subtext={`Contrato fechado: ${formatBRL(activeDre.receita.orcado)}`}
                 />
                 <KpiCard
                   label="Custos diretos realizados"
-                  value={formatBRL(activeDre.totalDirectRealized)}
-                  subtext={`Orçado: ${formatBRL(activeDre.totalDirectBudgeted)}`}
+                  value={formatBRL(activeDre.custosTotais.realizado)}
+                  subtext={`Orçado: ${formatBRL(activeDre.custosTotais.orcado)}`}
                 />
                 <KpiCard
                   label="Margem real"
-                  value={`${activeDre.marginRealizedPct.toFixed(1).replace('.', ',')}%`}
-                  subtext={`Prevista: ${activeDre.marginBudgetedPct.toFixed(1).replace('.', ',')}%`}
+                  value={formatPercentBR(activeDre.margemRealizadaPct)}
+                  subtext={`Prevista: ${formatPercentBR(activeDre.margemOrcadaPct)}`}
                 />
                 <KpiCard
                   label="Resultado acumulado"
-                  value={formatBRL(activeDre.marginRealized)}
-                  subtext="Receita menos custos lançados"
+                  value={formatBRL(activeDre.resultado.realizado)}
+                  subtext="Receita realizada menos custos pagos"
                 />
               </div>
 
@@ -1220,16 +1600,16 @@ export function FinancialView({
                   <h2 className="text-base font-semibold text-[#14181F]">
                     DRE · {activeDreProject.name}
                     {data.settings?.targetMarginPct && data.settings.targetMarginPct > 0
-                      ? ` · Meta de margem: ${data.settings.targetMarginPct.toFixed(1).replace('.', ',')}%`
+                      ? ` · Meta de margem: ${formatPercentBR(data.settings.targetMarginPct)}`
                       : ''}
                   </h2>
                   <StatusBadge
                     label={
-                      activeDre.marginRealizedPct < activeDre.marginBudgetedPct
+                      activeDre.margemRealizadaPct < activeDre.margemOrcadaPct
                         ? 'Margem abaixo do previsto'
                         : 'Margem dentro do previsto'
                     }
-                    tone={activeDre.marginRealizedPct < activeDre.marginBudgetedPct ? 'warn' : 'ok'}
+                    tone={activeDre.margemRealizadaPct < activeDre.margemOrcadaPct ? 'warn' : 'ok'}
                   />
                 </div>
 
@@ -1245,18 +1625,26 @@ export function FinancialView({
                     </thead>
                     <tbody>
                       {[
-                        ['Receita de obra', activeDre.revenueBudgeted, activeDre.revenueRealized],
-                        ['(−) Mão de obra', activeDre.laborBudgeted, activeDre.laborRealized],
-                        ['(−) Subempreitadas', activeDre.subcontractBudgeted, activeDre.subcontractRealized],
-                        ['(−) Equipamentos e EPI', activeDre.equipmentBudgeted, activeDre.equipmentRealized],
-                        ['(−) Tributos', activeDre.taxBudgeted, activeDre.taxRealized],
-                        ['(−) BDI e comissões', activeDre.bdiBudgeted, activeDre.bdiRealized],
+                        ['Receita de obra', activeDre.receita.orcado, activeDre.receita.realizado],
+                        ['(−) Mão de obra', activeDre.maoDeObra.orcado, activeDre.maoDeObra.realizado],
+                        [
+                          '(−) Subempreitadas',
+                          activeDre.empreita.orcado,
+                          activeDre.empreita.realizado,
+                        ],
+                        [
+                          '(−) Equipamentos e EPI',
+                          activeDre.equipamentos.orcado,
+                          activeDre.equipamentos.realizado,
+                        ],
+                        ['(−) Tributos', activeDre.impostos.orcado, activeDre.impostos.realizado],
+                        ['(−) BDI e comissões', activeDre.bdi.orcado, activeDre.bdi.realizado],
                       ].map(([label, b, r]) => {
                         const bud = Number(b);
                         const real = Number(r);
                         const diffPct = bud > 0 ? Math.round(((real - bud) / bud) * 100) : 0;
                         const isCost = String(label).startsWith('(−)');
-                        const tone =
+                        const tone: BadgeTone =
                           diffPct === 0
                             ? 'neutral'
                             : isCost
@@ -1281,17 +1669,21 @@ export function FinancialView({
                         );
                       })}
                       <tr className="font-bold text-[#14181F] text-[13px]">
-                        <td className="py-3 px-3">Margem da obra</td>
+                        <td className="py-3 px-3">Resultado / margem da obra</td>
                         <td className="py-3 px-3 text-right tabular-nums">
-                          {formatBRL(activeDre.marginBudgeted)}
+                          {formatBRL(activeDre.resultado.orcado)}
                         </td>
                         <td className="py-3 px-3 text-right tabular-nums">
-                          {formatBRL(activeDre.marginRealized)}
+                          {formatBRL(activeDre.resultado.realizado)}
                         </td>
                         <td className="py-3 px-3">
                           <StatusBadge
-                            label={`${activeDre.marginRealizedPct.toFixed(1)}%`}
-                            tone={activeDre.marginRealized >= activeDre.marginBudgeted ? 'ok' : 'warn'}
+                            label={formatPercentBR(activeDre.margemRealizadaPct)}
+                            tone={
+                              activeDre.resultado.realizado >= activeDre.resultado.orcado
+                                ? 'ok'
+                                : 'warn'
+                            }
                           />
                         </td>
                       </tr>
@@ -1301,16 +1693,136 @@ export function FinancialView({
               </section>
             </>
           )}
-        </>
+
+          {/* DRE da empresa (período) via src/domain dreEmpresa */}
+          <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-[#14181F]">
+                  DRE da empresa (período)
+                </h2>
+                <p className="text-xs text-[#5B6472]">
+                  Consolidado de obras e centro &ldquo;Empresa&rdquo; · empréstimos excluídos
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="date"
+                  value={drePeriodStart}
+                  onChange={(e) => setDrePeriodStart(e.target.value)}
+                  className="rounded-lg border border-[#E4E1DA] px-2.5 py-1.5 text-xs"
+                />
+                <span className="text-xs text-[#5B6472]">até</span>
+                <input
+                  type="date"
+                  value={drePeriodEnd}
+                  onChange={(e) => setDrePeriodEnd(e.target.value)}
+                  className="rounded-lg border border-[#E4E1DA] px-2.5 py-1.5 text-xs"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDrePeriodStart(`${monthKey(todayStr)}-01`);
+                    setDrePeriodEnd(todayStr);
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg border border-[#E4E1DA] text-xs font-semibold text-[#14181F] hover:bg-[#F0EEE9] cursor-pointer"
+                >
+                  Mês atual
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDrePeriodStart(addMonthsISO(todayStr, -12));
+                    setDrePeriodEnd(todayStr);
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg border border-[#E4E1DA] text-xs font-semibold text-[#14181F] hover:bg-[#F0EEE9] cursor-pointer"
+                >
+                  Últimos 12 meses
+                </button>
+              </div>
+            </div>
+
+            {!companyDreHasData ? (
+              <p className="text-sm text-[#5B6472] py-6 text-center">
+                Sem dados financeiros no período selecionado.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr className="bg-[#F0EEE9] text-left text-xs font-semibold text-[#5B6472]">
+                      <th className="py-2.5 px-3 rounded-l-lg">Categoria</th>
+                      <th className="py-2.5 px-3 text-right">Previsto / orçado</th>
+                      <th className="py-2.5 px-3 text-right">Realizado</th>
+                      <th className="py-2.5 px-3 rounded-r-lg text-right">Variação</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-b border-[#E4E1DA] text-[13px] font-semibold">
+                      <td className="py-3 px-3 text-[#14181F]">Receitas operacionais</td>
+                      <td className="py-3 px-3 text-right tabular-nums">
+                        {formatBRL(companyDre.receitas.orcado)}
+                      </td>
+                      <td className="py-3 px-3 text-right tabular-nums">
+                        {formatBRL(companyDre.receitas.realizado)}
+                      </td>
+                      <td className="py-3 px-3 text-right tabular-nums">
+                        {formatBRL(companyDre.receitas.variacao)}
+                      </td>
+                    </tr>
+                    {companyDreCategories.map(([cat, linha]) => (
+                      <tr key={cat} className="border-b border-[#E4E1DA] text-[13px]">
+                        <td className="py-3 px-3 text-[#5B6472]">(−) {cat}</td>
+                        <td className="py-3 px-3 text-right tabular-nums">
+                          {formatBRL(linha.orcado)}
+                        </td>
+                        <td className="py-3 px-3 text-right tabular-nums">
+                          {formatBRL(linha.realizado)}
+                        </td>
+                        <td className="py-3 px-3 text-right tabular-nums">
+                          {formatBRL(linha.variacao)}
+                        </td>
+                      </tr>
+                    ))}
+                    <tr className="font-bold text-[#14181F] text-[13px] bg-[#F6F5F2]">
+                      <td className="py-3 px-3">
+                        Resultado da empresa ({formatPercentBR(companyDre.margemRealizadaPct)} margem
+                        real)
+                      </td>
+                      <td className="py-3 px-3 text-right tabular-nums">
+                        {formatBRL(companyDre.resultado.orcado)}
+                      </td>
+                      <td className="py-3 px-3 text-right tabular-nums">
+                        {formatBRL(companyDre.resultado.realizado)}
+                      </td>
+                      <td className="py-3 px-3 text-right tabular-nums">
+                        <StatusBadge
+                          label={formatPercentBR(companyDre.margemRealizadaPct)}
+                          tone={companyDre.resultado.realizado >= 0 ? 'ok' : 'bad'}
+                        />
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </div>
       )}
 
-      {/* Modal: Novo lançamento com validação estrita de Empréstimo != Receita */}
+      {/* Modal: Novo lançamento com validação estrita de Empréstimo != Receita e comprovante */}
       <Modal open={isTxOpen} onClose={closeTxModal} title="Novo lançamento">
         <form onSubmit={handleSaveTransaction} className="flex flex-col gap-4">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <SegmentedControl
               items={['Receita', 'Despesa', 'Empréstimo']}
-              active={txKind === 'income' ? 'Receita' : txKind === 'expense' ? 'Despesa' : 'Empréstimo'}
+              active={
+                txKind === 'income'
+                  ? 'Receita'
+                  : txKind === 'expense'
+                  ? 'Despesa'
+                  : 'Empréstimo'
+              }
               onChange={(label) => {
                 if (label === 'Receita') {
                   setTxKind('income');
@@ -1410,7 +1922,9 @@ export function FinancialView({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             <div className="flex flex-col gap-1.5">
-              <label className="text-[13px] font-semibold text-[#14181F]">Obra ou centro de custo</label>
+              <label className="text-[13px] font-semibold text-[#14181F]">
+                Obra ou centro de custo
+              </label>
               <select
                 value={txProjectId}
                 onChange={(e) => setTxProjectId(e.target.value)}
@@ -1447,7 +1961,9 @@ export function FinancialView({
               </div>
             ) : (
               <div className="flex flex-col gap-1.5">
-                <label className="text-[13px] font-semibold text-[#14181F]">Forma de pagamento</label>
+                <label className="text-[13px] font-semibold text-[#14181F]">
+                  Forma de pagamento
+                </label>
                 <input
                   type="text"
                   value={txPaymentMethod}
@@ -1458,10 +1974,52 @@ export function FinancialView({
             )}
           </div>
 
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+            {txKind === 'income' && (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[13px] font-semibold text-[#14181F]">
+                  Forma de recebimento
+                </label>
+                <input
+                  type="text"
+                  value={txPaymentMethod}
+                  onChange={(e) => setTxPaymentMethod(e.target.value)}
+                  className="rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
+                />
+              </div>
+            )}
+            <div className={`flex flex-col gap-1.5 ${txKind !== 'income' ? 'sm:col-span-2' : ''}`}>
+              <label className="text-[13px] font-semibold text-[#14181F]">
+                Comprovante (arquivo ou NSU)
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={txReceiptRef}
+                  onChange={(e) => setTxReceiptRef(e.target.value)}
+                  placeholder="Ex.: comprovante_pix_1203.pdf ou NSU"
+                  className="flex-1 rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
+                />
+                <label className="px-3 py-2.5 rounded-lg border border-[#E4E1DA] bg-white text-xs font-semibold text-[#1F3A5F] hover:bg-[#F0EEE9] cursor-pointer whitespace-nowrap">
+                  Anexar
+                  <input
+                    type="file"
+                    accept=".pdf,.png,.jpg,.jpeg"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) setTxReceiptRef(f.name.slice(0, 160));
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+          </div>
+
           <RegisteredBySelect value={txActor} onChange={setTxActor} id="tx-actor" />
 
-          {validationErrorsCount > 0 && (
-            <AlertNote tone="warn" title={`${validationErrorsCount} campo(s) precisam de correção`}>
+          {formRulesErrorCount > 0 && (
+            <AlertNote tone="warn" title={`${formRulesErrorCount} campo(s) precisam de correção`}>
               Corrija os campos marcados para salvar o lançamento.
             </AlertNote>
           )}
@@ -1481,7 +2039,7 @@ export function FinancialView({
             </button>
             <button
               type="submit"
-              disabled={txSaving || validationErrorsCount > 0}
+              disabled={txSaving || formRulesErrorCount > 0}
               className="px-4 py-2.5 rounded-lg bg-[#1F3A5F] text-white text-sm font-semibold disabled:opacity-45 cursor-pointer"
             >
               {txSaving ? 'Salvando...' : 'Salvar lançamento'}
@@ -1491,7 +2049,11 @@ export function FinancialView({
       </Modal>
 
       {/* Modal: Nova Dívida */}
-      <Modal open={debtModalOpen} onClose={() => setDebtModalOpen(false)} title="Nova dívida ou crédito">
+      <Modal
+        open={debtModalOpen}
+        onClose={() => setDebtModalOpen(false)}
+        title="Nova dívida ou crédito"
+      >
         <form onSubmit={handleSaveDebt} className="flex flex-col gap-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             <div className="flex flex-col gap-1.5">
@@ -1574,7 +2136,6 @@ export function FinancialView({
               >
                 <option value="Em dia">Em dia</option>
                 <option value="Em uso">Em uso</option>
-                <option value="Em atraso">Em atraso</option>
                 <option value="A parcelar">A parcelar</option>
               </select>
             </div>
@@ -1599,12 +2160,12 @@ export function FinancialView({
         </form>
       </Modal>
 
-      {/* Modal: Importar Extrato OFX/CSV */}
+      {/* Modal: Importar Extrato OFX/CSV com conciliação assistida */}
       <Modal
         open={importModalOpen}
         onClose={() => setImportModalOpen(false)}
         title="Importar extrato bancário (OFX ou CSV)"
-        maxWidth="max-w-3xl"
+        maxWidth="max-w-4xl"
       >
         <div className="flex flex-col gap-4">
           <div className="border-2 border-dashed border-[#E4E1DA] rounded-xl p-6 text-center bg-[#F6F5F2]">
@@ -1618,7 +2179,8 @@ export function FinancialView({
               className="text-sm text-[#14181F]"
             />
             <p className="text-xs text-[#5B6472] mt-2">
-              Formato CSV esperado: Data;Descrição;Valor (positivo para entrada, negativo para saída) ou arquivo OFX bancário.
+              Formato CSV esperado: Data;Descrição;Valor (positivo para entrada, negativo para saída)
+              ou arquivo OFX bancário.
             </p>
           </div>
 
@@ -1630,49 +2192,162 @@ export function FinancialView({
 
           {importRows.length > 0 && (
             <>
-              <AlertNote tone="info" title="Empréstimo não vira receita">
-                Revise os movimentos detectados abaixo antes de confirmar.
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {(['Conciliado', 'Sugerido', 'Revisar', 'Classificar'] as const).map(
+                    (st) => {
+                      const count = importRows.filter((r) => r.statusConciliacao === st).length;
+                      return (
+                        <StatusBadge
+                          key={st}
+                          label={`${st}: ${count}`}
+                          tone={RECONCILIATION_TONE[st]}
+                        />
+                      );
+                    },
+                  )}
+                </div>
+                <span className="text-xs text-[#5B6472]">
+                  {selectedImportRows.length} selecionado(s) para importar
+                </span>
+              </div>
+
+              <AlertNote tone="info" title="Conciliação assistida">
+                Movimentos já lançados aparecem como <strong>Conciliado</strong> e vêm desmarcados
+                para evitar duplicidade. Empréstimos nunca entram como receita.
               </AlertNote>
-              <div className="overflow-x-auto max-h-64">
+
+              <div className="overflow-x-auto max-h-72">
                 <table className="w-full border-collapse text-xs">
                   <thead>
                     <tr className="bg-[#F0EEE9] text-left text-[#5B6472]">
+                      <th className="py-2 px-2">Importar</th>
                       <th className="py-2 px-2">Data</th>
-                      <th className="py-2 px-2">Descrição</th>
+                      <th className="py-2 px-2">Descrição e conciliação</th>
                       <th className="py-2 px-2 text-right">Valor</th>
-                      <th className="py-2 px-2">Classificação</th>
+                      <th className="py-2 px-2">Situação</th>
+                      <th className="py-2 px-2">Tipo</th>
+                      <th className="py-2 px-2">Categoria</th>
+                      <th className="py-2 px-2">Obra / centro</th>
                     </tr>
                   </thead>
                   <tbody>
                     {importRows.map((row, idx) => (
                       <tr key={row.id} className="border-b border-[#E4E1DA]">
-                        <td className="py-2 px-2 tabular-nums">{formatDateBR(row.date)}</td>
-                        <td className="py-2 px-2">{row.description}</td>
-                        <td className="py-2 px-2 text-right font-semibold tabular-nums">
-                          {formatBRL(row.amount)}
+                        <td className="py-2 px-2 text-center">
+                          <input
+                            type="checkbox"
+                            checked={row.incluirNaImportacao}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setImportRows((prev) =>
+                                prev.map((r, i) =>
+                                  i === idx ? { ...r, incluirNaImportacao: checked } : r,
+                                ),
+                              );
+                            }}
+                          />
+                        </td>
+                        <td className="py-2 px-2 tabular-nums whitespace-nowrap">
+                          {formatDateBR(row.data)}
+                        </td>
+                        <td className="py-2 px-2">
+                          <strong className="block text-[#14181F]">{row.descricao}</strong>
+                          <span className="text-[11px] text-[#5B6472]">
+                            {row.motivoConciliacao}
+                          </span>
+                        </td>
+                        <td className="py-2 px-2 text-right font-semibold tabular-nums whitespace-nowrap">
+                          {formatBRL(row.valor)}
+                        </td>
+                        <td className="py-2 px-2">
+                          <StatusBadge
+                            label={row.statusConciliacao}
+                            tone={RECONCILIATION_TONE[row.statusConciliacao]}
+                          />
                         </td>
                         <td className="py-2 px-2">
                           <select
-                            value={row.entryKind}
+                            value={row.tipo}
                             onChange={(e) => {
-                              const k = e.target.value as TransactionKind;
+                              const t = e.target.value as 'receita' | 'despesa' | 'emprestimo';
                               setImportRows((prev) =>
                                 prev.map((r, i) =>
                                   i === idx
                                     ? {
                                         ...r,
-                                        entryKind: k,
-                                        category: k === 'loan' ? 'Empréstimo' : k === 'income' ? 'Receita de obra' : 'Outros',
+                                        tipo: t,
+                                        categoria:
+                                          t === 'emprestimo'
+                                            ? 'Empréstimo'
+                                            : t === 'receita'
+                                            ? 'Receita de obra'
+                                            : r.categoria === 'Receita de obra' ||
+                                              r.categoria === 'Empréstimo'
+                                            ? 'Outros'
+                                            : r.categoria,
+                                        statusConciliacao:
+                                          r.alertaEmprestimo && t === 'receita'
+                                            ? 'Revisar'
+                                            : r.statusConciliacao === 'Revisar' &&
+                                              t === 'emprestimo'
+                                            ? 'Sugerido'
+                                            : r.statusConciliacao,
                                       }
-                                    : r
-                                )
+                                    : r,
+                                ),
                               );
                             }}
                             className="border border-[#E4E1DA] rounded px-2 py-1 bg-white"
                           >
-                            <option value="income">Receita</option>
-                            <option value="expense">Despesa</option>
-                            <option value="loan">Empréstimo (dívida)</option>
+                            <option value="receita">Receita</option>
+                            <option value="despesa">Despesa</option>
+                            <option value="emprestimo">Empréstimo (dívida)</option>
+                          </select>
+                        </td>
+                        <td className="py-2 px-2">
+                          <select
+                            value={row.categoria}
+                            disabled={row.tipo === 'emprestimo'}
+                            onChange={(e) => {
+                              const cat = e.target.value;
+                              setImportRows((prev) =>
+                                prev.map((r, i) => (i === idx ? { ...r, categoria: cat } : r)),
+                              );
+                            }}
+                            className="border border-[#E4E1DA] rounded px-2 py-1 bg-white disabled:opacity-60"
+                          >
+                            {row.tipo === 'receita' && (
+                              <option value="Receita de obra">Receita de obra</option>
+                            )}
+                            {row.tipo === 'despesa' &&
+                              EXPENSE_CATEGORIES.map((c) => (
+                                <option key={c} value={c}>
+                                  {c}
+                                </option>
+                              ))}
+                            {row.tipo === 'emprestimo' && (
+                              <option value="Empréstimo">Empréstimo</option>
+                            )}
+                          </select>
+                        </td>
+                        <td className="py-2 px-2">
+                          <select
+                            value={row.obraId}
+                            onChange={(e) => {
+                              const oid = e.target.value;
+                              setImportRows((prev) =>
+                                prev.map((r, i) => (i === idx ? { ...r, obraId: oid } : r)),
+                              );
+                            }}
+                            className="border border-[#E4E1DA] rounded px-2 py-1 bg-white"
+                          >
+                            <option value="Empresa">Empresa</option>
+                            {data.projects.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.name}
+                              </option>
+                            ))}
                           </select>
                         </td>
                       </tr>
@@ -1680,7 +2355,11 @@ export function FinancialView({
                   </tbody>
                 </table>
               </div>
-              <RegisteredBySelect value={importActor} onChange={setImportActor} id="import-actor" />
+              <RegisteredBySelect
+                value={importActor}
+                onChange={setImportActor}
+                id="import-actor"
+              />
             </>
           )}
 
@@ -1694,15 +2373,18 @@ export function FinancialView({
             </button>
             <button
               type="button"
-              disabled={importRows.length === 0 || importSaving}
+              disabled={selectedImportRows.length === 0 || importSaving}
               onClick={handleConfirmImport}
               className="px-4 py-2 rounded-lg bg-[#1F3A5F] text-white text-sm font-semibold disabled:opacity-45 cursor-pointer"
             >
-              {importSaving ? 'Importando...' : `Confirmar importação (${importRows.length})`}
+              {importSaving
+                ? 'Importando...'
+                : `Confirmar importação (${selectedImportRows.length})`}
             </button>
           </div>
         </div>
       </Modal>
+
       {/* Modal: Confirmar Recebimento de Parcela (/parcelas) */}
       <Modal
         open={Boolean(receivingInstallment)}
@@ -1724,7 +2406,9 @@ export function FinancialView({
                 setReceivingInstallment(null);
               } catch (err) {
                 setReceivingError(
-                  err instanceof Error ? err.message : 'Erro ao registrar recebimento da parcela.'
+                  err instanceof Error
+                    ? err.message
+                    : 'Erro ao registrar recebimento da parcela.',
                 );
               } finally {
                 setReceivingSaving(false);
@@ -1784,6 +2468,122 @@ export function FinancialView({
                 className="px-4 py-2 rounded-lg bg-[#1F3A5F] text-white text-sm font-semibold disabled:opacity-45 cursor-pointer"
               >
                 {receivingSaving ? 'Registrando...' : 'Confirmar recebimento'}
+              </button>
+            </div>
+          </form>
+        )}
+      </Modal>
+
+      {/* Modal: Confirmar Baixa de Lançamento (A pagar / Recebimento avulso) */}
+      <Modal
+        open={Boolean(settlingTx)}
+        onClose={() => setSettlingTx(null)}
+        title={
+          settlingTx?.entryKind === 'income'
+            ? 'Confirmar recebimento'
+            : 'Confirmar pagamento'
+        }
+      >
+        {settlingTx && (
+          <form onSubmit={handleConfirmSettleTransaction} className="flex flex-col gap-4">
+            <div className="bg-[#F6F5F2] border border-[#E4E1DA] rounded-xl p-3.5 text-xs flex flex-col gap-1.5">
+              <div className="flex justify-between gap-2">
+                <span className="text-[#5B6472]">Descrição</span>
+                <strong className="text-[#14181F]">{settlingTx.description}</strong>
+              </div>
+              <div className="flex justify-between gap-2">
+                <span className="text-[#5B6472]">Vencimento</span>
+                <strong className="tabular-nums text-[#14181F]">
+                  {formatDateBR(settlingTx.dueDate || settlingTx.date)}
+                </strong>
+              </div>
+              <div className="flex justify-between gap-2">
+                <span className="text-[#5B6472]">Valor</span>
+                <strong className="tabular-nums text-[#14181F]">
+                  {formatBRL(settlingTx.amount)}
+                </strong>
+              </div>
+            </div>
+
+            <RegisteredBySelect
+              value={settlingActor}
+              onChange={setSettlingActor}
+              id="settle-tx-actor"
+            />
+
+            {settlingError && (
+              <AlertNote tone="bad" title="Erro ao registrar baixa">
+                {settlingError}
+              </AlertNote>
+            )}
+
+            <div className="flex justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setSettlingTx(null)}
+                disabled={settlingSaving}
+                className="px-4 py-2 rounded-lg border border-[#E4E1DA] bg-white text-sm font-semibold cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={settlingSaving}
+                className="px-4 py-2 rounded-lg bg-[#1F3A5F] text-white text-sm font-semibold disabled:opacity-45 cursor-pointer"
+              >
+                {settlingSaving
+                  ? 'Registrando...'
+                  : settlingTx.entryKind === 'income'
+                  ? 'Confirmar recebimento'
+                  : 'Confirmar pagamento'}
+              </button>
+            </div>
+          </form>
+        )}
+      </Modal>
+
+      {/* Modal: Quitar Dívida */}
+      <Modal
+        open={Boolean(settlingDebt)}
+        onClose={() => setSettlingDebt(null)}
+        title="Confirmar quitação de dívida"
+      >
+        {settlingDebt && (
+          <form onSubmit={handleConfirmSettleDebt} className="flex flex-col gap-4">
+            <div className="bg-[#F6F5F2] border border-[#E4E1DA] rounded-xl p-3.5 text-xs flex flex-col gap-1.5">
+              <div className="flex justify-between gap-2">
+                <span className="text-[#5B6472]">Credor</span>
+                <strong className="text-[#14181F]">{settlingDebt.creditor}</strong>
+              </div>
+              <div className="flex justify-between gap-2">
+                <span className="text-[#5B6472]">Saldo atual</span>
+                <strong className="tabular-nums text-[#14181F]">
+                  {formatBRL(settlingDebt.principalBalance)}
+                </strong>
+              </div>
+            </div>
+
+            <RegisteredBySelect
+              value={settlingDebtActor}
+              onChange={setSettlingDebtActor}
+              id="settle-debt-actor"
+            />
+
+            <div className="flex justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setSettlingDebt(null)}
+                disabled={settlingDebtSaving}
+                className="px-4 py-2 rounded-lg border border-[#E4E1DA] bg-white text-sm font-semibold cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={settlingDebtSaving}
+                className="px-4 py-2 rounded-lg bg-[#1F3A5F] text-white text-sm font-semibold disabled:opacity-45 cursor-pointer"
+              >
+                {settlingDebtSaving ? 'Quitando...' : 'Confirmar quitação'}
               </button>
             </div>
           </form>

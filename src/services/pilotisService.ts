@@ -10,10 +10,6 @@ import {
   writeBatch,
   type Unsubscribe,
 } from 'firebase/firestore';
-import {
-  gerarParcelas,
-  validarDadosConfirmacaoOrcamento,
-} from '../domain/orcamentos';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import type {
   ActorRole,
@@ -32,9 +28,15 @@ import {
   addMonthsISO,
   clampStr,
   formatBRL,
-  formatDateBR,
+  formatDateBR as domainFormatDateBR,
+  gerarParcelas,
+  normalizeBRDateToISO,
+  resolverStatusParcela,
   todayISO,
-} from '../utils/formatters';
+  validarDadosConfirmacaoOrcamento,
+} from '../domain';
+
+const formatDateBR = (val: string | null | undefined) => domainFormatDateBR(val, '—');
 
 interface FinancialAuditFieldMeta {
   label: string;
@@ -508,12 +510,18 @@ class ConfirmValidationError extends Error {
   }
 }
 
+class InstallmentValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InstallmentValidationError';
+  }
+}
+
 export async function confirmQuoteAndGenerateProject(
   params: ConfirmQuoteParams
 ): Promise<ConfirmQuoteResult> {
   const { uid, actor, quoteId } = params;
   const projectId = generateId('proj');
-  const today = todayISO();
 
   try {
     const result = await runTransaction(db, async (tx) => {
@@ -636,15 +644,11 @@ export async function confirmQuoteAndGenerateProject(
         updatedAt: serverTimestamp(),
       });
 
-      // 4. Gerar as parcelas (entrada + saldo) em /parcelas e espelhar no Financeiro (/transactions)
+      // 4. Gerar as parcelas (entrada + saldo) exclusivamente em /parcelas (fonte única das contas a receber)
+      // /transactions recebe lançamento realizado somente quando a parcela for efetivamente recebida.
+      // O status "Em atraso" nunca é gravado: é calculado dinamicamente na leitura.
       for (const parcela of generatedParcelas) {
         const instId = generateId('par');
-        const txId = generateId('tx');
-        const instStatus = parcela.vencimento < today ? 'Em atraso' : 'A vencer';
-        const isDownPayment = parcela.numero === 0;
-        const txDescription = isDownPayment
-          ? `Entrada · ${quoteData.title} (${resolvedClientName})`
-          : `Parcela ${parcela.rotulo} · ${quoteData.title} (${resolvedClientName})`;
 
         tx.set(doc(db, 'parcelas', instId), {
           ownerUid: uid,
@@ -657,35 +661,10 @@ export async function confirmQuoteAndGenerateProject(
           label: clampStr(parcela.rotulo, 40),
           dueDate: parcela.vencimento,
           amount: parcela.valor,
-          status: instStatus,
+          status: 'A vencer',
           invoiceStatus: parcela.notaFiscal,
           receivedDate: '',
-          transactionId: txId,
-          createdBy: actor,
-          updatedBy: actor,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-
-        tx.set(doc(db, 'transactions', txId), {
-          ownerUid: uid,
-          date: parcela.vencimento,
-          dueDate: parcela.vencimento,
-          description: clampStr(txDescription, 200),
-          entryKind: 'income',
-          category: 'Receita de obra',
-          projectId,
-          projectName: clampStr(quoteData.title, 160),
-          amount: parcela.valor,
-          isForecast: true,
-          status: instStatus,
-          invoiceStatus: parcela.notaFiscal,
-          paymentMethod: 'Transferência',
-          installmentLabel: clampStr(parcela.rotulo, 40),
-          installmentId: instId,
-          quoteId,
-          debtId: '',
-          source: 'orcamento',
+          transactionId: '',
           createdBy: actor,
           updatedBy: actor,
           createdAt: serverTimestamp(),
@@ -773,7 +752,8 @@ export async function applyScheduleTemplateToProject(params: {
     (project.budgetedBdi || 0) +
     (project.budgetedTax || 0);
   const effectiveBudget = directBudget > 0 ? directBudget : Math.round(project.contractValue * 0.78);
-  const endBaseline = addMonthsISO(startDate, Math.max(1, estimatedMonths));
+  const normalizedStart = normalizeBRDateToISO(startDate);
+  const endBaseline = addMonthsISO(normalizedStart, Math.max(1, estimatedMonths));
 
   const batch = writeBatch(db);
   const tpl = getStageTemplatesForType(templateType);
@@ -854,42 +834,165 @@ export async function markInstallmentReceived(
   installment: Installment
 ): Promise<void> {
   const receivedDate = todayISO();
-  const batch = writeBatch(db);
-
-  batch.update(doc(db, 'parcelas', installment.id), {
-    status: 'Recebida',
-    receivedDate,
-    updatedBy: actor,
-    updatedAt: serverTimestamp(),
-  });
-
-  if (installment.transactionId) {
-    batch.update(doc(db, 'transactions', installment.transactionId), {
-      isForecast: false,
-      status: 'Recebido',
-      date: receivedDate,
-      updatedBy: actor,
-      updatedAt: serverTimestamp(),
-    });
-  }
-
-  batch.set(doc(db, 'auditLogs', generateId('aud')), {
-    ownerUid: uid,
-    registeredBy: actor,
-    action: 'Atualização',
-    entityType: 'parcelas',
-    summary: clampStr(
-      `Parcela recebida: ${installment.label} · ${installment.projectName} (${formatBRL(installment.amount)})`,
-      240
-    ),
-    beforeValue: clampStr(`Status: ${installment.status}`, 240),
-    afterValue: clampStr(`Status: Recebida · ${formatDateBR(receivedDate)}`, 240),
-    createdAt: serverTimestamp(),
-  });
+  const parcelaRef = doc(db, 'parcelas', installment.id);
 
   try {
-    await batch.commit();
+    await runTransaction(db, async (tx) => {
+      const parcelaSnap = await tx.get(parcelaRef);
+      if (!parcelaSnap.exists()) {
+        throw new InstallmentValidationError('Parcela não encontrada no banco de dados.');
+      }
+      const instData = parcelaSnap.data() as Installment;
+      if (instData.ownerUid !== uid) {
+        throw new InstallmentValidationError('Parcela não pertence à empresa autenticada.');
+      }
+      if (instData.status === 'Recebida') {
+        throw new InstallmentValidationError('Esta parcela já foi registrada como recebida.');
+      }
+
+      const existingTxId = (instData.transactionId || '').trim();
+      const existingTxRef = existingTxId ? doc(db, 'transactions', existingTxId) : null;
+      const existingTxSnap = existingTxRef ? await tx.get(existingTxRef) : null;
+
+      const beforeStatus = resolverStatusParcela(
+        { status: instData.status, vencimento: instData.dueDate },
+        receivedDate
+      );
+      const resolvedTxId =
+        existingTxSnap && existingTxSnap.exists() ? existingTxId : generateId('tx');
+      const txRef = doc(db, 'transactions', resolvedTxId);
+
+      const isDownPayment = instData.number === 0;
+      const clientSuffix = instData.clientName ? ` (${instData.clientName})` : '';
+      const txDescription = isDownPayment
+        ? `Entrada · ${instData.projectName}${clientSuffix}`
+        : `Parcela ${instData.label} · ${instData.projectName}${clientSuffix}`;
+
+      if (existingTxSnap && existingTxSnap.exists()) {
+        tx.update(txRef, {
+          isForecast: false,
+          status: 'Recebido',
+          date: receivedDate,
+          dueDate: instData.dueDate,
+          installmentId: installment.id,
+          updatedBy: actor,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        tx.set(txRef, {
+          ownerUid: uid,
+          date: receivedDate,
+          dueDate: instData.dueDate,
+          description: clampStr(txDescription, 200),
+          entryKind: 'income',
+          category: 'Receita de obra',
+          projectId: instData.projectId,
+          projectName: clampStr(instData.projectName || '', 160),
+          amount: instData.amount,
+          isForecast: false,
+          status: 'Recebido',
+          invoiceStatus: instData.invoiceStatus || 'A emitir',
+          paymentMethod: 'Transferência',
+          installmentLabel: clampStr(instData.label, 40),
+          installmentId: installment.id,
+          quoteId: instData.quoteId || '',
+          debtId: '',
+          source: 'orcamento',
+          createdBy: actor,
+          updatedBy: actor,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      tx.update(parcelaRef, {
+        status: 'Recebida',
+        receivedDate,
+        transactionId: resolvedTxId,
+        updatedBy: actor,
+        updatedAt: serverTimestamp(),
+      });
+
+      tx.set(doc(db, 'auditLogs', generateId('aud')), {
+        ownerUid: uid,
+        registeredBy: actor,
+        action: 'Atualização',
+        entityType: 'parcelas',
+        summary: clampStr(
+          `Parcela recebida: ${instData.label} · ${instData.projectName} (${formatBRL(instData.amount)})`,
+          240
+        ),
+        beforeValue: clampStr(`Status: ${beforeStatus}`, 240),
+        afterValue: clampStr(`Status: Recebida · ${formatDateBR(receivedDate)}`, 240),
+        createdAt: serverTimestamp(),
+      });
+    });
   } catch (err) {
+    if (err instanceof InstallmentValidationError) {
+      throw err;
+    }
+    handleFirestoreError(err, OperationType.WRITE, `parcelas/${installment.id}`);
+  }
+}
+
+export async function markInstallmentInvoiceIssued(
+  uid: string,
+  actor: ActorRole,
+  installment: Installment
+): Promise<void> {
+  const parcelaRef = doc(db, 'parcelas', installment.id);
+
+  try {
+    await runTransaction(db, async (tx) => {
+      const parcelaSnap = await tx.get(parcelaRef);
+      if (!parcelaSnap.exists()) {
+        throw new InstallmentValidationError('Parcela não encontrada no banco de dados.');
+      }
+      const instData = parcelaSnap.data() as Installment;
+      if (instData.ownerUid !== uid) {
+        throw new InstallmentValidationError('Parcela não pertence à empresa autenticada.');
+      }
+
+      const linkedTxId = (instData.transactionId || '').trim();
+      const linkedTxRef = linkedTxId ? doc(db, 'transactions', linkedTxId) : null;
+      const linkedTxSnap = linkedTxRef ? await tx.get(linkedTxRef) : null;
+
+      const patch: Record<string, unknown> = {
+        invoiceStatus: 'Emitida',
+        updatedBy: actor,
+        updatedAt: serverTimestamp(),
+      };
+      if (instData.status !== 'Recebida' && instData.status !== 'A vencer') {
+        patch.status = 'A vencer';
+      }
+      tx.update(parcelaRef, patch);
+
+      if (linkedTxSnap && linkedTxSnap.exists()) {
+        tx.update(linkedTxRef!, {
+          invoiceStatus: 'Emitida',
+          updatedBy: actor,
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      tx.set(doc(db, 'auditLogs', generateId('aud')), {
+        ownerUid: uid,
+        registeredBy: actor,
+        action: 'Atualização',
+        entityType: 'parcelas',
+        summary: clampStr(
+          `Nota fiscal emitida: ${instData.label} · ${instData.projectName}`,
+          240
+        ),
+        beforeValue: clampStr(`Nota fiscal: ${instData.invoiceStatus || 'A emitir'}`, 240),
+        afterValue: 'Nota fiscal: Emitida',
+        createdAt: serverTimestamp(),
+      });
+    });
+  } catch (err) {
+    if (err instanceof InstallmentValidationError) {
+      throw err;
+    }
     handleFirestoreError(err, OperationType.WRITE, `parcelas/${installment.id}`);
   }
 }
@@ -909,7 +1012,8 @@ export async function createProjectFromTemplate(
   }
 ): Promise<string> {
   const projectId = generateId('proj');
-  const endBaseline = addMonthsISO(params.startDate, Math.max(1, params.estimatedMonths));
+  const normalizedStart = normalizeBRDateToISO(params.startDate);
+  const endBaseline = addMonthsISO(normalizedStart, Math.max(1, params.estimatedMonths));
   const contractKind: ProjectContractKind =
     params.contractKind || (params.type === 'Obra satélite' ? 'Satélite' : 'Principal');
   const batch = writeBatch(db);

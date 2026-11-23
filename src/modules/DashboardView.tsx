@@ -1,13 +1,13 @@
 import { AlertNote, KpiCard, PageHeader, ProgressBar, StatusBadge } from '../components/ui/PilotisUI';
 import type { ModuleKey, PilotisDataState } from '../types/pilotis';
 import {
-  computeCashFlowProjection,
-  computeDashboardMetrics,
-  computeProjectProgress,
-  computeSystemAlerts,
-  isSystemEmpty,
-} from '../utils/calculations';
-import { formatBRL, formatBRLCompact } from '../utils/formatters';
+  calcularAlertasSistema,
+  calcularIndicadoresDashboard,
+  calcularPrevisaoCaixa,
+  calcularProgressoObra,
+  formatBRL,
+  formatBRLCompact,
+} from '../domain';
 
 export function DashboardView({
   data,
@@ -22,10 +22,11 @@ export function DashboardView({
   onOpenNewQuote: () => void;
   companyEmail?: string | null;
 }) {
-  const empty = isSystemEmpty(data);
-  const metrics = computeDashboardMetrics(data);
-  const projection = computeCashFlowProjection(data, 5);
-  const alerts = computeSystemAlerts(data);
+  const metrics = calcularIndicadoresDashboard(data);
+  const empty = metrics.sistemaVazio;
+  const forecast = calcularPrevisaoCaixa(data, 5);
+  const projection = forecast.possuiDados ? forecast.meses : [];
+  const alerts = calcularAlertasSistema(data);
 
   const openQuotes = data.quotes.filter(
     (q) => q.status === 'Enviado' || q.status === 'Em negociação' || q.status === 'Rascunho'
@@ -34,7 +35,7 @@ export function DashboardView({
   const maxChartVal = Math.max(
     1,
     ...projection.map((p) =>
-      Math.max(p.realizedIn + p.contractedIn, p.outflows, p.funnelWeightedIn)
+      Math.max(p.realizadoEntradas + p.contratadoEntradas, p.saidasTotais, p.funilPonderadoEntradas)
     )
   );
 
@@ -208,39 +209,39 @@ export function DashboardView({
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <KpiCard
           label="Saldo de caixa"
-          value={formatBRL(metrics.cashBalance)}
+          value={formatBRL(metrics.saldoRealizadoCaixa)}
           subtext={
-            metrics.forecastMonthEndCash !== null
-              ? `Previsto fim do mês: ${formatBRL(metrics.forecastMonthEndCash)}`
+            metrics.saldoPrevistoFimMes !== null
+              ? `Previsto fim do mês: ${formatBRL(metrics.saldoPrevistoFimMes)}`
               : 'Registre lançamentos realizados'
           }
-          isEmpty={metrics.cashBalance === null}
+          isEmpty={metrics.saldoRealizadoCaixa === null}
         />
         <KpiCard
           label="A receber (30 dias)"
-          value={formatBRL(metrics.receivables30Days)}
+          value={formatBRL(metrics.aReceber30Dias)}
           subtext={
-            metrics.receivables30Days !== null
-              ? `${metrics.receivables30Count} parcela(s) · ${metrics.overdueReceivablesCount} em atraso`
+            metrics.aReceber30Dias !== null
+              ? `${metrics.aReceber30Qtd} parcela(s) · ${metrics.aReceberAtrasoQtd} em atraso`
               : 'Sem parcelas cadastradas'
           }
-          isEmpty={metrics.receivables30Days === null}
+          isEmpty={metrics.aReceber30Dias === null}
         />
         <KpiCard
           label="Resultado do mês"
-          value={formatBRL(metrics.monthResult)}
+          value={formatBRL(metrics.resultadoMes)}
           subtext={
-            metrics.averageMarginPct !== null
-              ? `Margem média das obras: ${metrics.averageMarginPct}%`
+            metrics.margemMediaObrasPct !== null
+              ? `Margem média das obras: ${metrics.margemMediaObrasPct}%`
               : 'Sem lançamentos no mês atual'
           }
-          isEmpty={metrics.monthResult === null}
+          isEmpty={metrics.resultadoMes === null}
         />
         <KpiCard
           label="Obras ativas"
-          value={metrics.activeProjectsCount !== null ? String(metrics.activeProjectsCount) : 'Sem dados'}
-          subtext={`${metrics.negotiatingQuotesCount} orçamento(s) em aberto`}
-          isEmpty={metrics.activeProjectsCount === null}
+          value={metrics.obrasAtivasQtd !== null ? String(metrics.obrasAtivasQtd) : 'Sem dados'}
+          subtext={`${metrics.orcamentosEmAbertoQtd} orçamento(s) em aberto`}
+          isEmpty={metrics.obrasAtivasQtd === null}
         />
       </div>
 
@@ -273,15 +274,15 @@ export function DashboardView({
 
               <div className="grid grid-cols-5 gap-3 items-end h-48 pt-4 pb-2 border-b border-[#E4E1DA]">
                 {projection.map((pt) => {
-                  const inTotal = pt.realizedIn + pt.contractedIn;
+                  const inTotal = pt.realizadoEntradas + pt.contratadoEntradas;
                   const hIn = Math.max(4, Math.round((inTotal / maxChartVal) * 140));
-                  const hOut = Math.max(4, Math.round((pt.outflows / maxChartVal) * 140));
+                  const hOut = Math.max(4, Math.round((pt.saidasTotais / maxChartVal) * 140));
                   const hFun =
-                    pt.funnelWeightedIn > 0
-                      ? Math.max(4, Math.round((pt.funnelWeightedIn / maxChartVal) * 140))
+                    pt.funilPonderadoEntradas > 0
+                      ? Math.max(4, Math.round((pt.funilPonderadoEntradas / maxChartVal) * 140))
                       : 0;
                   return (
-                    <div key={pt.monthKey} className="flex flex-col items-center gap-2">
+                    <div key={pt.mesKey} className="flex flex-col items-center gap-2">
                       <div className="flex items-end gap-1.5 h-36">
                         <div
                           className="w-4 md:w-6 rounded-t bg-[#1F3A5F]"
@@ -290,24 +291,24 @@ export function DashboardView({
                         />
                         <div
                           className="w-4 md:w-6 rounded-t bg-[#9A6212]"
-                          style={{ height: `${pt.outflows > 0 ? hOut : 2}px` }}
-                          title={`Saídas: ${formatBRL(pt.outflows)}`}
+                          style={{ height: `${pt.saidasTotais > 0 ? hOut : 2}px` }}
+                          title={`Saídas: ${formatBRL(pt.saidasTotais)}`}
                         />
                         {hFun > 0 && (
                           <div
                             className="w-4 md:w-6 rounded-t bg-[#E6EEFB] border border-[#2455A4]"
                             style={{ height: `${hFun}px` }}
-                            title={`Funil ponderado: ${formatBRL(pt.funnelWeightedIn)}`}
+                            title={`Funil ponderado: ${formatBRL(pt.funilPonderadoEntradas)}`}
                           />
                         )}
                       </div>
-                      <span className="text-xs text-[#5B6472] font-medium">{pt.label}</span>
+                      <span className="text-xs text-[#5B6472] font-medium">{pt.rotulo}</span>
                     </div>
                   );
                 })}
               </div>
 
-              {projection.some((p) => p.projectedBalance < 0) && (
+              {projection.some((p) => p.saldoProjetado < 0) && (
                 <AlertNote tone="warn" title="Atenção ao fluxo futuro">
                   Sem novas contratações ou entrada de parcelas, o saldo projetado fica negativo nos meses futuros.
                 </AlertNote>
@@ -328,11 +329,11 @@ export function DashboardView({
                 <button
                   key={al.id}
                   type="button"
-                  onClick={() => onNavigate(al.module)}
+                  onClick={() => onNavigate(al.modulo)}
                   className="flex items-start gap-2.5 text-left p-2 -mx-2 rounded-lg hover:bg-[#F6F5F2] transition-colors cursor-pointer"
                 >
-                  <StatusBadge label={al.level} />
-                  <span className="text-[13px] text-[#14181F] leading-snug">{al.text}</span>
+                  <StatusBadge label={al.nivel} />
+                  <span className="text-[13px] text-[#14181F] leading-snug">{al.mensagem}</span>
                 </button>
               ))}
             </div>
@@ -357,7 +358,7 @@ export function DashboardView({
           ) : (
             <div className="flex flex-col gap-4">
               {data.projects.slice(0, 4).map((proj) => {
-                const prog = computeProjectProgress(proj.id, data.stages);
+                const prog = calcularProgressoObra(proj.id, data.stages);
                 return (
                   <div key={proj.id} className="flex flex-col gap-1.5">
                     <div className="flex items-center justify-between gap-2 text-sm">

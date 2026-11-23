@@ -19,8 +19,15 @@ import type {
   Project,
   Quote,
 } from '../../types/pilotis';
-import { clampStr, formatBRL, formatDateBR, todayISO } from '../../utils/formatters';
+import {
+  clampStr,
+  formatBRL,
+  formatDateBR as domainFormatDateBR,
+  todayISO,
+} from '../../domain';
 import { parseContractAddenda, serializeAddendumEntry } from './quoteHelpers';
+
+const formatDateBR = (val: string | null | undefined) => domainFormatDateBR(val, '—');
 
 const SIGN_STATUS_OPTIONS: ContractSignStatus[] = [
   'Não gerado',

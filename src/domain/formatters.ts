@@ -5,6 +5,14 @@ const BRL_FORMATTER = new Intl.NumberFormat('pt-BR', {
   maximumFractionDigits: 2,
 });
 
+export function todayISO(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 export function roundCents(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.round((value + Number.EPSILON) * 100) / 100;
@@ -17,6 +25,20 @@ export function formatBRL(value: number | null | undefined): string {
   const normalized = Object.is(value, -0) ? 0 : roundCents(value);
   const absFormatted = BRL_FORMATTER.format(Math.abs(normalized)).replace(/\u00A0/g, ' ');
   return normalized < 0 ? `− ${absFormatted}` : absFormatted;
+}
+
+export function formatBRLCompact(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return 'Sem dados';
+  }
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) {
+    return `${value < 0 ? '− ' : ''}R$ ${(abs / 1_000_000).toFixed(2).replace('.', ',')} mi`;
+  }
+  if (abs >= 1000 && abs % 1000 === 0) {
+    return `${value < 0 ? '− ' : ''}R$ ${(abs / 1000).toLocaleString('pt-BR')} mil`;
+  }
+  return formatBRL(value);
 }
 
 export function formatPercentBR(
@@ -50,18 +72,45 @@ export function isValidISODate(iso: string | null | undefined): boolean {
   );
 }
 
-export function formatDateBR(dateStr: string | null | undefined): string {
-  if (!dateStr || !dateStr.trim()) return 'Sem dados';
+export function formatDateBR(
+  dateStr: string | null | undefined,
+  emptyFallback = 'Sem dados',
+): string {
+  if (!dateStr || !dateStr.trim()) return emptyFallback;
   const trimmed = dateStr.trim();
   const isoMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(trimmed);
   if (isoMatch) {
     return `${isoMatch[3]}/${isoMatch[2]}/${isoMatch[1]}`;
   }
-  const brMatch = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(trimmed);
+  const brMatch = /^(\d{2})\/(\d{2})\/(\d{4})/.exec(trimmed);
   if (brMatch) {
-    return trimmed;
+    return trimmed.slice(0, 10);
   }
-  return 'Sem dados';
+  return emptyFallback;
+}
+
+export function formatShortDateBR(dateStr: string | null | undefined): string {
+  if (!dateStr || !dateStr.trim()) return '—';
+  const trimmed = dateStr.trim();
+  const isoMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(trimmed);
+  if (isoMatch) {
+    return `${isoMatch[3]}/${isoMatch[2]}`;
+  }
+  return trimmed;
+}
+
+export function formatTimestampBR(ts: unknown): string {
+  if (!ts) return 'Agora';
+  if (
+    typeof ts === 'object' &&
+    ts !== null &&
+    'toDate' in ts &&
+    typeof (ts as { toDate: () => Date }).toDate === 'function'
+  ) {
+    const d = (ts as { toDate: () => Date }).toDate();
+    return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  }
+  return 'Registrado';
 }
 
 export function parseDateBRToISO(brDate: string | null | undefined): string | null {
@@ -72,6 +121,14 @@ export function parseDateBRToISO(brDate: string | null | undefined): string | nu
   if (!match) return null;
   const iso = `${match[3]}-${match[2]}-${match[1]}`;
   return isValidISODate(iso) ? iso : null;
+}
+
+export function normalizeBRDateToISO(raw: string): string {
+  const trimmed = (raw ?? '').trim();
+  if (isValidISODate(trimmed)) return trimmed;
+  const parsed = parseDateBRToISO(trimmed);
+  if (parsed) return parsed;
+  return todayISO();
 }
 
 export function addMonthsISO(isoDate: string, monthsToAdd: number): string {
@@ -114,6 +171,12 @@ export function diffDaysISO(targetIso: string, referenceIso: string): number | n
   return Math.round((tUtc - rUtc) / 86_400_000);
 }
 
+export function diffDaysFromToday(isoDate: string | null | undefined): number | null {
+  if (!isoDate) return null;
+  const normalized = isoDate.trim().slice(0, 10);
+  return diffDaysISO(normalized, todayISO());
+}
+
 export function monthKey(isoDate: string | null | undefined): string {
   if (!isoDate) return '';
   const match = /^(\d{4})-(\d{2})/.exec(isoDate.trim());
@@ -139,4 +202,14 @@ export function formatMonthLabelBR(ym: string): string {
   ];
   const idx = Number(match[2]) - 1;
   return `${months[idx] ?? match[2]}/${match[1]}`;
+}
+
+export function clampStr(val: string, maxLen: number): string {
+  return (val ?? '').trim().slice(0, maxLen);
+}
+
+export function parseCurrencyInput(raw: string): number {
+  const cleaned = raw.replace(/[^\d,.-]/g, '').replace(/\./g, '').replace(',', '.');
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 }

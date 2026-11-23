@@ -11,9 +11,14 @@ import {
 } from '../../components/ui/PilotisUI';
 import {
   avaliarMargemContraMeta,
+  calcularResumoFolhaEquipe,
+  clampStr,
   composicaoOrcamento,
+  formatBRL,
+  formatDateBR as domainFormatDateBR,
   simularPagamentoOrcamento,
-} from '../../domain/orcamentos';
+  todayISO,
+} from '../../domain';
 import { createRecord, updateRecord } from '../../services/pilotisService';
 import type {
   ActorRole,
@@ -24,8 +29,8 @@ import type {
   Quote,
   QuoteStatus,
 } from '../../types/pilotis';
-import { computeTeamPayrollSummary } from '../../utils/calculations';
-import { clampStr, formatBRL, formatDateBR, todayISO } from '../../utils/formatters';
+
+const formatDateBR = (val: string | null | undefined) => domainFormatDateBR(val, '—');
 import {
   incrementQuoteVersion,
   parseVersionHistory,
@@ -180,10 +185,10 @@ export function QuoteEditorModal({
     [comp.margemPct, settings?.targetMarginPct]
   );
 
-  const payrollMonthly = useMemo(
-    () => computeTeamPayrollSummary(employees, settings).totalMonthlyCost,
-    [employees, settings]
-  );
+  const payrollMonthly = useMemo(() => {
+    const res = calcularResumoFolhaEquipe(employees, settings);
+    return res.custoTotalMensal ?? res.folhaBase;
+  }, [employees, settings]);
 
   const downPctNum = Math.min(100, Math.max(0, Number(downPaymentPct) || 0));
   const installmentsNum = Math.min(36, Math.max(1, Math.round(Number(installmentsCount) || 13)));

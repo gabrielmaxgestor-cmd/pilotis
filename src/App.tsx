@@ -3,27 +3,66 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useEffect, useState } from 'react';
+import { Suspense, lazy, useEffect, useState } from 'react';
 import { MobileNav, MobileTopBar } from './components/ui/MobileNav';
 import { ErrorBoundary } from './components/ui/PilotisUI';
 import { Sidebar, type AppRouteKey } from './components/ui/Sidebar';
 import { ToastProvider } from './components/ui/Toast';
 import { useCurrentUser } from './hooks/useCurrentUser';
 import { testFirestoreConnection } from './lib/firebase';
-import { ClientsQuotesView } from './modules/ClientsQuotesView';
-import { ComplianceView } from './modules/ComplianceView';
-import { DashboardView } from './modules/DashboardView';
-import { FinancialView } from './modules/FinancialView';
-import { LoginView } from './modules/LoginView';
-import { OperationalAiView } from './modules/OperationalAiView';
-import { PopsView } from './modules/PopsView';
-import { ProjectPlanningView } from './modules/ProjectPlanningView';
-import { SettingsView } from './modules/SettingsView';
-import { TeamView } from './modules/TeamView';
-import { DevCatalogPage } from './pages/DevCatalogPage';
-import { MODULE_SPECS, MaisView } from './pages/EmptyModulePage';
 import { subscribePilotisCollections } from './services/pilotisService';
 import type { ModuleKey, PilotisDataState } from './types/pilotis';
+
+const ClientsQuotesView = lazy(() =>
+  import('./modules/ClientsQuotesView').then((m) => ({ default: m.ClientsQuotesView }))
+);
+const ComplianceView = lazy(() =>
+  import('./modules/ComplianceView').then((m) => ({ default: m.ComplianceView }))
+);
+const DashboardView = lazy(() =>
+  import('./modules/DashboardView').then((m) => ({ default: m.DashboardView }))
+);
+const FinancialView = lazy(() =>
+  import('./modules/FinancialView').then((m) => ({ default: m.FinancialView }))
+);
+const LoginView = lazy(() =>
+  import('./modules/LoginView').then((m) => ({ default: m.LoginView }))
+);
+const OperationalAiView = lazy(() =>
+  import('./modules/OperationalAiView').then((m) => ({ default: m.OperationalAiView }))
+);
+const PopsView = lazy(() =>
+  import('./modules/PopsView').then((m) => ({ default: m.PopsView }))
+);
+const ProjectPlanningView = lazy(() =>
+  import('./modules/ProjectPlanningView').then((m) => ({ default: m.ProjectPlanningView }))
+);
+const SettingsView = lazy(() =>
+  import('./modules/SettingsView').then((m) => ({ default: m.SettingsView }))
+);
+const TeamView = lazy(() =>
+  import('./modules/TeamView').then((m) => ({ default: m.TeamView }))
+);
+const DevCatalogPage = lazy(() =>
+  import('./pages/DevCatalogPage').then((m) => ({ default: m.DevCatalogPage }))
+);
+const MaisView = lazy(() =>
+  import('./pages/EmptyModulePage').then((m) => ({ default: m.MaisView }))
+);
+
+function ModuleLoadingFallback({ label = 'Carregando módulo...' }: { label?: string }) {
+  return (
+    <div className="bg-white border border-[#E4E1DA] rounded-xl px-5 py-4 flex items-center gap-3">
+      <div className="w-8 h-8 rounded-lg bg-[#9A6212] text-white font-bold text-sm grid place-items-center shrink-0">
+        P
+      </div>
+      <div>
+        <strong className="block text-sm font-semibold text-[#14181F]">Pilotis</strong>
+        <span className="text-xs text-[#5B6472]">{label}</span>
+      </div>
+    </div>
+  );
+}
 
 const INITIAL_DATA_STATE: PilotisDataState = {
   settings: null,
@@ -94,10 +133,22 @@ function parseRouteFromPathname(pathname: string): AppRouteKey {
   }
 }
 
+const MOBILE_MODULE_TITLES: Record<ModuleKey, string> = {
+  dashboard: 'Dashboard',
+  ai: 'IA Operacional',
+  financial: 'Financeiro',
+  clients: 'Clientes e Orçamentos',
+  planning: 'Obras',
+  team: 'Equipe',
+  pops: 'POPs',
+  compliance: 'Conformidade',
+  settings: 'Configurações',
+};
+
 function getMobileTopTitle(route: AppRouteKey): string {
   if (route === 'more') return 'Mais';
   if (route === 'dev') return 'Catálogo UI (/dev)';
-  return MODULE_SPECS[route as ModuleKey]?.mobileTitle || 'Pilotis';
+  return MOBILE_MODULE_TITLES[route as ModuleKey] || 'Pilotis';
 }
 
 function AuthenticatedShell({
@@ -185,97 +236,99 @@ function AuthenticatedShell({
       />
 
       <main className="flex-1 min-w-0 px-4 py-4 pb-24 md:px-8 md:py-6 md:pb-8 max-w-[1360px]">
-        {route === 'dev' && <DevCatalogPage onNavigate={(r) => navigateTo(r)} />}
+        <Suspense fallback={<ModuleLoadingFallback />}>
+          {route === 'dev' && <DevCatalogPage onNavigate={(r) => navigateTo(r)} />}
 
-        {route === 'more' && (
-          <MaisView
-            onSelect={(r) => navigateTo(r)}
-            onLogout={() => void onLogout()}
-          />
-        )}
+          {route === 'more' && (
+            <MaisView
+              onSelect={(r) => navigateTo(r)}
+              onLogout={() => void onLogout()}
+            />
+          )}
 
-        {route === 'dashboard' && (
-          <DashboardView
-            data={data}
-            companyEmail={companyEmail}
-            onNavigate={handleModuleNavigate}
-            onOpenNewTransaction={() => {
-              setExternalNewTxOpen(true);
-              navigateTo('financial', 'Visão geral');
-            }}
-            onOpenNewQuote={() => {
-              setExternalNewQuoteOpen(true);
-              navigateTo('clients');
-            }}
-          />
-        )}
+          {route === 'dashboard' && (
+            <DashboardView
+              data={data}
+              companyEmail={companyEmail}
+              onNavigate={handleModuleNavigate}
+              onOpenNewTransaction={() => {
+                setExternalNewTxOpen(true);
+                navigateTo('financial', 'Visão geral');
+              }}
+              onOpenNewQuote={() => {
+                setExternalNewQuoteOpen(true);
+                navigateTo('clients');
+              }}
+            />
+          )}
 
-        {route === 'ai' && (
-          <OperationalAiView
-            data={data}
-            companyEmail={companyEmail}
-            onNavigate={(mod) => navigateTo(mod)}
-          />
-        )}
+          {route === 'ai' && (
+            <OperationalAiView
+              data={data}
+              companyEmail={companyEmail}
+              onNavigate={(mod) => navigateTo(mod)}
+            />
+          )}
 
-        {route === 'financial' && (
-          <FinancialView
-            uid={uid}
-            data={data}
-            companyEmail={companyEmail}
-            initialTab={financialInitialTab}
-            externalNewTxOpen={externalNewTxOpen}
-            onCloseExternalNewTx={() => setExternalNewTxOpen(false)}
-          />
-        )}
+          {route === 'financial' && (
+            <FinancialView
+              uid={uid}
+              data={data}
+              companyEmail={companyEmail}
+              initialTab={financialInitialTab}
+              externalNewTxOpen={externalNewTxOpen}
+              onCloseExternalNewTx={() => setExternalNewTxOpen(false)}
+            />
+          )}
 
-        {route === 'clients' && (
-          <ClientsQuotesView
-            uid={uid}
-            data={data}
-            companyEmail={companyEmail}
-            externalNewQuoteOpen={externalNewQuoteOpen}
-            onCloseExternalNewQuote={() => setExternalNewQuoteOpen(false)}
-            onProjectCreated={(projId) => {
-              setSelectedProjectId(projId);
-              navigateTo('planning');
-            }}
-            onNavigateToReceivables={() => {
-              navigateTo('financial', 'A receber');
-            }}
-          />
-        )}
+          {route === 'clients' && (
+            <ClientsQuotesView
+              uid={uid}
+              data={data}
+              companyEmail={companyEmail}
+              externalNewQuoteOpen={externalNewQuoteOpen}
+              onCloseExternalNewQuote={() => setExternalNewQuoteOpen(false)}
+              onProjectCreated={(projId) => {
+                setSelectedProjectId(projId);
+                navigateTo('planning');
+              }}
+              onNavigateToReceivables={() => {
+                navigateTo('financial', 'A receber');
+              }}
+            />
+          )}
 
-        {route === 'planning' && (
-          <ProjectPlanningView
-            uid={uid}
-            data={data}
-            companyEmail={companyEmail}
-            selectedProjectId={selectedProjectId}
-            onSelectProject={setSelectedProjectId}
-          />
-        )}
+          {route === 'planning' && (
+            <ProjectPlanningView
+              uid={uid}
+              data={data}
+              companyEmail={companyEmail}
+              selectedProjectId={selectedProjectId}
+              onSelectProject={setSelectedProjectId}
+            />
+          )}
 
-        {route === 'team' && (
-          <TeamView uid={uid} data={data} companyEmail={companyEmail} />
-        )}
+          {route === 'team' && (
+            <TeamView uid={uid} data={data} companyEmail={companyEmail} />
+          )}
 
-        {route === 'pops' && (
-          <PopsView uid={uid} data={data} companyEmail={companyEmail} />
-        )}
+          {route === 'pops' && (
+            <PopsView uid={uid} data={data} companyEmail={companyEmail} />
+          )}
 
-        {route === 'compliance' && (
-          <ComplianceView uid={uid} data={data} companyEmail={companyEmail} />
-        )}
+          {route === 'compliance' && (
+            <ComplianceView uid={uid} data={data} companyEmail={companyEmail} />
+          )}
 
-        {route === 'settings' && (
-          <SettingsView
-            uid={uid}
-            data={data}
-            companyEmail={companyEmail}
-            initialTab={settingsInitialTab}
-          />
-        )}
+          {route === 'settings' && (
+            <SettingsView
+              uid={uid}
+              data={data}
+              companyEmail={companyEmail}
+              initialTab={settingsInitialTab}
+            />
+          )}
+        </Suspense>
       </main>
 
       <MobileNav active={route} onSelect={(key) => navigateTo(key)} />
@@ -316,13 +369,21 @@ function ProtectedPilotisApp() {
 
   if (!isAuthorized || !user) {
     return (
-      <LoginView
-        authIssue={authIssue}
-        currentUserEmail={user?.email}
-        onLogout={logout}
-        onResendVerification={resendVerificationEmail}
-        onReloadUser={reloadUser}
-      />
+      <Suspense
+        fallback={
+          <div className="min-h-screen bg-[#F6F5F2] flex items-center justify-center p-6">
+            <ModuleLoadingFallback label="Carregando acesso..." />
+          </div>
+        }
+      >
+        <LoginView
+          authIssue={authIssue}
+          currentUserEmail={user?.email}
+          onLogout={logout}
+          onResendVerification={resendVerificationEmail}
+          onReloadUser={reloadUser}
+        />
+      </Suspense>
     );
   }
 

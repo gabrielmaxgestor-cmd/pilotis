@@ -27,12 +27,19 @@ import type {
   WeatherType,
 } from '../types/pilotis';
 import {
-  computeCriticalPathIds,
-  computeProjectDre,
-  computeProjectProgress,
-  hasStageCycle,
-} from '../utils/calculations';
-import { clampStr, formatBRL, formatDateBR, todayISO } from '../utils/formatters';
+  calcularCaminhoCriticoObra,
+  calcularCurvaSObra,
+  calcularDreObra,
+  calcularProgressoObra,
+  calcularResumoFasesEap,
+  clampStr,
+  formatBRL,
+  formatDateBR as domainFormatDateBR,
+  formatPercentBR,
+  todayISO,
+} from '../domain';
+
+const formatDateBR = (val: string | null | undefined) => domainFormatDateBR(val, '—');
 
 const PLAN_TABS = [
   'Visão geral',
@@ -162,8 +169,16 @@ export function ProjectPlanningView({
         (activeProject.status === 'Contratada' && projectStages.length === 0))
   );
 
-  const criticalIds = useMemo(() => computeCriticalPathIds(projectStages), [projectStages]);
-  const projectProgress = activeProject ? computeProjectProgress(activeProject.id, data.stages) : null;
+  const cpmResult = useMemo(
+    () => calcularCaminhoCriticoObra(projectStages),
+    [projectStages]
+  );
+  const criticalIds = useMemo(
+    () => new Set(cpmResult.etapasCriticas),
+    [cpmResult.etapasCriticas]
+  );
+  const projectProgress = activeProject ? calcularProgressoObra(activeProject.id, data.stages) : null;
+  const curvaSData = useMemo(() => calcularCurvaSObra(projectStages), [projectStages]);
   const delayedStages = projectStages.filter((s) => Boolean(s.delayJustification));
   const totalWeeks = Math.max(
     12,
@@ -176,25 +191,16 @@ export function ProjectPlanningView({
         .sort((a, b) => b.date.localeCompare(a.date))
     : [];
 
-  // Phases breakdown for Visão geral
-  const phasesList = useMemo(() => {
-    const map = new Map<string, ProjectStage[]>();
-    for (const s of projectStages) {
-      map.set(s.phase, [...(map.get(s.phase) ?? []), s]);
-    }
-    return [...map.entries()].map(([phase, list]) => {
-      const avg =
-        list.length > 0
-          ? Math.round(list.reduce((sum, x) => sum + x.progressPct, 0) / list.length)
-          : 0;
-      return { phase, stages: list, avg };
-    });
-  }, [projectStages]);
+  // Phases breakdown for Visão geral via /src/domain
+  const phasesList = useMemo(
+    () => calcularResumoFasesEap(projectStages),
+    [projectStages]
+  );
 
   function openCreateStage() {
     setEditingStage(null);
     setStWbs(`${phasesList.length + 1}.1`);
-    setStPhase(phasesList[0]?.phase || '1 · Fundação, estrutura e cobertura');
+    setStPhase(phasesList[0]?.fase || '1 · Fundação, estrutura e cobertura');
     setStName('');
     setStResp('');
     setStStartWeek('0');
@@ -233,15 +239,63 @@ export function ProjectPlanningView({
     setStageModalOpen(true);
   }
 
-  // Real-time dependency cycle check (Screen p7)
+  // Real-time dependency cycle check via src/domain caminhoCritico
   const cycleError = useMemo(() => {
     if (!stageModalOpen) return null;
     const idToCheck = editingStage?.id || '__new_stage__';
-    if (hasStageCycle(projectStages, idToCheck, stDeps)) {
+    const candidateStage: ProjectStage = editingStage
+      ? { ...editingStage, dependsOn: stDeps }
+      : {
+          ownerUid: uid,
+          id: idToCheck,
+          projectId: activeProject?.id || '',
+          wbsCode: stWbs,
+          phase: stPhase,
+          name: stName || 'Nova etapa',
+          responsible: stResp,
+          startWeek: Number(stStartWeek) || 0,
+          durationWeeks: Number(stDurWeeks) || 0,
+          baselineStartWeek: Number(stStartWeek) || 0,
+          baselineDurationWeeks: Number(stDurWeeks) || 0,
+          progressPct: Number(stProgress) || 0,
+          budgetedCost: Number(stBudget) || 0,
+          popId: stPopId,
+          dependsOn: stDeps,
+          isMilestone: (Number(stDurWeeks) || 0) === 0,
+          status: stStatus,
+          materialExpectedDate: stMatDate,
+          delayCategory: stDelayCat,
+          delayJustification: stDelayJust,
+          checklistCompleted: stChecklistDone,
+          createdBy: stActor,
+          createdAt: '',
+          updatedBy: stActor,
+          updatedAt: '',
+        };
+    const candidateStages = editingStage
+      ? projectStages.map((s) => (s.id === editingStage.id ? candidateStage : s))
+      : [...projectStages, candidateStage];
+    if (calcularCaminhoCriticoObra(candidateStages).cicloDetectado) {
       return 'Esta dependência cria um ciclo entre etapas. Remova uma das ligações para salvar.';
     }
     return null;
-  }, [stageModalOpen, editingStage, projectStages, stDeps]);
+  }, [
+    stageModalOpen,
+    editingStage,
+    projectStages,
+    stDeps,
+    activeProject,
+    stWbs,
+    stPhase,
+    stName,
+    stResp,
+    stStartWeek,
+    stDurWeeks,
+    stProgress,
+    stBudget,
+    stStatus,
+    stActor,
+  ]);
 
   async function handleSaveStage(e: React.FormEvent) {
     e.preventDefault();
@@ -647,37 +701,83 @@ export function ProjectPlanningView({
                   ) : (
                     <div className="flex flex-col gap-3">
                       {phasesList.map((ph) => (
-                        <div key={ph.phase} className="flex flex-col gap-1">
+                        <div key={ph.fase} className="flex flex-col gap-1">
                           <div className="flex justify-between text-xs">
-                            <span className="font-medium text-[#14181F]">{ph.phase}</span>
-                            <strong className="tabular-nums">{ph.avg}%</strong>
+                            <span className="font-medium text-[#14181F]">{ph.fase}</span>
+                            <strong className="tabular-nums">{ph.progressoMedioPct}%</strong>
                           </div>
-                          <ProgressBar pct={ph.avg} />
+                          <ProgressBar pct={ph.progressoMedioPct} />
                         </div>
                       ))}
                     </div>
                   )}
                 </section>
 
-                <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-3">
-                  <h2 className="text-base font-semibold text-[#14181F]">Caminho crítico</h2>
-                  {criticalIds.size === 0 ? (
-                    <p className="text-xs text-[#5B6472]">Sem etapas críticas definidas.</p>
-                  ) : (
-                    <div className="flex flex-col gap-2">
-                      {projectStages
-                        .filter((s) => criticalIds.has(s.id))
-                        .map((s) => (
-                          <div key={s.id} className="flex items-center justify-between gap-2 text-xs">
-                            <span className="font-medium text-[#14181F] truncate">
-                              {s.wbsCode} · {s.name}
-                            </span>
-                            <StatusBadge label={s.status} />
-                          </div>
-                        ))}
+                <div className="flex flex-col gap-4">
+                  <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <h2 className="text-base font-semibold text-[#14181F]">Curva S (prazo)</h2>
+                      <StatusBadge
+                        label={curvaSData.statusPrazo}
+                        tone={
+                          curvaSData.statusPrazo === 'Atrasado'
+                            ? 'bad'
+                            : curvaSData.statusPrazo === 'Em atenção'
+                            ? 'warn'
+                            : curvaSData.statusPrazo === 'Sem dados'
+                            ? 'neutral'
+                            : 'ok'
+                        }
+                      />
                     </div>
-                  )}
-                </section>
+                    {!curvaSData.possuiDados ? (
+                      <p className="text-xs text-[#5B6472]">Sem etapas para calcular a Curva S.</p>
+                    ) : (
+                      <div className="flex flex-col gap-2 text-xs">
+                        <div className="flex justify-between">
+                          <span className="text-[#5B6472]">Planejado (linha de base)</span>
+                          <strong className="tabular-nums">
+                            {formatPercentBR(curvaSData.progressoPlanejadoPct)}
+                          </strong>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-[#5B6472]">Realizado ponderado</span>
+                          <strong className="tabular-nums">
+                            {formatPercentBR(curvaSData.progressoRealizadoPct)}
+                          </strong>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-[#5B6472]">Índice de prazo (SPI)</span>
+                          <strong className="tabular-nums">
+                            {curvaSData.indicePrazo !== null
+                              ? curvaSData.indicePrazo.toFixed(2).replace('.', ',')
+                              : 'Sem dados'}
+                          </strong>
+                        </div>
+                      </div>
+                    )}
+                  </section>
+
+                  <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-3">
+                    <h2 className="text-base font-semibold text-[#14181F]">Caminho crítico</h2>
+                    {criticalIds.size === 0 ? (
+                      <p className="text-xs text-[#5B6472]">Sem etapas críticas definidas.</p>
+                    ) : (
+                      <div className="flex flex-col gap-2">
+                        {projectStages
+                          .filter((s) => criticalIds.has(s.id))
+                          .map((s) => (
+                            <div key={s.id} className="flex items-center justify-between gap-2 text-xs">
+                              <span className="font-medium text-[#14181F] truncate">
+                                {s.wbsCode} · {s.name}
+                              </span>
+                              <StatusBadge label={s.status} />
+                            </div>
+                          ))}
+                      </div>
+                    )}
+                  </section>
+                </div>
               </div>
             </>
           )}
@@ -842,7 +942,7 @@ export function ProjectPlanningView({
             <div className="flex flex-col gap-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <SegmentedControl
-                  items={['Todas as fases', ...phasesList.map((p) => p.phase)]}
+                  items={['Todas as fases', ...phasesList.map((p) => p.fase)]}
                   active={kanbanPhaseFilter}
                   onChange={setKanbanPhaseFilter}
                 />
@@ -986,6 +1086,15 @@ export function ProjectPlanningView({
                   <span className="text-[#5B6472]">Entrega prevista atual</span>
                   <strong>{formatDateBR(activeProject.forecastEndDate)}</strong>
                 </div>
+                {curvaSData.possuiDados && (
+                  <div className="flex justify-between text-sm items-center">
+                    <span className="text-[#5B6472]">Curva S (realizado / base)</span>
+                    <strong>
+                      {formatPercentBR(curvaSData.progressoRealizadoPct)} /{' '}
+                      {formatPercentBR(curvaSData.progressoPlanejadoPct)}
+                    </strong>
+                  </div>
+                )}
                 <AlertNote tone="info" title="Linha de base preservada">
                   O plano original nunca é apagado. Ao replanejar prazos, o sistema exige justificativa.
                 </AlertNote>
@@ -1090,7 +1199,7 @@ export function ProjectPlanningView({
           {tab === 'Encerramento' && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {(() => {
-                const dre = computeProjectDre(activeProject, data.transactions);
+                const projectDre = calcularDreObra(activeProject, data.transactions);
                 const doneStages = projectStages.filter((s) => s.status === 'Concluída').length;
                 return (
                   <>
@@ -1111,15 +1220,15 @@ export function ProjectPlanningView({
                       <h3 className="font-semibold text-[#14181F]">Resultado consolidado</h3>
                       <div className="flex justify-between">
                         <span className="text-[#5B6472]">Receita</span>
-                        <strong className="tabular-nums">{formatBRL(dre.revenueBudgeted)}</strong>
+                        <strong className="tabular-nums">{formatBRL(projectDre.receita.orcado)}</strong>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-[#5B6472]">Custo real lançado</span>
-                        <strong className="tabular-nums">{formatBRL(dre.totalDirectRealized)}</strong>
+                        <strong className="tabular-nums">{formatBRL(projectDre.custosTotais.realizado)}</strong>
                       </div>
                       <div className="flex justify-between font-bold">
                         <span>Margem real</span>
-                        <span className="tabular-nums">{dre.marginRealizedPct.toFixed(1)}%</span>
+                        <span className="tabular-nums">{formatPercentBR(projectDre.margemRealizadaPct)}</span>
                       </div>
                     </div>
                     <div className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-3 text-sm">

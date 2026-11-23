@@ -1,5 +1,11 @@
+import { deduplicarReceitasEParcelas } from './financeiro';
 import { roundCents } from './formatters';
-import type { ContaPagarRecord, LancamentoRecord, ObraRecord } from './types';
+import type {
+  ContaPagarRecord,
+  LancamentoRecord,
+  ObraRecord,
+  ParcelaRecord,
+} from './types';
 
 export interface LinhaDre {
   orcado: number;
@@ -54,22 +60,25 @@ function mapExpenseBucket(
   return 'bdi';
 }
 
+export type ObraDreInput = Pick<
+  ObraRecord,
+  | 'id'
+  | 'nome'
+  | 'valorContrato'
+  | 'orcadoMaoDeObra'
+  | 'orcadoEmpreita'
+  | 'orcadoEquipamentos'
+  | 'orcadoImpostos'
+  | 'orcadoBdi'
+>;
+
 export function dre(
-  obra: Pick<
-    ObraRecord,
-    | 'id'
-    | 'nome'
-    | 'valorContrato'
-    | 'orcadoMaoDeObra'
-    | 'orcadoEmpreita'
-    | 'orcadoEquipamentos'
-    | 'orcadoImpostos'
-    | 'orcadoBdi'
-  >,
+  obra: ObraDreInput,
   lancamentos: LancamentoRecord[],
 ): DreObraResult {
+  const { lancamentosUnicos } = deduplicarReceitasEParcelas(lancamentos, []);
   // Regra 6: empréstimo nunca entra no DRE (nem como receita nem como despesa operacional)
-  const validTxs = lancamentos.filter(
+  const validTxs = lancamentosUnicos.filter(
     (l) => l.obraId === obra.id && l.tipo !== 'emprestimo',
   );
 
@@ -152,6 +161,7 @@ export interface PeriodoDre {
 
 export interface DreEmpresaInput {
   lancamentos: LancamentoRecord[];
+  parcelas?: ParcelaRecord[];
   contasPagar?: ContaPagarRecord[];
 }
 
@@ -177,6 +187,12 @@ export function dreEmpresa(
   let receitaPrevista = 0;
   let receitaRealizada = 0;
 
+  const parcelas = input.parcelas ?? [];
+  const { lancamentosUnicos, parcelasAbertas } = deduplicarReceitasEParcelas(
+    input.lancamentos,
+    parcelas,
+  );
+
   const catTotals = new Map<string, { orcado: number; realizado: number }>();
   const addCat = (categoria: string, orcadoDelta: number, realizadoDelta: number) => {
     const key = categoria.trim() || 'Outros';
@@ -187,7 +203,7 @@ export function dreEmpresa(
     });
   };
 
-  for (const tx of input.lancamentos) {
+  for (const tx of lancamentosUnicos) {
     // Regra 6: empréstimo nunca entra no DRE da empresa
     if (tx.tipo === 'emprestimo') continue;
 
@@ -206,6 +222,13 @@ export function dreEmpresa(
       } else if (tx.status === 'Pago') {
         addCat(tx.categoria, 0, tx.valor);
       }
+    }
+  }
+
+  // Receita prevista das parcelas abertas com vencimento no período (sem dupla contagem)
+  for (const p of parcelasAbertas) {
+    if (inPeriod(p.vencimento, periodo)) {
+      receitaPrevista += p.valor;
     }
   }
 

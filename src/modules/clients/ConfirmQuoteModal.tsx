@@ -22,7 +22,9 @@ import type {
   ProjectContractKind,
   Quote,
 } from '../../types/pilotis';
-import { formatBRL, formatDateBR, todayISO } from '../../utils/formatters';
+import { formatBRL, formatDateBR as domainFormatDateBR, todayISO } from '../../domain';
+
+const formatDateBR = (val: string | null | undefined) => domainFormatDateBR(val, '—');
 
 export function ConfirmQuoteModal({
   open,
@@ -266,7 +268,7 @@ export function ConfirmQuoteModal({
               Ao confirmar, em uma única transação atômica, o sistema:
             </strong>
             <span>1. Cria a Obra/Contrato ({contractKind}) com status “Contratada” e congela o orçamento como “Ganho”;</span>
-            <span>2. Gera {previewParcelas.length || numericInstallments} parcela(s) (entrada + saldo) em /parcelas e no Financeiro, iniciando em {startDate ? formatDateBR(startDate) : '—'};</span>
+            <span>2. Gera {previewParcelas.length || numericInstallments} parcela(s) (entrada + saldo) em /parcelas (lançamento no Financeiro ao receber), iniciando em {startDate ? formatDateBR(startDate) : '—'};</span>
             <span>3. Gera o contrato em PDF e abre o checklist obrigatório (Contrato assinado, ART/RRT, Matrícula CNO e RT);</span>
             <span>4. Envia a obra ao Planejamento como “Aguardando modelo de cronograma”;</span>
             <span>5. Grava o registro completo na trilha de auditoria. Se qualquer passo falhar, nada é gravado.</span>

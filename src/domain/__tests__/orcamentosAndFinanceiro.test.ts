@@ -4,10 +4,26 @@ import {
   avaliarMargemContraMeta,
   classificarLancamento,
   composicaoOrcamento,
+  conciliarExtratoBancario,
+  dreEmpresa,
   gerarParcelas,
+  resumoDividas,
+  resumoFinanceiroPeriodo,
   simularPagamentoOrcamento,
   validarDadosConfirmacaoOrcamento,
+  validarLancamentoFinanceiro,
+  type AuditFields,
+  type DividaRecord,
+  type LancamentoRecord,
+  type ParcelaRecord,
 } from '../index';
+
+const META: AuditFields = {
+  createdBy: 'Sócio',
+  createdAt: '2026-11-01T10:00:00Z',
+  updatedBy: 'Sócio',
+  updatedAt: '2026-11-01T10:00:00Z',
+};
 
 describe('Orçamentos, parcelas e classificação financeira', () => {
   it('gera parcelas com entrada e ajuste exato de centavos na última parcela', () => {
@@ -140,6 +156,30 @@ describe('Orçamentos, parcelas e classificação financeira', () => {
     assert.equal(res.status, 'Não é receita');
   });
 
+  it('valida formulário financeiro exigindo obra/Empresa e bloqueando empréstimo como receita', () => {
+    const erro = validarLancamentoFinanceiro({
+      descricao: 'Empréstimo bancário',
+      categoria: 'Empréstimo',
+      tipoInformado: 'income',
+      obraId: '',
+      valor: 25000,
+    });
+    assert.equal(erro.valido, false);
+    assert.equal(erro.errosCount, 2);
+    assert.ok(erro.erroEmprestimoComoReceita);
+    assert.ok(erro.erroCentroCusto);
+
+    const ok = validarLancamentoFinanceiro({
+      descricao: 'Parcela 1/18',
+      categoria: 'Receita de obra',
+      tipoInformado: 'income',
+      obraId: 'obra_1',
+      valor: 18500,
+    });
+    assert.equal(ok.valido, true);
+    assert.equal(ok.errosCount, 0);
+  });
+
   it('separa lançamento previsto de realizado para receita e despesa', () => {
     const prevista = classificarLancamento({
       descricao: 'Parcela 2/18',
@@ -162,6 +202,237 @@ describe('Orçamentos, parcelas e classificação financeira', () => {
     assert.equal(realizada.tipo, 'despesa');
     assert.equal(realizada.natureza, 'realizado');
     assert.equal(realizada.status, 'Pago');
+  });
+
+  it('calcula resumo financeiro do período com tributos em atraso e sem somar empréstimo em receita', () => {
+    const lancamentos: LancamentoRecord[] = [
+      {
+        ...META,
+        id: 't1',
+        data: '2026-11-10',
+        vencimento: '2026-11-10',
+        descricao: 'Parcela obra A',
+        tipo: 'receita',
+        categoria: 'Receita de obra',
+        obraId: 'obra_a',
+        valor: 50000,
+        previsto: false,
+        status: 'Recebido',
+        notaFiscal: 'Não emitida',
+        formaPagamento: 'Transferência',
+        origem: 'manual',
+      },
+      {
+        ...META,
+        id: 't2',
+        data: '2026-11-05',
+        vencimento: '2026-11-05',
+        descricao: 'DAS Simples Nacional',
+        tipo: 'despesa',
+        categoria: 'Tributos',
+        obraId: 'Empresa',
+        valor: 4200,
+        previsto: true,
+        status: 'Em atraso',
+        notaFiscal: 'Não se aplica',
+        formaPagamento: 'Boleto',
+        origem: 'manual',
+      },
+      {
+        ...META,
+        id: 't3',
+        data: '2026-11-12',
+        vencimento: '2026-11-12',
+        descricao: 'Capital de giro',
+        tipo: 'emprestimo',
+        categoria: 'Empréstimo',
+        obraId: 'Empresa',
+        valor: 80000,
+        previsto: false,
+        status: 'Não é receita',
+        notaFiscal: 'Não se aplica',
+        formaPagamento: 'Transferência',
+        origem: 'manual',
+      },
+    ];
+
+    const parcelas: ParcelaRecord[] = [
+      {
+        ...META,
+        id: 'p1',
+        obraId: 'obra_a',
+        numero: 1,
+        rotulo: '1/18',
+        vencimento: '2026-11-28',
+        valor: 15000,
+        status: 'A vencer',
+        notaFiscal: 'A emitir',
+      },
+    ];
+
+    const resumo = resumoFinanceiroPeriodo(lancamentos, parcelas, '2026-11-21');
+    assert.equal(resumo.entradasMes, 65000);
+    assert.equal(resumo.saidasMes, 4200);
+    assert.equal(resumo.resultadoMes, 60800);
+    assert.equal(resumo.receitaSemNota, 50000);
+    assert.equal(resumo.tributosEmAtrasoQtd, 1);
+    assert.equal(resumo.tributosEmAtrasoValor, 4200);
+    assert.equal(resumo.recebiveisEmAbertoQtd, 1);
+    assert.equal(resumo.recebiveisEmAbertoValor, 15000);
+  });
+
+  it('calcula resumo de dívidas retornando null quando vazio e totais quando preenchido', () => {
+    const vazio = resumoDividas([]);
+    assert.equal(vazio.possuiDados, false);
+    assert.equal(vazio.dividaTotal, null);
+    assert.equal(vazio.custoMensal, null);
+
+    const dividas: DividaRecord[] = [
+      {
+        ...META,
+        id: 'd1',
+        credor: 'Banco X',
+        tipo: 'Empréstimo bancário',
+        saldoDevedor: 40000,
+        custoMensal: 1800,
+        parcelasRestantes: 24,
+        proximoVencimento: '2026-12-05',
+        status: 'Em dia',
+      },
+      {
+        ...META,
+        id: 'd2',
+        credor: 'Receita Federal',
+        tipo: 'Tributo em atraso',
+        saldoDevedor: 12000,
+        custoMensal: 0,
+        parcelasRestantes: 1,
+        proximoVencimento: '2026-11-25',
+        status: 'Em atraso',
+      },
+    ];
+    const preenchido = resumoDividas(dividas);
+    assert.equal(preenchido.possuiDados, true);
+    assert.equal(preenchido.dividaTotal, 52000);
+    assert.equal(preenchido.tributosEmAtraso, 12000);
+    assert.equal(preenchido.proximoVencimento, '2026-11-25');
+  });
+
+  it('concilia extrato OFX/CSV com status Conciliado, Sugerido, Revisar e Classificar', () => {
+    const lancamentos: LancamentoRecord[] = [
+      {
+        ...META,
+        id: 'tx_dup',
+        data: '2026-11-10',
+        vencimento: '2026-11-10',
+        descricao: 'Pagamento eletricista Casa Bela',
+        tipo: 'despesa',
+        categoria: 'Mão de obra',
+        obraId: 'obra_bela',
+        valor: 3500,
+        previsto: false,
+        status: 'Pago',
+        notaFiscal: 'Não se aplica',
+        formaPagamento: 'PIX',
+        origem: 'manual',
+      },
+    ];
+    const parcelas: ParcelaRecord[] = [
+      {
+        ...META,
+        id: 'parc_1',
+        obraId: 'obra_bela',
+        numero: 1,
+        rotulo: '1/18',
+        vencimento: '2026-11-20',
+        valor: 22000,
+        status: 'A vencer',
+        notaFiscal: 'A emitir',
+      },
+    ];
+
+    const conciliado = conciliarExtratoBancario(
+      [
+        { id: 'r1', data: '2026-11-10', descricao: 'PIX Eletricista', valorAssinado: -3500 },
+        { id: 'r2', data: '2026-11-19', descricao: 'TED Cliente A', valorAssinado: 22000 },
+        { id: 'r3', data: '2026-11-18', descricao: 'Crédito Empréstimo Giro', valorAssinado: 50000 },
+        { id: 'r4', data: '2026-11-17', descricao: 'Compra material genérico', valorAssinado: -950 },
+      ],
+      lancamentos,
+      parcelas,
+      [{ id: 'obra_bela', nome: 'Casa Bela' }],
+    );
+
+    assert.equal(conciliado[0].statusConciliacao, 'Conciliado');
+    assert.equal(conciliado[0].incluirNaImportacao, false);
+    assert.equal(conciliado[1].statusConciliacao, 'Sugerido');
+    assert.equal(conciliado[1].obraId, 'obra_bela');
+    assert.equal(conciliado[2].statusConciliacao, 'Revisar');
+    assert.equal(conciliado[2].tipo, 'emprestimo');
+    assert.equal(conciliado[2].alertaEmprestimo, true);
+    assert.equal(conciliado[3].statusConciliacao, 'Classificar');
+  });
+
+  it('calcula DRE da empresa no período separando orçado e realizado sem empréstimo', () => {
+    const dreEmp = dreEmpresa(
+      { dataInicio: '2026-11-01', dataFim: '2026-11-30' },
+      {
+        lancamentos: [
+          {
+            ...META,
+            id: 'e1',
+            data: '2026-11-10',
+            vencimento: '2026-11-10',
+            descricao: 'Receita realizada',
+            tipo: 'receita',
+            categoria: 'Receita de obra',
+            obraId: 'o1',
+            valor: 60000,
+            previsto: false,
+            status: 'Recebido',
+            notaFiscal: 'Emitida',
+            formaPagamento: 'TED',
+            origem: 'manual',
+          },
+          {
+            ...META,
+            id: 'e2',
+            data: '2026-11-15',
+            vencimento: '2026-11-15',
+            descricao: 'Folha mês',
+            tipo: 'despesa',
+            categoria: 'Folha',
+            obraId: 'Empresa',
+            valor: 24000,
+            previsto: false,
+            status: 'Pago',
+            notaFiscal: 'Não se aplica',
+            formaPagamento: 'PIX',
+            origem: 'folha',
+          },
+          {
+            ...META,
+            id: 'e3',
+            data: '2026-11-18',
+            vencimento: '2026-11-18',
+            descricao: 'Empréstimo banco',
+            tipo: 'emprestimo',
+            categoria: 'Empréstimo',
+            obraId: 'Empresa',
+            valor: 100000,
+            previsto: false,
+            status: 'Não é receita',
+            notaFiscal: 'Não se aplica',
+            formaPagamento: 'TED',
+            origem: 'manual',
+          },
+        ],
+      },
+    );
+    assert.equal(dreEmp.receitas.realizado, 60000);
+    assert.equal(dreEmp.custosTotais.realizado, 24000);
+    assert.equal(dreEmp.resultado.realizado, 36000);
+    assert.equal(dreEmp.margemRealizadaPct, 60);
   });
 
   it('valida dados obrigatórios antes de confirmar orçamento em transação', () => {
@@ -202,3 +473,4 @@ describe('Orçamentos, parcelas e classificação financeira', () => {
     assert.equal(valido.dataInicioISO, '2026-11-21');
   });
 });
+

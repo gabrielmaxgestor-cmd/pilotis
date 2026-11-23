@@ -10,22 +10,30 @@ import {
   StatusBadge,
   Tabs,
 } from '../components/ui/PilotisUI';
-import { createRecord, updateRecord } from '../services/pilotisService';
+import {
+  createRecord,
+  markInstallmentInvoiceIssued,
+  updateRecord,
+} from '../services/pilotisService';
 import type {
   ActorRole,
   ComplianceItem,
   ComplianceKind,
   ComplianceStatus,
+  Installment,
   PilotisDataState,
 } from '../types/pilotis';
-import { computeTenderReadinessPct } from '../utils/calculations';
 import {
+  calcularResumoConformidade,
   clampStr,
   diffDaysFromToday,
   formatBRL,
-  formatDateBR,
+  formatDateBR as domainFormatDateBR,
+  resolverStatusConformidade,
   todayISO,
-} from '../utils/formatters';
+} from '../domain';
+
+const formatDateBR = (val: string | null | undefined) => domainFormatDateBR(val, '—');
 
 const COMP_TABS = [
   'Obrigações',
@@ -48,7 +56,11 @@ export function ComplianceView({
   const [selectedProjectId, setSelectedProjectId] = useState<string>(data.projects[0]?.id || 'ALL');
   const [modalOpen, setModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<ComplianceItem | null>(null);
-  const [invoiceConfirmTxId, setInvoiceConfirmTxId] = useState<string>('');
+  const [invoiceConfirmTarget, setInvoiceConfirmTarget] = useState<
+    | { kind: 'transaction'; id: string; description: string }
+    | { kind: 'installment'; installment: Installment }
+    | null
+  >(null);
   const [invoiceActor, setInvoiceActor] = useState<ActorRole>('Responsável administrativo');
 
   const [saving, setSaving] = useState(false);
@@ -77,42 +89,77 @@ export function ComplianceView({
     selectedProjectId === 'ALL' || !selectedProjectId ? true : d.projectId === selectedProjectId
   );
 
-  const pendingInvoices = useMemo(
-    () =>
-      data.transactions.filter(
+  const pendingInvoices = useMemo(() => {
+    const realizedParcelaIds = new Set(
+      data.transactions
+        .filter(
+          (t) =>
+            t.entryKind === 'income' &&
+            !t.isForecast &&
+            t.status === 'Recebido' &&
+            t.installmentId
+        )
+        .map((t) => t.installmentId as string)
+    );
+    const parcelaIds = new Set(data.installments.map((inst) => inst.id));
+
+    const fromTransactions = data.transactions
+      .filter(
         (t) =>
           t.entryKind === 'income' &&
+          !(t.isForecast && t.installmentId && parcelaIds.has(t.installmentId)) &&
           (t.invoiceStatus === 'Não emitida' || t.invoiceStatus === 'A emitir')
+      )
+      .map((t) => ({
+        key: `tx_${t.id}`,
+        date: t.dueDate || t.date,
+        projectName: t.projectName,
+        description: t.description,
+        amount: t.amount,
+        invoiceStatus: t.invoiceStatus,
+        target: { kind: 'transaction' as const, id: t.id, description: t.description },
+      }));
+
+    const fromOpenInstallments = data.installments
+      .filter(
+        (inst) =>
+          inst.status !== 'Recebida' &&
+          !realizedParcelaIds.has(inst.id) &&
+          (inst.invoiceStatus === 'Não emitida' || inst.invoiceStatus === 'A emitir')
+      )
+      .map((inst) => ({
+        key: `par_${inst.id}`,
+        date: inst.dueDate,
+        projectName: inst.projectName,
+        description: `${inst.number === 0 ? 'Entrada' : `Parcela ${inst.label}`} · ${inst.clientName || inst.projectName}`,
+        amount: inst.amount,
+        invoiceStatus: inst.invoiceStatus,
+        target: { kind: 'installment' as const, installment: inst },
+      }));
+
+    return [...fromTransactions, ...fromOpenInstallments].sort((a, b) =>
+      a.date.localeCompare(b.date)
+    );
+  }, [data.transactions, data.installments]);
+
+  const todayRef = todayISO();
+
+  const complianceSummary = useMemo(
+    () =>
+      calcularResumoConformidade(
+        data.complianceItems,
+        data.transactions,
+        todayRef,
+        data.installments
       ),
-    [data.transactions]
+    [data.complianceItems, data.transactions, data.installments, todayRef]
   );
 
-  const unissuedInvoiceAmount = useMemo(() => {
-    const hasIncome = data.transactions.some((t) => t.entryKind === 'income');
-    if (!hasIncome) return null;
-    return pendingInvoices.reduce((s, t) => s + t.amount, 0);
-  }, [data.transactions, pendingInvoices]);
-
-  const obligationsDueCount = useMemo(() => {
-    if (obligations.length === 0) return null;
-    return obligations.filter((o) => {
-      if (o.status === 'Em atraso' || o.status === 'Pendente' || o.status === 'Vence em breve') return true;
-      const days = diffDaysFromToday(o.dueDate);
-      return days !== null && days <= 30 && o.status !== 'Em dia';
-    }).length;
-  }, [obligations]);
-
-  const validCertsCount = useMemo(() => {
-    if (certs.length === 0) return null;
-    return certs.filter((c) => c.status === 'Válida' || c.status === 'Em dia').length;
-  }, [certs]);
-
-  const pendingWorkDocsCount = useMemo(() => {
-    if (workDocs.length === 0) return null;
-    return workDocs.filter((d) => d.status === 'Pendente' || d.status === 'Parcial').length;
-  }, [workDocs]);
-
-  const tenderReadinessPct = computeTenderReadinessPct(data.complianceItems);
+  const unissuedInvoiceAmount = complianceSummary.receitaSemNotaPendente;
+  const obligationsDueCount = complianceSummary.obrigacoesAVencerOuAtrasadas;
+  const validCertsCount = complianceSummary.certidoesValidas;
+  const pendingWorkDocsCount = complianceSummary.documentosObraPendentes;
+  const tenderReadinessPct = complianceSummary.prontidaoLicitacoesPct;
 
   function openNewModal(defaultKind: ComplianceKind) {
     setEditingItem(null);
@@ -142,7 +189,7 @@ export function ComplianceView({
     setIssuedDate(item.issuedDate || '');
     setFileName(item.fileName || '');
     setMandatory(Boolean(item.mandatory));
-    setStatus(item.status);
+    setStatus(item.status === 'Em atraso' ? 'Pendente' : item.status);
     setNotes(item.notes || '');
     setActor('Responsável administrativo');
     setModalOpen(true);
@@ -207,26 +254,37 @@ export function ComplianceView({
 
   async function handleMarkInvoiceIssued(e: React.FormEvent) {
     e.preventDefault();
-    const tx = data.transactions.find((t) => t.id === invoiceConfirmTxId);
-    if (!tx) return;
+    if (!invoiceConfirmTarget) return;
     setSaving(true);
     try {
-      await updateRecord(
-        'transactions',
-        tx.id,
-        uid,
-        invoiceActor,
-        { invoiceStatus: 'Emitida' },
-        `Nota fiscal emitida: ${tx.description}`,
-        tx.invoiceStatus,
-        'Emitida'
-      );
-      setInvoiceConfirmTxId('');
-      setFeedback({
-        tone: 'ok',
-        title: 'Nota fiscal marcada como emitida',
-        text: `${tx.description} atualizado no Financeiro e na Conformidade.`,
-      });
+      if (invoiceConfirmTarget.kind === 'transaction') {
+        const tx = data.transactions.find((t) => t.id === invoiceConfirmTarget.id);
+        if (!tx) return;
+        await updateRecord(
+          'transactions',
+          tx.id,
+          uid,
+          invoiceActor,
+          { invoiceStatus: 'Emitida' },
+          `Nota fiscal emitida: ${tx.description}`,
+          tx.invoiceStatus,
+          'Emitida'
+        );
+        setFeedback({
+          tone: 'ok',
+          title: 'Nota fiscal marcada como emitida',
+          text: `${tx.description} atualizado no Financeiro e na Conformidade.`,
+        });
+      } else {
+        const inst = invoiceConfirmTarget.installment;
+        await markInstallmentInvoiceIssued(uid, invoiceActor, inst);
+        setFeedback({
+          tone: 'ok',
+          title: 'Nota fiscal marcada como emitida',
+          text: `${inst.label} (${inst.projectName}) atualizada em /parcelas e na Conformidade.`,
+        });
+      }
+      setInvoiceConfirmTarget(null);
     } finally {
       setSaving(false);
     }
@@ -342,7 +400,12 @@ export function ComplianceView({
                       <td className="py-3 px-3 text-[#5B6472]">{o.competence || '—'}</td>
                       <td className="py-3 px-3 text-[#14181F] tabular-nums">{formatDateBR(o.dueDate)}</td>
                       <td className="py-3 px-3">
-                        <StatusBadge label={o.status} />
+                        <StatusBadge
+                          label={resolverStatusConformidade(
+                            { status: o.status, vencimento: o.dueDate },
+                            todayRef
+                          )}
+                        />
                       </td>
                       <td className="py-3 px-3 text-right">
                         <button
@@ -364,7 +427,12 @@ export function ComplianceView({
                 <div key={o.id} className="border border-[#E4E1DA] rounded-xl p-4 flex flex-col gap-2">
                   <div className="flex items-center justify-between gap-2">
                     <strong className="text-sm text-[#14181F]">{o.title}</strong>
-                    <StatusBadge label={o.status} />
+                    <StatusBadge
+                      label={resolverStatusConformidade(
+                        { status: o.status, vencimento: o.dueDate },
+                        todayRef
+                      )}
+                    />
                   </div>
                   <span className="text-xs text-[#5B6472]">
                     Vencimento: {formatDateBR(o.dueDate)} · {o.category}
@@ -408,13 +476,17 @@ export function ComplianceView({
                   </thead>
                   <tbody>
                     {certs.map((c) => {
+                      const resolvedStatus = resolverStatusConformidade(
+                        { status: c.status, vencimento: c.dueDate },
+                        todayRef
+                      );
                       const days = diffDaysFromToday(c.dueDate);
                       const statusDisplay =
-                        days !== null && days < 0
+                        resolvedStatus === 'Em atraso'
                           ? 'Em atraso'
-                          : days !== null && days <= 30 && c.status !== 'Em atraso'
+                          : days !== null && days >= 0 && days <= 30 && resolvedStatus !== 'Válida'
                           ? `Vence em ${days}d`
-                          : c.status;
+                          : resolvedStatus;
                       return (
                         <tr key={c.id} className="border-b border-[#E4E1DA] text-[13px]">
                           <td className="py-3 px-3 font-medium text-[#14181F]">{c.title}</td>
@@ -444,7 +516,12 @@ export function ComplianceView({
                   <div key={c.id} className="border border-[#E4E1DA] rounded-xl p-4 flex flex-col gap-2">
                     <div className="flex items-center justify-between gap-2">
                       <strong className="text-sm text-[#14181F]">{c.title}</strong>
-                      <StatusBadge label={c.status} />
+                      <StatusBadge
+                        label={resolverStatusConformidade(
+                          { status: c.status, vencimento: c.dueDate },
+                          todayRef
+                        )}
+                      />
                     </div>
                     <span className="text-xs text-[#5B6472]">Validade: {formatDateBR(c.dueDate)}</span>
                     <button
@@ -576,23 +653,23 @@ export function ComplianceView({
                     </tr>
                   </thead>
                   <tbody>
-                    {pendingInvoices.map((tx) => (
-                      <tr key={tx.id} className="border-b border-[#E4E1DA] text-[13px]">
+                    {pendingInvoices.map((inv) => (
+                      <tr key={inv.key} className="border-b border-[#E4E1DA] text-[13px]">
                         <td className="py-3 px-3 text-[#5B6472] tabular-nums">
-                          {formatDateBR(tx.dueDate || tx.date)}
+                          {formatDateBR(inv.date)}
                         </td>
-                        <td className="py-3 px-3 font-medium text-[#14181F]">{tx.projectName}</td>
-                        <td className="py-3 px-3 text-[#5B6472]">{tx.description}</td>
+                        <td className="py-3 px-3 font-medium text-[#14181F]">{inv.projectName}</td>
+                        <td className="py-3 px-3 text-[#5B6472]">{inv.description}</td>
                         <td className="py-3 px-3 text-right font-semibold text-[#14181F] tabular-nums">
-                          {formatBRL(tx.amount)}
+                          {formatBRL(inv.amount)}
                         </td>
                         <td className="py-3 px-3">
-                          <StatusBadge label={tx.invoiceStatus} />
+                          <StatusBadge label={inv.invoiceStatus} />
                         </td>
                         <td className="py-3 px-3 text-right">
                           <button
                             type="button"
-                            onClick={() => setInvoiceConfirmTxId(tx.id)}
+                            onClick={() => setInvoiceConfirmTarget(inv.target)}
                             className="px-3 py-1 rounded-lg border border-[#E4E1DA] text-xs font-semibold text-[#14181F] hover:bg-[#F0EEE9] cursor-pointer"
                           >
                             Marcar como emitida
@@ -605,18 +682,18 @@ export function ComplianceView({
               </div>
 
               <div className="md:hidden flex flex-col gap-3">
-                {pendingInvoices.map((tx) => (
-                  <div key={tx.id} className="border border-[#E4E1DA] rounded-xl p-4 flex flex-col gap-2">
+                {pendingInvoices.map((inv) => (
+                  <div key={inv.key} className="border border-[#E4E1DA] rounded-xl p-4 flex flex-col gap-2">
                     <div className="flex items-center justify-between gap-2">
-                      <strong className="text-sm text-[#14181F]">{tx.projectName}</strong>
-                      <StatusBadge label={tx.invoiceStatus} />
+                      <strong className="text-sm text-[#14181F]">{inv.projectName}</strong>
+                      <StatusBadge label={inv.invoiceStatus} />
                     </div>
-                    <span className="text-xs text-[#5B6472]">{tx.description}</span>
+                    <span className="text-xs text-[#5B6472]">{inv.description}</span>
                     <div className="flex items-center justify-between">
-                      <strong className="text-sm tabular-nums">{formatBRL(tx.amount)}</strong>
+                      <strong className="text-sm tabular-nums">{formatBRL(inv.amount)}</strong>
                       <button
                         type="button"
-                        onClick={() => setInvoiceConfirmTxId(tx.id)}
+                        onClick={() => setInvoiceConfirmTarget(inv.target)}
                         className="px-3 py-1 rounded-lg border border-[#E4E1DA] text-xs font-semibold cursor-pointer"
                       >
                         Marcar emitida
@@ -737,7 +814,6 @@ export function ComplianceView({
                 <option value="Válida">Válida</option>
                 <option value="Anexado">Anexado</option>
                 <option value="Vence em breve">Vence em breve</option>
-                <option value="Em atraso">Em atraso</option>
                 <option value="Parcial">Parcial</option>
               </select>
             </div>
@@ -875,8 +951,8 @@ export function ComplianceView({
 
       {/* Invoice Issued Modal */}
       <Modal
-        open={Boolean(invoiceConfirmTxId)}
-        onClose={() => setInvoiceConfirmTxId('')}
+        open={Boolean(invoiceConfirmTarget)}
+        onClose={() => setInvoiceConfirmTarget(null)}
         title="Confirmar emissão de nota fiscal"
       >
         <form onSubmit={handleMarkInvoiceIssued} className="flex flex-col gap-4">
@@ -887,7 +963,7 @@ export function ComplianceView({
           <div className="flex justify-end gap-2 pt-2">
             <button
               type="button"
-              onClick={() => setInvoiceConfirmTxId('')}
+              onClick={() => setInvoiceConfirmTarget(null)}
               className="px-4 py-2 rounded-lg border border-[#E4E1DA] text-sm font-semibold text-[#14181F] cursor-pointer"
             >
               Cancelar

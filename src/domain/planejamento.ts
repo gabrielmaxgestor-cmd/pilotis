@@ -344,3 +344,54 @@ export function curvaS(
     pontos,
   };
 }
+
+export function progressoObra(
+  etapas: Array<
+    Pick<EtapaRecord, 'custoOrcado' | 'duracaoSemanas' | 'progressoPct' | 'marco'>
+  >,
+): number | null {
+  const nonMilestone = etapas.filter((e) => !e.marco);
+  if (nonMilestone.length === 0) return null;
+
+  const totalWeight = nonMilestone.reduce(
+    (sum, st) => sum + Math.max(1, st.custoOrcado || st.duracaoSemanas || 1),
+    0,
+  );
+  const completedWeight = nonMilestone.reduce(
+    (sum, st) =>
+      sum +
+      Math.max(1, st.custoOrcado || st.duracaoSemanas || 1) *
+        (Math.min(100, Math.max(0, st.progressoPct || 0)) / 100),
+    0,
+  );
+
+  return Math.round((completedWeight / totalWeight) * 100);
+}
+
+export interface ResumoFaseEap {
+  fase: string;
+  totalEtapas: number;
+  progressoMedioPct: number;
+  custoOrcado: number;
+}
+
+export function resumoFasesEap(
+  etapas: Array<Pick<EtapaRecord, 'fase' | 'progressoPct' | 'custoOrcado'>>,
+): ResumoFaseEap[] {
+  const map = new Map<string, { sumPct: number; count: number; custo: number }>();
+  for (const st of etapas) {
+    const key = st.fase || 'Geral';
+    const cur = map.get(key) ?? { sumPct: 0, count: 0, custo: 0 };
+    cur.sumPct += Math.min(100, Math.max(0, st.progressoPct || 0));
+    cur.count += 1;
+    cur.custo += Math.max(0, st.custoOrcado || 0);
+    map.set(key, cur);
+  }
+  return Array.from(map.entries()).map(([fase, v]) => ({
+    fase,
+    totalEtapas: v.count,
+    progressoMedioPct: v.count > 0 ? Math.round(v.sumPct / v.count) : 0,
+    custoOrcado: roundCents(v.custo),
+  }));
+}
+

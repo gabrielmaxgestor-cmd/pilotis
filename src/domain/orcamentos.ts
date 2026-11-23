@@ -5,7 +5,13 @@ import {
   parseDateBRToISO,
   roundCents,
 } from './formatters';
-import type { NotaFiscalStatus, ParcelaStatus } from './types';
+import type {
+  ActorRole,
+  LancamentoRecord,
+  NotaFiscalStatus,
+  ParcelaRecord,
+  ParcelaStatus,
+} from './types';
 
 export interface ParcelaGerada {
   numero: number;
@@ -336,3 +342,115 @@ export function validarDadosConfirmacaoOrcamento(
   };
 }
 
+export interface ResumoFunilOrcamentosResult {
+  abertosCount: number;
+  valorFunil: number;
+  previsaoPonderada: number;
+  fechadosCount: number;
+  ganhosCount: number;
+  taxaConversaoPct: number | null;
+}
+
+export function resumoFunilOrcamentos(
+  orcamentos: Array<{
+    status: string;
+    valorTotal: number;
+    probabilidadePct: number;
+  }>,
+): ResumoFunilOrcamentosResult {
+  const abertos = orcamentos.filter(
+    (q) =>
+      q.status === 'Rascunho' ||
+      q.status === 'Enviado' ||
+      q.status === 'Em negociação',
+  );
+  const valorFunil = roundCents(abertos.reduce((s, q) => s + (q.valorTotal || 0), 0));
+  const previsaoPonderada = roundCents(
+    abertos.reduce(
+      (s, q) => s + (q.valorTotal || 0) * ((q.probabilidadePct || 0) / 100),
+      0,
+    ),
+  );
+  const fechados = orcamentos.filter(
+    (q) => q.status === 'Ganho' || q.status === 'Perdido',
+  );
+  const ganhos = orcamentos.filter((q) => q.status === 'Ganho');
+  const taxaConversaoPct =
+    fechados.length > 0 ? Math.round((ganhos.length / fechados.length) * 100) : null;
+
+  return {
+    abertosCount: abertos.length,
+    valorFunil,
+    previsaoPonderada,
+    fechadosCount: fechados.length,
+    ganhosCount: ganhos.length,
+    taxaConversaoPct,
+  };
+}
+
+export interface PrepararRecebimentoParcelaInput {
+  parcela: ParcelaRecord;
+  dataRecebimento: string;
+  actor: ActorRole;
+  projetoNome: string;
+  clienteNome?: string;
+  formaPagamento?: string;
+  transactionId?: string;
+}
+
+export interface PrepararRecebimentoParcelaResult {
+  parcelaAtualizada: ParcelaRecord;
+  lancamentoRealizado: LancamentoRecord;
+}
+
+export function prepararRecebimentoParcela(
+  input: PrepararRecebimentoParcelaInput,
+): PrepararRecebimentoParcelaResult {
+  const { parcela, actor, projetoNome, clienteNome, formaPagamento, transactionId } = input;
+  if (parcela.status === 'Recebida') {
+    throw new Error('Esta parcela já foi registrada como recebida.');
+  }
+
+  const receivedISO = parseDateBRToISO(input.dataRecebimento);
+  if (!receivedISO) {
+    throw new Error(`Data de recebimento inválida: "${input.dataRecebimento}"`);
+  }
+
+  const timestampISO = `${receivedISO}T12:00:00Z`;
+  const isDownPayment = parcela.numero === 0;
+  const suffix = clienteNome?.trim() ? ` (${clienteNome.trim()})` : '';
+  const descricao = isDownPayment
+    ? `Entrada · ${projetoNome}${suffix}`
+    : `Parcela ${parcela.rotulo} · ${projetoNome}${suffix}`;
+
+  const parcelaAtualizada: ParcelaRecord = {
+    ...parcela,
+    status: 'Recebida',
+    dataRecebimento: receivedISO,
+    updatedBy: actor,
+    updatedAt: timestampISO,
+  };
+
+  const lancamentoRealizado: LancamentoRecord = {
+    id: transactionId || `tx_${parcela.id}`,
+    data: receivedISO,
+    vencimento: parcela.vencimento,
+    descricao,
+    tipo: 'receita',
+    categoria: 'Receita de obra',
+    obraId: parcela.obraId,
+    valor: parcela.valor,
+    previsto: false,
+    status: 'Recebido',
+    notaFiscal: parcela.notaFiscal,
+    formaPagamento: formaPagamento?.trim() || 'Transferência',
+    origem: 'orcamento',
+    parcelaId: parcela.id,
+    createdBy: actor,
+    createdAt: timestampISO,
+    updatedBy: actor,
+    updatedAt: timestampISO,
+  };
+
+  return { parcelaAtualizada, lancamentoRealizado };
+}

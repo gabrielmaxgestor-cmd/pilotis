@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   autoSuggestColumnMapping,
+  buildBackupWorkbookSheets,
   buildImportPreviewRows,
   parseCsvText,
+  parseSpreadsheetFile,
   sanitizeSpreadsheetCell,
 } from '../../utils/spreadsheet';
 
@@ -68,5 +70,63 @@ describe('spreadsheet import and export helpers', () => {
     assert.equal(sanitizeSpreadsheetCell('@SUM(A1:A2)'), "'@SUM(A1:A2)");
     assert.equal(sanitizeSpreadsheetCell('Obra Residencial'), 'Obra Residencial');
     assert.equal(sanitizeSpreadsheetCell(1500), 1500);
+  });
+
+  it('rejeita arquivo legado .xls e orienta exportar para .xlsx ou .csv', async () => {
+    const fakeXls = new File(['dummy'], 'legado.xls', { type: 'application/vnd.ms-excel' });
+    await assert.rejects(() => parseSpreadsheetFile(fakeXls), /\.xls legado/i);
+  });
+
+  it('gera todas as abas de backup em .xlsx com sanitização de células', () => {
+    const sheets = buildBackupWorkbookSheets({
+      settings: null,
+      clients: [],
+      quotes: [],
+      projects: [],
+      installments: [],
+      stages: [],
+      dailyLogs: [],
+      transactions: [
+        {
+          id: 'tx_1',
+          ownerUid: 'uid_empresa',
+          date: '2026-11-10',
+          dueDate: '2026-11-10',
+          description: '=HYPERLINK("http://evil")',
+          entryKind: 'expense',
+          category: 'Material',
+          projectId: 'empresa',
+          projectName: 'Empresa',
+          amount: 1250,
+          isForecast: false,
+          status: 'Pago',
+          paymentMethod: 'PIX',
+          invoiceStatus: 'Emitida',
+          installmentLabel: '',
+          quoteId: '',
+          debtId: '',
+          source: 'manual',
+          createdAt: '2026-11-10T10:00:00Z',
+          createdBy: 'Sócio',
+          updatedBy: 'Sócio',
+        },
+      ],
+      debts: [],
+      employees: [],
+      allocations: [],
+      pops: [],
+      complianceItems: [],
+      tenders: [],
+      warrantyCalls: [],
+      auditLogs: [],
+    });
+
+    assert.equal(sheets.length, 12);
+    const txSheet = sheets.find((s) => s.sheet === 'Lancamentos');
+    assert.ok(txSheet);
+    assert.equal(txSheet.data.length, 2);
+    const firstRow = txSheet.data[1];
+    const descCell = firstRow[2] as { value?: unknown };
+    assert.equal(descCell.value, "'=HYPERLINK(\"http://evil\")");
   });
 });

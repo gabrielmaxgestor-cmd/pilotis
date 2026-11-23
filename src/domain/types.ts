@@ -106,7 +106,8 @@ export interface ObraRecord extends AuditFields {
 }
 
 /* 5. parcelas */
-export type ParcelaStatus = 'A vencer' | 'Recebida' | 'Em atraso';
+export type ParcelaStatusArmazenado = 'A vencer' | 'Recebida';
+export type ParcelaStatus = ParcelaStatusArmazenado | 'Em atraso';
 export type NotaFiscalStatus = 'Emitida' | 'A emitir' | 'Não emitida' | 'Não se aplica';
 
 export interface ParcelaRecord extends AuditFields {

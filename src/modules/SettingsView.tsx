@@ -44,9 +44,11 @@ import type {
 import {
   clampStr,
   formatBRL,
-  formatDateBR,
+  formatDateBR as domainFormatDateBR,
   formatTimestampBR,
-} from '../utils/formatters';
+} from '../domain';
+
+const formatDateBR = (val: string | null | undefined) => domainFormatDateBR(val, '—');
 import {
   buildImportPreviewRows,
   exportBackupJson,
@@ -359,9 +361,11 @@ export function SettingsView({
       setSheetData(parsed);
       setColumnMapping(parsed.suggestedMapping);
       setImportStep(2);
-    } catch {
+    } catch (err) {
       setImportError(
-        'Não foi possível ler o arquivo enviado. Verifique se é um .csv ou .xlsx válido.'
+        err instanceof Error && err.message
+          ? err.message
+          : 'Não foi possível ler o arquivo enviado. Verifique se é um .csv ou .xlsx válido.'
       );
     }
   }
@@ -1071,20 +1075,20 @@ export function SettingsView({
                 Importar planilha financeira atual (CSV ou XLSX)
               </h2>
               <p className="text-sm text-[#5B6472]">
-                Envie um arquivo Excel (.xlsx/.xls) ou CSV (.csv/.txt). Nenhum registro é gravado antes de você relacionar as colunas e confirmar na revisão final. Meses sem movimentação permanecem vazios.
+                Envie um arquivo Excel (.xlsx) ou CSV (.csv/.txt). Nenhum registro é gravado antes de você relacionar as colunas e confirmar na revisão final. Meses sem movimentação permanecem vazios.
               </p>
 
               <label className="border-2 border-dashed border-[#E4E1DA] rounded-[12px] p-8 text-center flex flex-col items-center gap-2 cursor-pointer hover:bg-[#F6F5F2]">
                 <Upload className="w-6 h-6 text-[#1F3A5F]" />
                 <span className="text-sm font-semibold text-[#14181F]">
-                  Selecionar arquivo .xlsx, .xls ou .csv
+                  Selecionar arquivo .xlsx ou .csv
                 </span>
                 <span className="text-xs text-[#5B6472]">
                   Ou cole as linhas CSV manualmente abaixo
                 </span>
                 <input
                   type="file"
-                  accept=".csv,.txt,.tsv,.xlsx,.xls"
+                  accept=".csv,.txt,.tsv,.xlsx"
                   onChange={handleSpreadsheetFileUpload}
                   className="sr-only"
                 />
@@ -1520,7 +1524,7 @@ export function SettingsView({
                 <Button
                   type="button"
                   variant="primary"
-                  onClick={() => exportBackupWorkbookXlsx(data)}
+                  onClick={() => void exportBackupWorkbookXlsx(data)}
                 >
                   <FileSpreadsheet className="w-4 h-4" /> Exportar planilha (.xlsx)
                 </Button>
