@@ -11,3 +11,5 @@ export * from './conformidade';
 export * from './indicadores';
 export * from './pilotisAdapters';
 export * from './aiContext';
+
+export * from './bankStatement';

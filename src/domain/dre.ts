@@ -15,6 +15,7 @@ export interface LinhaDre {
 }
 
 export interface DreObraResult {
+  possuiRealizado: boolean;
   obraId: string;
   obraNome: string;
   receita: LinhaDre;
@@ -139,6 +140,7 @@ export function dre(
       : 0;
 
   return {
+    possuiRealizado: validTxs.some((tx) => !tx.previsto && (tx.status === 'Recebido' || tx.status === 'Pago')),
     obraId: obra.id,
     obraNome: obra.nome,
     receita,
@@ -166,6 +168,7 @@ export interface DreEmpresaInput {
 }
 
 export interface DreEmpresaResult {
+  possuiRealizado: boolean;
   periodo: PeriodoDre;
   receitas: LinhaDre;
   despesasPorCategoria: Record<string, LinhaDre>;
@@ -186,9 +189,11 @@ export function dreEmpresa(
 ): DreEmpresaResult {
   let receitaPrevista = 0;
   let receitaRealizada = 0;
+  let possuiRealizado = false;
 
   const parcelas = input.parcelas ?? [];
-  const { lancamentosUnicos, parcelasAbertas } = deduplicarReceitasEParcelas(
+  const parcelaIds = new Set(parcelas.map((parcela) => parcela.id));
+  const { lancamentosUnicos } = deduplicarReceitasEParcelas(
     input.lancamentos,
     parcelas,
   );
@@ -207,26 +212,27 @@ export function dreEmpresa(
     // Regra 6: empréstimo nunca entra no DRE da empresa
     if (tx.tipo === 'emprestimo') continue;
 
-    const refDate = tx.previsto ? tx.vencimento || tx.data : tx.data;
-    if (!inPeriod(refDate, periodo)) continue;
+    const wasPlanned = (tx.previsto || tx.originalmentePrevisto) &&
+      inPeriod(tx.vencimento || tx.data, periodo);
+    const realizedInPeriod = !tx.previsto && inPeriod(tx.data, periodo);
 
     if (tx.tipo === 'receita') {
-      if (tx.previsto) {
-        receitaPrevista += tx.valor;
-      } else if (tx.status === 'Recebido') {
+      if (wasPlanned && (!tx.parcelaId || !parcelaIds.has(tx.parcelaId))) receitaPrevista += tx.valor;
+      if (realizedInPeriod && tx.status === 'Recebido') {
         receitaRealizada += tx.valor;
+        possuiRealizado = true;
       }
     } else if (tx.tipo === 'despesa') {
-      if (tx.previsto) {
-        addCat(tx.categoria, tx.valor, 0);
-      } else if (tx.status === 'Pago') {
+      if (wasPlanned) addCat(tx.categoria, tx.valor, 0);
+      if (realizedInPeriod && tx.status === 'Pago') {
         addCat(tx.categoria, 0, tx.valor);
+        possuiRealizado = true;
       }
     }
   }
 
-  // Receita prevista das parcelas abertas com vencimento no período (sem dupla contagem)
-  for (const p of parcelasAbertas) {
+  // O orçamento conserva os vencimentos originais após receber as parcelas.
+  for (const p of parcelas) {
     if (inPeriod(p.vencimento, periodo)) {
       receitaPrevista += p.valor;
     }
@@ -260,6 +266,7 @@ export function dreEmpresa(
 
   return {
     periodo,
+    possuiRealizado,
     receitas,
     despesasPorCategoria,
     custosTotais,

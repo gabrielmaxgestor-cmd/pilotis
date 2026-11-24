@@ -274,6 +274,20 @@ export function simularPagamentoOrcamento(
   };
 }
 
+export function simulateCommercialCash(input: SimulacaoPagamentoInput) {
+  const payment = simularPagamentoOrcamento(input);
+  const quarterIncome = payment.parcelas
+    .filter((installment) => installment.numero <= 2)
+    .reduce((sum, installment) => sum + installment.valor, 0);
+  const monthlyPayroll = input.folhaMensalEstimada ?? 0;
+  return {
+    ...payment,
+    quarterGap: monthlyPayroll > 0
+      ? roundCents(Math.max(0, monthlyPayroll * 3 - quarterIncome))
+      : null,
+  };
+}
+
 export interface ConfirmacaoOrcamentoInput {
   clienteId?: string | null;
   valorTotal?: number | null;

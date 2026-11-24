@@ -209,10 +209,13 @@ export interface FinancialTransaction extends AuditMeta {
   projectName: string;
   amount: number;
   isForecast: boolean;
+  wasForecast?: boolean;
+  statementKey?: string;
   status: TransactionStatus;
   invoiceStatus: InvoiceStatus;
   paymentMethod: string;
   receiptRef?: string;
+  receiptFile?: { name: string; mimeType: string; content: Bytes };
   installmentLabel: string;
   installmentId?: string;
   quoteId: string;

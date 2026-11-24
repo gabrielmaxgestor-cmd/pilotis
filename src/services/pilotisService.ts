@@ -9,12 +9,16 @@ import {
   serverTimestamp,
   where,
   writeBatch,
+  type DocumentData,
+  type DocumentReference,
+  type Transaction,
   type Unsubscribe,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import type {
   ActorRole,
   CompanySettings,
+  Debt,
   FinancialTransaction,
   Installment,
   PilotisDataState,
@@ -30,6 +34,8 @@ import {
   formatBRL,
   formatDateBR as domainFormatDateBR,
   gerarParcelas,
+  isValidISODate,
+  validarLancamentoFinanceiro,
   normalizeBRDateToISO,
   resolverStatusParcela,
   todayISO,
@@ -846,111 +852,210 @@ export async function applyScheduleTemplateToProject(params: {
   }
 }
 
+type TransactionPayload = Omit<FinancialTransaction, keyof import('../types/pilotis').AuditMeta | 'id'>;
+type LoanDetails = Pick<Debt, 'creditor' | 'debtType'> & Partial<Pick<Debt, 'remainingInstallments' | 'nextDueDate' | 'monthlyCost'>>;
+
+function auditFields(uid: string, actor: ActorRole) {
+  return {
+    ownerUid: uid, createdBy: actor, updatedBy: actor,
+    createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+  };
+}
+
+function validateTransaction(row: TransactionPayload) {
+  const result = validarLancamentoFinanceiro({
+    descricao: row.description, categoria: row.category,
+    tipoInformado: row.entryKind, obraId: row.projectId, valor: row.amount,
+  });
+  const error = result.erroEmprestimoComoReceita ?? result.erroCentroCusto ?? result.erroValorOuDescricao;
+  if (error) throw new Error(error);
+  if (!isValidISODate(row.date) || (row.dueDate && !isValidISODate(row.dueDate))) {
+    throw new Error('Informe uma data e um vencimento válidos.');
+  }
+}
+
+function stageNewTransaction(
+  writer: { set(ref: DocumentReference, data: DocumentData): void },
+  uid: string,
+  actor: ActorRole,
+  row: TransactionPayload,
+  id: string,
+  loan?: LoanDetails,
+) {
+  const debtRef = row.entryKind === 'loan' ? doc(db, 'debts', 'debt-' + id) : null;
+  if (debtRef) {
+    writer.set(debtRef, {
+      creditor: clampStr(loan?.creditor || row.description, 140),
+      debtType: loan?.debtType ?? 'Empréstimo bancário',
+      ...(loan?.remainingInstallments != null ? { remainingInstallments: loan.remainingInstallments } : {}),
+      ...(loan?.nextDueDate ? { nextDueDate: loan.nextDueDate } : {}),
+      ...(loan?.monthlyCost != null ? { monthlyCost: loan.monthlyCost } : {}),
+      principalBalance: row.amount,
+      status: 'Em uso',
+      ...auditFields(uid, actor),
+    });
+  }
+  writer.set(doc(db, 'transactions', id), {
+    ...row,
+    ...(debtRef ? { debtId: debtRef.id } : {}),
+    ...auditFields(uid, actor),
+  });
+}
+
+export async function recordFinancialTransaction(
+  uid: string, actor: ActorRole, row: TransactionPayload, receipt?: File, loan?: LoanDetails,
+): Promise<void> {
+  validateTransaction(row);
+  if (!row.paymentMethod.trim()) throw new Error('Informe a forma de pagamento ou recebimento.');
+  if (row.entryKind === 'loan' && !loan?.creditor.trim()) throw new Error('Informe o credor do empréstimo.');
+  const receiptFile = receipt ? await readReceiptFile(receipt) : undefined;
+  const id = generateId('tx');
+  const batch = writeBatch(db);
+  stageNewTransaction(batch, uid, actor, {
+    ...row, ...(receiptFile ? { receiptFile } : {}),
+  }, id, loan);
+  batch.set(doc(db, 'auditLogs', generateId('aud')), {
+    ownerUid: uid, registeredBy: actor, action: 'Criação', entityType: 'transactions',
+    summary: clampStr('Lançamento ' + row.description + ' (' + formatBRL(row.amount) + ')', 240),
+    createdAt: serverTimestamp(),
+  });
+  await batch.commit();
+}
+
+const RECEIPT_MAX_BYTES = 700 * 1024;
+
+async function readReceiptFile(file: File) {
+  if (file.size === 0 || file.size > RECEIPT_MAX_BYTES) {
+    throw new Error('Anexe um comprovante de até 700 KB.');
+  }
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const isPdf = bytes.length >= 5 && new TextDecoder().decode(bytes.subarray(0, 5)) === '%PDF-';
+  const isPng = [137, 80, 78, 71, 13, 10, 26, 10].every((byte, index) => bytes[index] === byte);
+  const isJpeg = bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
+  const mimeType = isPdf ? 'application/pdf' : isPng ? 'image/png' : isJpeg ? 'image/jpeg' : '';
+  if (!mimeType) throw new Error('Anexe um comprovante em PDF, PNG ou JPEG.');
+  return { name: clampStr(file.name, 160), mimeType, content: Bytes.fromUint8Array(bytes) };
+}
+
+async function readInstallmentForReceipt(tx: Transaction, uid: string, installmentId: string) {
+  const ref = doc(db, 'parcelas', installmentId);
+  const snap = await tx.get(ref);
+  if (!snap.exists()) throw new InstallmentValidationError('Parcela não encontrada.');
+  const installment = snap.data() as Installment;
+  if (installment.ownerUid !== uid || installment.status === 'Recebida') {
+    throw new InstallmentValidationError('A parcela já foi recebida ou não pertence à empresa.');
+  }
+
+  const previousRef = installment.transactionId ? doc(db, 'transactions', installment.transactionId) : null;
+  const previous = previousRef ? (await tx.get(previousRef)).data() as FinancialTransaction | undefined : undefined;
+  if (previous && (
+    previous.ownerUid !== uid || previous.entryKind !== 'income' ||
+    previous.projectId !== installment.projectId ||
+    (previous.installmentId && previous.installmentId !== installmentId)
+  )) {
+    throw new InstallmentValidationError('O lançamento associado à parcela precisa ser revisado.');
+  }
+  return { ref, installment, previousRef, previous };
+}
+
+function stageInstallmentReceipt(
+  tx: Transaction,
+  uid: string,
+  actor: ActorRole,
+  installmentId: string,
+  context: Awaited<ReturnType<typeof readInstallmentForReceipt>>,
+  receipt: { date: string; paymentMethod: string; statementKey?: string },
+  newTransactionId = generateId('tx'),
+) {
+  const { ref, installment, previousRef, previous } = context;
+  const txRef = previous && previousRef ? previousRef : doc(db, 'transactions', newTransactionId);
+  const movement = {
+    date: receipt.date,
+    dueDate: installment.dueDate,
+    amount: installment.amount,
+    installmentId,
+    isForecast: false,
+    status: 'Recebido',
+    invoiceStatus: installment.invoiceStatus || 'A emitir',
+    paymentMethod: receipt.paymentMethod,
+    ...(receipt.statementKey ? { statementKey: receipt.statementKey } : {}),
+    updatedBy: actor,
+    updatedAt: serverTimestamp(),
+  };
+  if (previous && previousRef) {
+    tx.update(txRef, movement);
+  } else {
+    tx.set(txRef, {
+      ...auditFields(uid, actor), ...movement,
+      entryKind: 'income',
+      category: 'Receita de obra',
+      description: clampStr('Parcela ' + installment.label + ' · ' + installment.projectName, 200),
+      projectId: installment.projectId,
+      projectName: installment.projectName || '',
+      installmentLabel: installment.label,
+      quoteId: installment.quoteId,
+      source: 'orcamento',
+    });
+  }
+  tx.update(ref, {
+    status: 'Recebida', receivedDate: receipt.date, transactionId: txRef.id,
+    updatedBy: actor, updatedAt: serverTimestamp(),
+  });
+  tx.set(doc(db, 'auditLogs', generateId('aud')), {
+    ownerUid: uid, registeredBy: actor, action: 'Atualização', entityType: 'parcelas',
+    summary: clampStr('Parcela recebida: ' + installment.label + ' · ' + installment.projectName, 240),
+    beforeValue: resolverStatusParcela({ status: installment.status, vencimento: installment.dueDate }, receipt.date),
+    afterValue: 'Recebida · ' + formatDateBR(receipt.date) + ' · ' + formatBRL(installment.amount),
+    createdAt: serverTimestamp(),
+  });
+}
+
 export async function markInstallmentReceived(
   uid: string,
   actor: ActorRole,
-  installment: Installment
+  installment: Installment,
+  date: string,
+  paymentMethod: string,
 ): Promise<void> {
-  const receivedDate = todayISO();
-  const parcelaRef = doc(db, 'parcelas', installment.id);
-
-  try {
-    await runTransaction(db, async (tx) => {
-      const parcelaSnap = await tx.get(parcelaRef);
-      if (!parcelaSnap.exists()) {
-        throw new InstallmentValidationError('Parcela não encontrada no banco de dados.');
-      }
-      const instData = parcelaSnap.data() as Installment;
-      if (instData.ownerUid !== uid) {
-        throw new InstallmentValidationError('Parcela não pertence à empresa autenticada.');
-      }
-      if (instData.status === 'Recebida') {
-        throw new InstallmentValidationError('Esta parcela já foi registrada como recebida.');
-      }
-
-      const existingTxId = (instData.transactionId || '').trim();
-      const existingTxRef = existingTxId ? doc(db, 'transactions', existingTxId) : null;
-      const existingTxSnap = existingTxRef ? await tx.get(existingTxRef) : null;
-
-      const beforeStatus = resolverStatusParcela(
-        { status: instData.status, vencimento: instData.dueDate },
-        receivedDate
-      );
-      const resolvedTxId =
-        existingTxSnap && existingTxSnap.exists() ? existingTxId : generateId('tx');
-      const txRef = doc(db, 'transactions', resolvedTxId);
-
-      const isDownPayment = instData.number === 0;
-      const clientSuffix = instData.clientName ? ` (${instData.clientName})` : '';
-      const txDescription = isDownPayment
-        ? `Entrada · ${instData.projectName}${clientSuffix}`
-        : `Parcela ${instData.label} · ${instData.projectName}${clientSuffix}`;
-
-      if (existingTxSnap && existingTxSnap.exists()) {
-        tx.update(txRef, {
-          isForecast: false,
-          status: 'Recebido',
-          date: receivedDate,
-          dueDate: instData.dueDate,
-          installmentId: installment.id,
-          updatedBy: actor,
-          updatedAt: serverTimestamp(),
-        });
-      } else {
-        tx.set(txRef, {
-          ownerUid: uid,
-          date: receivedDate,
-          dueDate: instData.dueDate,
-          description: clampStr(txDescription, 200),
-          entryKind: 'income',
-          category: 'Receita de obra',
-          projectId: instData.projectId,
-          projectName: clampStr(instData.projectName || '', 160),
-          amount: instData.amount,
-          isForecast: false,
-          status: 'Recebido',
-          invoiceStatus: instData.invoiceStatus || 'A emitir',
-          paymentMethod: 'Transferência',
-          installmentLabel: clampStr(instData.label, 40),
-          installmentId: installment.id,
-          quoteId: instData.quoteId || '',
-          debtId: '',
-          source: 'orcamento',
-          createdBy: actor,
-          updatedBy: actor,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      }
-
-      tx.update(parcelaRef, {
-        status: 'Recebida',
-        receivedDate,
-        transactionId: resolvedTxId,
-        updatedBy: actor,
-        updatedAt: serverTimestamp(),
-      });
-
-      tx.set(doc(db, 'auditLogs', generateId('aud')), {
-        ownerUid: uid,
-        registeredBy: actor,
-        action: 'Atualização',
-        entityType: 'parcelas',
-        summary: clampStr(
-          `Parcela recebida: ${instData.label} · ${instData.projectName} (${formatBRL(instData.amount)})`,
-          240
-        ),
-        beforeValue: clampStr(`Status: ${beforeStatus}`, 240),
-        afterValue: clampStr(`Status: Recebida · ${formatDateBR(receivedDate)}`, 240),
-        createdAt: serverTimestamp(),
-      });
-    });
-  } catch (err) {
-    if (err instanceof InstallmentValidationError) {
-      throw err;
-    }
-    handleFirestoreError(err, OperationType.WRITE, `parcelas/${installment.id}`);
+  if (!isValidISODate(date) || date > todayISO() || !paymentMethod.trim()) {
+    throw new InstallmentValidationError('Informe a data efetiva e a forma de recebimento.');
   }
+  await runTransaction(db, async (tx) => {
+    const context = await readInstallmentForReceipt(tx, uid, installment.id);
+    stageInstallmentReceipt(tx, uid, actor, installment.id, context, {
+      date, paymentMethod: clampStr(paymentMethod, 60),
+    });
+  });
+}
+
+function stageTransactionSettlement(
+  tx: Transaction, uid: string, actor: ActorRole, id: string,
+  record: FinancialTransaction, date: string, statementKey?: string,
+) {
+  if (record.ownerUid !== uid || !record.isForecast || record.installmentId || record.entryKind === 'loan') {
+    throw new Error('O lançamento já foi baixado ou deve ser recebido pela parcela.');
+  }
+  const status = record.entryKind === 'income' ? 'Recebido' : 'Pago';
+  tx.update(doc(db, 'transactions', id), {
+    date, dueDate: record.dueDate || record.date,
+    status, isForecast: false, wasForecast: true,
+    updatedBy: actor, updatedAt: serverTimestamp(),
+    ...(statementKey ? { statementKey, paymentMethod: 'Extrato' } : {}),
+  });
+  tx.set(doc(db, 'auditLogs', generateId('aud')), {
+    ownerUid: uid, registeredBy: actor, action: 'Atualização', entityType: 'transactions',
+    summary: clampStr('Baixa de lançamento: ' + record.description, 240),
+    beforeValue: record.status, afterValue: status + ' · ' + formatDateBR(date), createdAt: serverTimestamp(),
+  });
+}
+
+export async function settleFinancialTransaction(uid: string, actor: ActorRole, id: string, date: string) {
+  if (!isValidISODate(date) || date > todayISO()) throw new Error('Informe a data efetiva da baixa.');
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(doc(db, 'transactions', id));
+    if (!snap.exists()) throw new Error('Lançamento não encontrado.');
+    stageTransactionSettlement(tx, uid, actor, id, snap.data() as FinancialTransaction, date);
+  });
 }
 
 export async function markInstallmentInvoiceIssued(
@@ -1129,37 +1234,8 @@ export async function importTransactionsBatch(
 ): Promise<void> {
   const batch = writeBatch(db);
   for (const row of rows) {
-    if (row.entryKind === 'income' && row.category === 'Empréstimo') {
-      throw new Error('Empréstimo não pode ser importado como receita.');
-    }
-    const txRef = doc(db, 'transactions', generateId('tx'));
-    batch.set(txRef, {
-      ...row,
-      ownerUid: uid,
-      createdBy: actor,
-      updatedBy: actor,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-
-    if (row.entryKind === 'loan') {
-      const debtRef = doc(db, 'debts', generateId('dbt'));
-      batch.set(debtRef, {
-        ownerUid: uid,
-        creditor: clampStr(row.description, 140),
-        debtType: 'Empréstimo bancário',
-        principalBalance: row.amount,
-        monthlyCost: 0,
-        remainingInstallments: 1,
-        nextDueDate: row.dueDate || row.date,
-        status: 'Em dia',
-        notes: `Importado via ${sourceLabel}`,
-        createdBy: actor,
-        updatedBy: actor,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-    }
+    validateTransaction(row);
+    stageNewTransaction(batch, uid, actor, row, generateId('tx'));
   }
   batch.set(doc(db, 'auditLogs', generateId('aud')), {
     ownerUid: uid,
@@ -1175,4 +1251,67 @@ export async function importTransactionsBatch(
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, 'transactions/import');
   }
+}
+
+interface StatementImportRow {
+  movement: TransactionPayload;
+  installmentId?: string;
+  settleTransactionId?: string;
+}
+
+export async function importBankStatement(uid: string, actor: ActorRole, rows: StatementImportRow[]) {
+  const ids = new Set<string>();
+  const targets = new Set<string>();
+  if (!rows.length) return;
+  const prepared = await Promise.all(rows.map(async ({ movement, installmentId, settleTransactionId }) => {
+    validateTransaction(movement);
+    if (!movement.statementKey || movement.date > todayISO()) throw new Error('Revise a data e a identificação no extrato.');
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(movement.statementKey));
+    const id = 'stmt-' + Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+    const target = installmentId ? 'installment/' + installmentId : settleTransactionId ? 'movement/' + settleTransactionId : '';
+    if (ids.has(id) || (target && targets.has(target))) throw new Error('Existem movimentos ou vínculos duplicados na seleção.');
+    ids.add(id);
+    if (target) targets.add(target);
+    return { movement, installmentId, settleTransactionId, id };
+  }));
+
+  await runTransaction(db, async (tx) => {
+    const existing = await Promise.all(prepared.map(async (row) => {
+      if (row.installmentId) {
+        return { installment: await readInstallmentForReceipt(tx, uid, row.installmentId) };
+      }
+      if (row.settleTransactionId) {
+        const snap = await tx.get(doc(db, 'transactions', row.settleTransactionId));
+        if (!snap.exists()) throw new Error('O lançamento previsto não está disponível.');
+        return { transaction: snap.data() as FinancialTransaction };
+      }
+      return {};
+    }));
+
+    prepared.forEach(({ movement, installmentId, settleTransactionId, id }, index) => {
+      const { installment, transaction } = existing[index];
+      if (installmentId && installment) {
+        const record = installment.installment;
+        if (movement.entryKind !== 'income' || movement.amount !== record.amount || movement.projectId !== record.projectId) {
+          throw new Error('A parcela mudou ou não corresponde ao movimento do extrato.');
+        }
+        stageInstallmentReceipt(tx, uid, actor, installmentId, installment, {
+          date: movement.date, paymentMethod: 'Extrato', statementKey: movement.statementKey,
+        }, id);
+      } else if (settleTransactionId && transaction) {
+        if (movement.entryKind !== transaction.entryKind || movement.amount !== transaction.amount ||
+            movement.projectId !== transaction.projectId) {
+          throw new Error('O lançamento previsto mudou. Revise a conciliação.');
+        }
+        stageTransactionSettlement(tx, uid, actor, settleTransactionId, transaction, movement.date, movement.statementKey);
+      } else {
+        stageNewTransaction(tx, uid, actor, movement, id);
+      }
+    });
+    tx.set(doc(db, 'auditLogs', generateId('aud')), {
+      ownerUid: uid, registeredBy: actor, action: 'Importação', entityType: 'transactions',
+      summary: prepared.length + ' movimento(s) conciliado(s) ou importado(s) via extrato.',
+      createdAt: serverTimestamp(),
+    });
+  });
 }

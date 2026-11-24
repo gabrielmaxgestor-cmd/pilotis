@@ -142,6 +142,8 @@ export interface LancamentoRecord extends AuditFields {
   obraId: string;
   valor: number;
   previsto: boolean;
+  originalmentePrevisto?: boolean;
+  statementKey?: string;
   status: LancamentoStatus;
   notaFiscal: NotaFiscalStatus;
   formaPagamento: string;

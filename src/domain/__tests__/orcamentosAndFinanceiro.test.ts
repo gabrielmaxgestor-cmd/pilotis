@@ -271,9 +271,10 @@ describe('Orçamentos, parcelas e classificação financeira', () => {
     ];
 
     const resumo = resumoFinanceiroPeriodo(lancamentos, parcelas, '2026-11-21');
-    assert.equal(resumo.entradasMes, 65000);
-    assert.equal(resumo.saidasMes, 4200);
-    assert.equal(resumo.resultadoMes, 60800);
+    assert.equal(resumo.entradasMes, 50000);
+    assert.equal(resumo.saidasMes, 0);
+    assert.equal(resumo.resultadoMes, 50000);
+    assert.equal(resumo.saldoRealizadoCaixa, 130000);
     assert.equal(resumo.receitaSemNota, 50000);
     assert.equal(resumo.tributosEmAtrasoQtd, 1);
     assert.equal(resumo.tributosEmAtrasoValor, 4200);

@@ -59,10 +59,9 @@ export function classificarLancamento(
   const askedLoan =
     input.tipoInformado === 'emprestimo' || input.tipoInformado === 'loan';
 
-  const detectedLoan =
-    askedLoan ||
-    isLoanKeywordPresent(rawCategory) ||
-    isLoanKeywordPresent(rawDesc);
+  const detectedLoan = askedLoan || (askedIncome && (
+    isLoanKeywordPresent(rawCategory) || isLoanKeywordPresent(rawDesc)
+  ));
 
   if (detectedLoan) {
     return {
@@ -240,8 +239,7 @@ export function validarLancamentoFinanceiro(
   const isIncome =
     input.tipoInformado === 'receita' || input.tipoInformado === 'income';
   const looksLikeLoan =
-    input.categoria.trim().toLowerCase() === 'empréstimo' ||
-    input.categoria.trim().toLowerCase() === 'emprestimo' ||
+    isLoanKeywordPresent(input.categoria) ||
     isLoanKeywordPresent(input.descricao);
 
   const erroEmprestimoComoReceita =
@@ -272,8 +270,19 @@ export function validarLancamentoFinanceiro(
   };
 }
 
+export function isRealizedCashEntry(entry: LancamentoRecord): boolean {
+  if (entry.previsto) return false;
+  if (entry.tipo === 'emprestimo') return entry.status === 'Não é receita' || entry.status === 'Recebido';
+  return entry.tipo === 'receita' ? entry.status === 'Recebido' : entry.status === 'Pago';
+}
+
+export function signedCashAmount(entry: LancamentoRecord): number {
+  return entry.tipo === 'despesa' ? -entry.valor : entry.valor;
+}
+
 export interface ResumoFinanceiroPeriodoResult {
   possuiLancamentos: boolean;
+  possuiMovimentoRealizadoNoMes: boolean;
   entradasMes: number;
   saidasMes: number;
   folhaMes: number;
@@ -302,18 +311,14 @@ export function resumoFinanceiroPeriodo(
     parcelas,
   );
   const semEmprestimo = lancamentosUnicos.filter((l) => l.tipo !== 'emprestimo');
-  const mesTxs = semEmprestimo.filter((l) =>
-    monthKey(l.previsto ? l.vencimento || l.data : l.data || l.vencimento) === mesAtual,
-  );
-  const parcelasAbertasMes = parcelasAbertas.filter(
-    (p) => monthKey(p.vencimento) === mesAtual,
+  const mesTxs = semEmprestimo.filter(
+    (l) => isRealizedCashEntry(l) && monthKey(l.data) === mesAtual && l.data <= dataReferenciaISO,
   );
 
   const entradasMes = roundCents(
     mesTxs
       .filter((l) => l.tipo === 'receita')
-      .reduce((sum, l) => sum + l.valor, 0) +
-      parcelasAbertasMes.reduce((sum, p) => sum + p.valor, 0),
+      .reduce((sum, l) => sum + l.valor, 0),
   );
   const saidasMes = roundCents(
     mesTxs
@@ -331,7 +336,7 @@ export function resumoFinanceiroPeriodo(
   );
   const folhaParticipacaoPct =
     saidasMes > 0 ? Math.round((folhaMes / saidasMes) * 100) : null;
-  const hasMesMovements = mesTxs.length > 0 || parcelasAbertasMes.length > 0;
+  const hasMesMovements = mesTxs.length > 0;
   const resultadoMes = hasMesMovements ? roundCents(entradasMes - saidasMes) : null;
 
   const receitasTxs = semEmprestimo.filter((l) => l.tipo === 'receita');
@@ -347,14 +352,14 @@ export function resumoFinanceiroPeriodo(
       )
     : null;
 
-  const realizados = semEmprestimo.filter(
-    (l) => !l.previsto && (l.status === 'Recebido' || l.status === 'Pago'),
+  const realizados = lancamentosUnicos.filter(
+    (l) => isRealizedCashEntry(l) && l.data <= dataReferenciaISO,
   );
   const saldoRealizadoCaixa =
     realizados.length > 0
       ? roundCents(
           realizados.reduce(
-            (sum, l) => (l.tipo === 'receita' ? sum + l.valor : sum - l.valor),
+            (sum, l) => sum + signedCashAmount(l),
             0,
           ),
         )
@@ -406,6 +411,7 @@ export function resumoFinanceiroPeriodo(
 
   return {
     possuiLancamentos: lancamentosUnicos.length > 0 || parcelas.length > 0,
+    possuiMovimentoRealizadoNoMes: hasMesMovements,
     entradasMes,
     saidasMes,
     folhaMes,
@@ -424,6 +430,13 @@ export function resumoFinanceiroPeriodo(
       tributosEmAtraso.reduce((s, l) => s + l.valor, 0),
     ),
   };
+}
+
+export function installmentProgress(installments: ParcelaRecord[], projectId: string) {
+  const projectInstallments = installments.filter((installment) => installment.obraId === projectId);
+  const total = projectInstallments.length;
+  const received = projectInstallments.filter((installment) => installment.status === 'Recebida').length;
+  return { received, total, percentage: total ? Math.round(received / total * 100) : null };
 }
 
 export interface ResumoDividasResult {
@@ -477,6 +490,7 @@ export type StatusConciliacaoExtrato =
   | 'Classificar';
 
 export interface ExtratoLinhaEntrada {
+  statementKey?: string;
   id: string;
   data: string;
   descricao: string;
@@ -484,6 +498,8 @@ export interface ExtratoLinhaEntrada {
 }
 
 export interface ExtratoLinhaConciliada {
+  statementKey?: string;
+  settleTransactionId?: string;
   id: string;
   data: string;
   descricao: string;
@@ -542,6 +558,7 @@ export function conciliarExtratoBancario(
   parcelasExistentes: ParcelaRecord[],
   obras: Array<{ id: string; nome: string }>,
 ): ExtratoLinhaConciliada[] {
+  const matchedIds = new Set<string>();
   return linhas
     .filter((row) => Number.isFinite(row.valorAssinado) && row.valorAssinado !== 0)
     .map((row) => {
@@ -549,7 +566,7 @@ export function conciliarExtratoBancario(
       const desc = (row.descricao || 'Movimento bancário').trim().slice(0, 180);
       const descLower = desc.toLowerCase();
       const isCredit = row.valorAssinado > 0;
-      const detectedLoan = isLoanKeywordPresent(desc);
+      const detectedLoan = isCredit && isLoanKeywordPresent(desc);
 
       const matchedProject = obras.find((o) => {
         const nameLower = o.nome.trim().toLowerCase();
@@ -557,28 +574,33 @@ export function conciliarExtratoBancario(
       });
 
       const exactMatchTx = lancamentosExistentes.find((tx) => {
-        if (Math.abs(tx.valor - absValor) > 0.01) return false;
-        const diff = diffDaysISO(row.data, tx.vencimento || tx.data);
-        if (diff === null || Math.abs(diff) > 2) return false;
-        if (detectedLoan) return tx.tipo === 'emprestimo';
+        if (matchedIds.has(tx.id)) return false;
+        if (row.statementKey && tx.statementKey === row.statementKey) return true;
+        if (Math.abs(tx.valor - absValor) >= 0.005) return false;
+        const diff = diffDaysISO(row.data, tx.previsto ? tx.vencimento || tx.data : tx.data);
+        if (diff === null || (tx.previsto ? Math.abs(diff) > 2 : diff !== 0)) return false;
+        if (detectedLoan) return tx.tipo === 'emprestimo' && shareSignificantToken(desc, tx.descricao);
         const sameDirection = isCredit
           ? tx.tipo === 'receita'
           : tx.tipo === 'despesa';
-        return sameDirection || shareSignificantToken(desc, tx.descricao);
+        return sameDirection && shareSignificantToken(desc, tx.descricao);
       });
 
       if (exactMatchTx) {
-        return {
-          id: row.id,
+        matchedIds.add(exactMatchTx.id);
+        const settle = exactMatchTx.previsto && !exactMatchTx.parcelaId;
+        if (!exactMatchTx.previsto || settle) return {
+          id: row.id, statementKey: row.statementKey,
           data: row.data,
           descricao: desc,
           valor: absValor,
           tipo: exactMatchTx.tipo,
           categoria: exactMatchTx.categoria,
           obraId: exactMatchTx.obraId || 'Empresa',
-          statusConciliacao: 'Conciliado',
-          motivoConciliacao: `Já lançado: ${exactMatchTx.descricao}`,
+          statusConciliacao: settle ? 'Sugerido' : 'Conciliado',
+          motivoConciliacao: (settle ? 'Baixar lançamento previsto: ' : 'Já lançado: ') + exactMatchTx.descricao,
           incluirNaImportacao: false,
+          settleTransactionId: settle ? exactMatchTx.id : undefined,
           alertaEmprestimo: detectedLoan,
           lancamentoCorrespondenteId: exactMatchTx.id,
         };
@@ -586,7 +608,7 @@ export function conciliarExtratoBancario(
 
       if (detectedLoan) {
         return {
-          id: row.id,
+          id: row.id, statementKey: row.statementKey,
           data: row.data,
           descricao: desc,
           valor: absValor,
@@ -594,24 +616,29 @@ export function conciliarExtratoBancario(
           categoria: 'Empréstimo',
           obraId: 'Empresa',
           statusConciliacao: 'Revisar',
-          motivoConciliacao:
-            'Empréstimo/crédito detectado: nunca entra como receita — revise antes de importar.',
-          incluirNaImportacao: true,
+          motivoConciliacao: 'Crédito identificado. Confira o lançamento antes de importar.',
+          incluirNaImportacao: false,
           alertaEmprestimo: true,
         };
       }
 
       if (isCredit) {
-        const openParcela = parcelasExistentes.find((p) => {
-          if (p.status === 'Recebida') return false;
-          if (Math.abs(p.valor - absValor) > 0.01) return false;
+        const candidateInstallments = parcelasExistentes.filter((p) => {
+          if (p.status === 'Recebida' || matchedIds.has(p.id)) return false;
+          if (Math.abs(p.valor - absValor) >= 0.005) return false;
           const diff = diffDaysISO(row.data, p.vencimento);
           return diff !== null && Math.abs(diff) <= 7;
         });
 
+        const matchingProject = matchedProject
+          ? candidateInstallments.filter((p) => p.obraId === matchedProject.id)
+          : candidateInstallments;
+        const openParcela = matchingProject.length === 1 ? matchingProject[0] : undefined;
+
         if (openParcela) {
+          matchedIds.add(openParcela.id);
           return {
-            id: row.id,
+            id: row.id, statementKey: row.statementKey,
             data: row.data,
             descricao: desc,
             valor: absValor,
@@ -619,16 +646,25 @@ export function conciliarExtratoBancario(
             categoria: 'Receita de obra',
             obraId: openParcela.obraId,
             statusConciliacao: 'Sugerido',
-            motivoConciliacao: `Compatível com parcela ${openParcela.rotulo} em aberto`,
-            incluirNaImportacao: true,
+            motivoConciliacao: `Baixar parcela ${openParcela.rotulo} em aberto`,
+            incluirNaImportacao: false,
             alertaEmprestimo: false,
             parcelaSugeridaId: openParcela.id,
           };
         }
 
+        if (matchingProject.length > 1) {
+          return {
+            id: row.id, statementKey: row.statementKey, data: row.data, descricao: desc, valor: absValor,
+            tipo: 'receita', categoria: 'Receita de obra', obraId: matchedProject?.id || '',
+            statusConciliacao: 'Revisar', motivoConciliacao: 'Mais de uma parcela compatível. Confira em A receber.',
+            incluirNaImportacao: false, alertaEmprestimo: false,
+          };
+        }
+
         if (matchedProject) {
           return {
-            id: row.id,
+            id: row.id, statementKey: row.statementKey,
             data: row.data,
             descricao: desc,
             valor: absValor,
@@ -643,13 +679,13 @@ export function conciliarExtratoBancario(
         }
 
         return {
-          id: row.id,
+          id: row.id, statementKey: row.statementKey,
           data: row.data,
           descricao: desc,
           valor: absValor,
           tipo: 'receita',
           categoria: 'Receita de obra',
-          obraId: 'Empresa',
+          obraId: '',
           statusConciliacao: 'Classificar',
           motivoConciliacao: 'Vincule à obra ou confirme centro "Empresa"',
           incluirNaImportacao: true,
@@ -660,7 +696,7 @@ export function conciliarExtratoBancario(
       const suggestedCat = inferExpenseCategoryFromText(descLower);
       if (suggestedCat || matchedProject) {
         return {
-          id: row.id,
+          id: row.id, statementKey: row.statementKey,
           data: row.data,
           descricao: desc,
           valor: absValor,
@@ -677,13 +713,13 @@ export function conciliarExtratoBancario(
       }
 
       return {
-        id: row.id,
+        id: row.id, statementKey: row.statementKey,
         data: row.data,
         descricao: desc,
         valor: absValor,
         tipo: 'despesa',
         categoria: 'Outros',
-        obraId: 'Empresa',
+        obraId: '',
         statusConciliacao: 'Classificar',
         motivoConciliacao: 'Defina categoria e obra ou "Empresa"',
         incluirNaImportacao: true,

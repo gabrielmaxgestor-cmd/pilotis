@@ -1,5 +1,5 @@
 import { resumoFolhaEquipe } from './equipe';
-import { deduplicarReceitasEParcelas } from './financeiro';
+import { deduplicarReceitasEParcelas, isRealizedCashEntry } from './financeiro';
 import {
   addMonthsISO,
   formatMonthLabelBR,
@@ -119,6 +119,11 @@ export function previsaoCaixa(
     parcelas,
   );
 
+  const baseMonth = monthKey(input.dataBase);
+  const pendingMonth = (date: string) => {
+    const key = monthKey(date);
+    return key && key < baseMonth ? baseMonth : key;
+  };
   let runningBalance = roundCents(input.saldoInicial ?? 0);
   let runningFunnelAccum = 0;
 
@@ -128,13 +133,13 @@ export function previsaoCaixa(
   for (let i = 0; i < mesesCount; i++) {
     const mk = monthKey(addMonthsISO(input.dataBase, i));
     const txsInMonth = lancamentosUnicos.filter(
-      (l) => monthKey(l.previsto ? l.vencimento || l.data : l.data) === mk,
+      (l) => (l.previsto ? pendingMonth(l.vencimento || l.data) : monthKey(l.data)) === mk,
     );
 
     // Empréstimos ficam separados: nunca entram como realizadoEntradas ou contratadoEntradas
     const emprestimosNaoReceita = roundCents(
       txsInMonth
-        .filter((l) => l.tipo === 'emprestimo')
+        .filter((l) => l.tipo === 'emprestimo' && isRealizedCashEntry(l))
         .reduce((s, l) => s + l.valor, 0),
     );
 
@@ -149,7 +154,7 @@ export function previsaoCaixa(
       .reduce((s, l) => s + l.valor, 0);
 
     const parcelasContratadas = parcelasAbertas
-      .filter((p) => monthKey(p.vencimento) === mk)
+      .filter((p) => pendingMonth(p.vencimento) === mk)
       .reduce((s, p) => s + p.valor, 0);
 
     const contratadoEntradas = roundCents(
@@ -167,7 +172,7 @@ export function previsaoCaixa(
       .reduce((s, l) => s + l.valor, 0);
 
     const contasPagarMes = contasPagar
-      .filter((cp) => cp.status !== 'Paga' && monthKey(cp.vencimento) === mk)
+      .filter((cp) => cp.status !== 'Paga' && pendingMonth(cp.vencimento) === mk)
       .reduce((s, cp) => s + cp.valor, 0);
 
     const hasExplicitFolha = txsInMonth.some(
@@ -197,7 +202,7 @@ export function previsaoCaixa(
     runningFunnelAccum = roundCents(runningFunnelAccum + funilPonderadoEntradas);
 
     runningBalance = roundCents(
-      runningBalance + realizadoEntradas + contratadoEntradas - saidasTotais,
+      runningBalance + realizadoEntradas + emprestimosNaoReceita + contratadoEntradas - saidasTotais,
     );
     const saldoProjetadoComFunil = roundCents(runningBalance + runningFunnelAccum);
     const negativo = runningBalance < 0;
