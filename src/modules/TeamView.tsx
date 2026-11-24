@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { DataList } from '../components/ui/DataList';
 import {
   AlertNote,
   EmptySection,
@@ -12,23 +13,34 @@ import {
 } from '../components/ui/PilotisUI';
 import {
   createRecord,
+  recordEmployeeOccurrence,
+  saveWeeklyAllocation,
+  submitTeamPayroll,
+  subscribeEmployeeOccurrences,
   updateRecord,
   upsertCompanySettings,
 } from '../services/pilotisService';
 import type {
   ActorRole,
   Employee,
+  EmployeeOccurrence,
+  EmployeeOccurrenceKind,
   EmploymentType,
   EpiStatus,
   OnboardingStatus,
   PilotisDataState,
 } from '../types/pilotis';
 import {
-  addDaysISO,
   avaliarValidadeSst,
   calcularEncargosColaborador,
   calcularPendenciasSegurancaEquipe,
   calcularResumoFolhaEquipe,
+  calculateTeamPayroll,
+  formatMonthLabelBR,
+  onboardingDeadline,
+  getOnboardingAlert,
+  plannedWeeks,
+  resolveTeamWeek,
   clampStr,
   formatBRL,
   formatDateBR as domainFormatDateBR,
@@ -48,21 +60,8 @@ const TEAM_TABS = [
   'Folha e encargos',
 ];
 
-function getNext8Mondays(): string[] {
-  const now = new Date();
-  const day = now.getDay();
-  const diffToMon = day === 0 ? 1 : day === 1 ? 0 : 8 - day;
-  const firstMon = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diffToMon);
-  const weeks: string[] = [];
-  for (let i = 0; i < 8; i++) {
-    const d = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + i * 7);
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    weeks.push(`${y}-${m}-${dd}`);
-  }
-  return weeks;
-}
+const EMPLOYMENT_TYPES: EmploymentType[] = ['CLT', 'PJ', 'Autônomo', 'Freelancer', 'Diarista', 'Informal', 'Sócio'];
+const OCCURRENCE_TYPES: EmployeeOccurrenceKind[] = ['Elogio', 'Registro', 'Advertência', 'Acidente', 'Quase acidente'];
 
 export function TeamView({
   uid,
@@ -95,6 +94,8 @@ export function TeamView({
   const [empRole, setEmpRole] = useState('');
   const [empType, setEmpType] = useState<EmploymentType>('CLT');
   const [empSalary, setEmpSalary] = useState('');
+  const [paymentFrequency, setPaymentFrequency] = useState<'monthly' | 'oneOff'>('monthly');
+  const [paymentMonth, setPaymentMonth] = useState('');
   const [empPaymentMethod, setEmpPaymentMethod] = useState('Transferência');
   const [empStartDate, setEmpStartDate] = useState(todayISO());
   const [empProjectId, setEmpProjectId] = useState('');
@@ -106,7 +107,8 @@ export function TeamView({
   const [empActor, setEmpActor] = useState<ActorRole>('Sócio');
 
   // Allocation form
-  const weeks = useMemo(() => getNext8Mondays(), []);
+  const todayStr = todayISO();
+  const weeks = useMemo(() => plannedWeeks(todayStr), [todayStr]);
   const [allocEmpId, setAllocEmpId] = useState('');
   const [allocProjectId, setAllocProjectId] = useState('');
   const [allocWeekStart, setAllocWeekStart] = useState(weeks[0] || todayISO());
@@ -118,6 +120,8 @@ export function TeamView({
   const [safetyAso, setSafetyAso] = useState('');
   const [safetyNr18, setSafetyNr18] = useState('');
   const [safetyNr35, setSafetyNr35] = useState('');
+  const [safetyEpiExpiry, setSafetyEpiExpiry] = useState('');
+  const [safetyOnboardingStart, setSafetyOnboardingStart] = useState('');
   const [safetyEpi, setSafetyEpi] = useState<EpiStatus>('Em dia');
   const [safetyOnboarding, setSafetyOnboarding] = useState<OnboardingStatus>('Concluída');
   const [safetyActor, setSafetyActor] = useState<ActorRole>('Responsável administrativo');
@@ -125,32 +129,46 @@ export function TeamView({
   // Vacation form
   const [vacEmpId, setVacEmpId] = useState('');
   const [vacPeriod, setVacPeriod] = useState('');
-  const [vacScheduled, setVacScheduled] = useState('');
+  const [vacStart, setVacStart] = useState('');
+  const [vacEnd, setVacEnd] = useState('');
   const [vacActor, setVacActor] = useState<ActorRole>('Responsável administrativo');
 
   // Occurrence form
+  const [occurrences, setOccurrences] = useState<EmployeeOccurrence[]>([]);
+  const [occurrenceError, setOccurrenceError] = useState(false);
+  const [occType, setOccType] = useState<EmployeeOccurrenceKind>('Registro');
+  const [occDate, setOccDate] = useState(todayStr);
   const [occText, setOccText] = useState('');
   const [occActor, setOccActor] = useState<ActorRole>('Sócio');
 
   // Tax params form
-  const [inssRate, setInssRate] = useState(String(data.settings?.inssRate ?? 20));
-  const [fgtsRate, setFgtsRate] = useState(String(data.settings?.fgtsRate ?? 8));
-  const [vacationRate, setVacationRate] = useState(String(data.settings?.vacationRate ?? 11.11));
-  const [thirteenthRate, setThirteenthRate] = useState(String(data.settings?.thirteenthRate ?? 8.33));
-  const [taxEffectiveDate, setTaxEffectiveDate] = useState(data.settings?.taxParamsEffectiveDate || todayISO());
-  const [taxSource, setTaxSource] = useState(data.settings?.taxParamsSource || 'Contador · regime atual');
+  const [inssRate, setInssRate] = useState(String(data.settings?.inssRate ?? ''));
+  const [fgtsRate, setFgtsRate] = useState(String(data.settings?.fgtsRate ?? ''));
+  const [vacationRate, setVacationRate] = useState(String(data.settings?.vacationRate ?? ''));
+  const [thirteenthRate, setThirteenthRate] = useState(String(data.settings?.thirteenthRate ?? ''));
+  const [taxEffectiveDate, setTaxEffectiveDate] = useState(data.settings?.taxParamsEffectiveDate || '');
+  const [taxSource, setTaxSource] = useState(data.settings?.taxParamsSource || '');
   const [taxActor, setTaxActor] = useState<ActorRole>('Responsável administrativo');
 
   // Send payroll actor
   const [payrollActor, setPayrollActor] = useState<ActorRole>('Responsável administrativo');
 
-  const todayStr = todayISO();
+  const [payrollMonth, setPayrollMonth] = useState(monthKey(todayStr));
+  const [payrollDueDate, setPayrollDueDate] = useState('');
+  const monthlyPayroll = useMemo(() => calculateTeamPayroll(data, payrollMonth), [data, payrollMonth]);
   const payroll = useMemo(
     () => calcularResumoFolhaEquipe(data.employees, data.settings, todayStr),
     [data.employees, data.settings, todayStr]
   );
 
   const selectedEmployee = data.employees.find((e) => e.id === selectedEmployeeId) || null;
+
+  useEffect(() => {
+    setOccurrences([]);
+    setOccurrenceError(false);
+    if (!selectedEmployeeId) return;
+    return subscribeEmployeeOccurrences(uid, selectedEmployeeId, setOccurrences, () => setOccurrenceError(true));
+  }, [uid, selectedEmployeeId]);
 
   const filteredEmployees = data.employees.filter((e) => {
     if (filterType === 'Todos') return true;
@@ -162,23 +180,15 @@ export function TeamView({
     [data.employees, todayStr]
   );
 
-  const unallocatedEmployeesCount = useMemo(() => {
-    if (data.employees.length === 0) return null;
-    const firstWeek = weeks[0];
-    return data.employees.filter((e) => {
-      const hasAlloc = data.allocations.some(
-        (a) => a.employeeId === e.id && a.weekStart === firstWeek && a.projectId !== 'Sem obra'
-      );
-      return !hasAlloc && !e.currentProjectId;
-    }).length;
-  }, [data.employees, data.allocations, weeks]);
-
-  const currentMonthPayrollSent = data.transactions.some(
-    (t) =>
-      t.entryKind === 'expense' &&
-      (t.source === 'folha' || t.category === 'Folha') &&
-      monthKey(t.date) === monthKey(todayISO())
-  );
+  const matrix = useMemo(() => data.employees.map((employee) => ({
+    employee,
+    cells: weeks.map((week) => resolveTeamWeek(employee, week, data)),
+  })), [data, weeks]);
+  const unallocatedEmployeesCount = data.employees.length ? matrix.filter((row) => row.cells[0]?.idle).length : null;
+  const idleWeeks = matrix.reduce((sum, row) => sum + row.cells.filter((cell) => cell.idle).length, 0);
+  const conflictWeeks = matrix.reduce((sum, row) => sum + row.cells.filter((cell) => cell.conflict).length, 0);
+  const currentMonthPayrollSent = data.transactions.some((transaction) => transaction.source === 'folha' &&
+    (transaction.payrollPeriod || transaction.installmentLabel || monthKey(transaction.date)) === payrollMonth);
 
   function openCreateEmployee() {
     setEditingEmp(null);
@@ -186,9 +196,11 @@ export function TeamView({
     setEmpRole('');
     setEmpType('CLT');
     setEmpSalary('');
-    setEmpPaymentMethod('Transferência');
-    setEmpStartDate(todayISO());
-    setEmpProjectId(data.projects[0]?.id || '');
+    setPaymentFrequency('monthly');
+    setPaymentMonth('');
+    setEmpPaymentMethod('');
+    setEmpStartDate('');
+    setEmpProjectId('');
     setEmpAso('');
     setEmpNr18('');
     setEmpNr35('');
@@ -203,9 +215,11 @@ export function TeamView({
     setEmpName(emp.name);
     setEmpRole(emp.role);
     setEmpType(emp.employmentType);
-    setEmpSalary(String(emp.baseSalary || ''));
-    setEmpPaymentMethod(emp.paymentMethod || 'Transferência');
-    setEmpStartDate(emp.startDate || todayISO());
+    setEmpSalary(String(emp.baseSalary ?? ''));
+    setPaymentFrequency(emp.paymentFrequency ?? 'monthly');
+    setPaymentMonth(emp.paymentMonth ?? '');
+    setEmpPaymentMethod(emp.paymentMethod || '');
+    setEmpStartDate(emp.startDate || '');
     setEmpProjectId(emp.currentProjectId || '');
     setEmpAso(emp.asoExpiry || '');
     setEmpNr18(emp.nr18Expiry || '');
@@ -218,7 +232,12 @@ export function TeamView({
 
   async function handleSaveEmployee(e: React.FormEvent) {
     e.preventDefault();
-    if (!empName.trim() || !empRole.trim()) return;
+    if (!empName.trim() || !empRole.trim() || !empPaymentMethod || !empStartDate) return;
+    if (!/^\d+(?:[.,]\d{1,2})?$/.test(empSalary.trim())) {
+      setFeedback({ tone: 'bad', title: 'Valor inválido', text: 'Informe um valor com até duas casas decimais.' });
+      return;
+    }
+    setFeedback(null);
     setSaving(true);
     try {
       const proj = data.projects.find((p) => p.id === empProjectId);
@@ -228,8 +247,10 @@ export function TeamView({
         role: clampStr(empRole, 80),
         employmentType: empType,
         baseSalary: salaryNum,
+        paymentFrequency: empType === 'CLT' || empType === 'Sócio' ? 'monthly' : paymentFrequency,
+        paymentMonth: empType !== 'CLT' && empType !== 'Sócio' && paymentFrequency === 'oneOff' ? paymentMonth : '',
         paymentMethod: clampStr(empPaymentMethod, 60),
-        startDate: empStartDate || todayISO(),
+        startDate: empStartDate,
         currentProjectId: proj?.id || '',
         currentProjectName: clampStr(proj?.name || '', 160),
         asoExpiry: empAso,
@@ -274,6 +295,8 @@ export function TeamView({
         });
       }
       setEmpModalOpen(false);
+    } catch (error) {
+      setFeedback({ tone: 'bad', title: 'Colaborador', text: error instanceof Error ? error.message : 'Não foi possível salvar.' });
     } finally {
       setSaving(false);
     }
@@ -282,6 +305,7 @@ export function TeamView({
   async function handleSaveAllocation(e: React.FormEvent) {
     e.preventDefault();
     if (!allocEmpId) return;
+    setFeedback(null);
     setSaving(true);
     try {
       const emp = data.employees.find((x) => x.id === allocEmpId);
@@ -290,41 +314,18 @@ export function TeamView({
       const targetProjName =
         allocStatus === 'Férias' ? 'Férias' : proj?.name || 'Sem obra';
 
-      await createRecord(
-        'allocations',
-        uid,
-        allocActor,
-        {
-          employeeId: allocEmpId,
-          employeeName: clampStr(emp?.name || '', 140),
-          projectId: targetProjId,
-          projectName: clampStr(targetProjName, 160),
-          weekStart: allocWeekStart,
-          status: allocStatus,
-        },
-        `Alocação: ${emp?.name || 'Colaborador'} em ${targetProjName} (semana ${formatDateBR(allocWeekStart)})`
-      );
-      if (emp && allocStatus === 'Obra' && proj) {
-        await updateRecord(
-          'employees',
-          emp.id,
-          uid,
-          allocActor,
-          {
-            currentProjectId: proj.id,
-            currentProjectName: clampStr(proj.name, 160),
-          },
-          `Obra atual de ${emp.name} atualizada para ${proj.name}`,
-          emp.currentProjectName || 'Sem obra',
-          proj.name
-        );
-      }
+      if (!emp) return;
+      await saveWeeklyAllocation(uid, allocActor, emp, allocWeekStart, {
+        projectId: targetProjId, projectName: targetProjName, status: allocStatus,
+      }, data.allocations);
       setAllocModalOpen(false);
       setFeedback({
         tone: 'ok',
         title: 'Alocação registrada',
         text: 'Quadro semanal de alocação atualizado.',
       });
+    } catch (error) {
+      setFeedback({ tone: 'bad', title: 'Alocação', text: error instanceof Error ? error.message : 'Não foi possível salvar.' });
     } finally {
       setSaving(false);
     }
@@ -334,6 +335,7 @@ export function TeamView({
     e.preventDefault();
     const emp = data.employees.find((x) => x.id === safetyEmpId);
     if (!emp) return;
+    setFeedback(null);
     setSaving(true);
     try {
       await updateRecord(
@@ -347,6 +349,8 @@ export function TeamView({
           nr35Expiry: safetyNr35,
           epiStatus: safetyEpi,
           onboardingStatus: safetyOnboarding,
+          onboardingStart: safetyOnboardingStart,
+          epiExpiry: safetyEpiExpiry,
         },
         `Segurança e treinamentos atualizados para ${emp.name}`,
         emp.epiStatus,
@@ -358,6 +362,8 @@ export function TeamView({
         title: 'Segurança atualizada',
         text: `Validades de ASO, NRs e EPIs de ${emp.name} salvas.`,
       });
+    } catch (error) {
+      setFeedback({ tone: 'bad', title: 'Segurança', text: error instanceof Error ? error.message : 'Não foi possível salvar.' });
     } finally {
       setSaving(false);
     }
@@ -366,7 +372,12 @@ export function TeamView({
   async function handleSaveVacation(e: React.FormEvent) {
     e.preventDefault();
     const emp = data.employees.find((x) => x.id === vacEmpId);
-    if (!emp) return;
+    if (!emp || emp.employmentType !== 'CLT') return;
+    if ((vacStart || vacEnd) && (!vacStart || !vacEnd || vacEnd < vacStart)) {
+      setFeedback({ tone: 'bad', title: 'Datas de férias inválidas', text: 'Informe início e fim em ordem cronológica.' });
+      return;
+    }
+    setFeedback(null);
     setSaving(true);
     try {
       await updateRecord(
@@ -376,11 +387,13 @@ export function TeamView({
         vacActor,
         {
           vacationPeriod: clampStr(vacPeriod, 60),
-          vacationScheduled: clampStr(vacScheduled, 60),
+          vacationScheduled: vacStart ? formatDateBR(vacStart) + ' a ' + formatDateBR(vacEnd) : '',
+          vacationStart: vacStart,
+          vacationEnd: vacEnd,
         },
-        `Férias atualizadas para ${emp.name}: ${vacScheduled}`,
+        `Férias atualizadas para ${emp.name}`,
         emp.vacationScheduled || 'A programar',
-        vacScheduled
+        vacStart ? formatDateBR(vacStart) + ' a ' + formatDateBR(vacEnd) : 'A programar'
       );
       setVacationModalOpen(false);
       setFeedback({
@@ -388,6 +401,8 @@ export function TeamView({
         title: 'Programação de férias salva',
         text: `Férias de ${emp.name} atualizadas.`,
       });
+    } catch (error) {
+      setFeedback({ tone: 'bad', title: 'Programação de férias', text: error instanceof Error ? error.message : 'Não foi possível salvar.' });
     } finally {
       setSaving(false);
     }
@@ -396,21 +411,10 @@ export function TeamView({
   async function handleSaveOccurrence(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedEmployee || !occText.trim()) return;
+    setFeedback(null);
     setSaving(true);
     try {
-      const prefix = selectedEmployee.occurrencesNote
-        ? `${selectedEmployee.occurrencesNote}\n`
-        : '';
-      const line = `[${formatDateBR(todayISO())} · ${occActor}] ${occText.trim()}`;
-      const combined = clampStr(`${prefix}${line}`, 1000);
-      await updateRecord(
-        'employees',
-        selectedEmployee.id,
-        uid,
-        occActor,
-        { occurrencesNote: combined },
-        `Ocorrência registrada para ${selectedEmployee.name}`
-      );
+      await recordEmployeeOccurrence(uid, selectedEmployee.id, occActor, occType, occDate, occText);
       setOccurrenceModalOpen(false);
       setOccText('');
       setFeedback({
@@ -418,6 +422,8 @@ export function TeamView({
         title: 'Ocorrência registrada',
         text: `Histórico de ${selectedEmployee.name} atualizado.`,
       });
+    } catch (error) {
+      setFeedback({ tone: 'bad', title: 'Ocorrência', text: error instanceof Error ? error.message : 'Não foi possível salvar.' });
     } finally {
       setSaving(false);
     }
@@ -425,6 +431,12 @@ export function TeamView({
 
   async function handleSaveTaxParams(e: React.FormEvent) {
     e.preventDefault();
+    const fields = [inssRate, fgtsRate, vacationRate, thirteenthRate];
+    if (fields.some((field) => !field.trim() || !Number.isFinite(Number(field)) || Number(field) < 0) || !taxEffectiveDate) {
+      setFeedback({ tone: 'bad', title: 'Parâmetros incompletos', text: 'Informe as quatro alíquotas e a data de vigência.' });
+      return;
+    }
+    setFeedback(null);
     setSaving(true);
     try {
       await upsertCompanySettings(uid, taxActor, data.settings, {
@@ -432,7 +444,7 @@ export function TeamView({
         fgtsRate: Number(fgtsRate) || 0,
         vacationRate: Number(vacationRate) || 0,
         thirteenthRate: Number(thirteenthRate) || 0,
-        taxParamsEffectiveDate: taxEffectiveDate || todayISO(),
+        taxParamsEffectiveDate: taxEffectiveDate,
         taxParamsSource: clampStr(taxSource, 120),
       });
       setParamsModalOpen(false);
@@ -441,6 +453,8 @@ export function TeamView({
         title: 'Parâmetros de encargos salvos',
         text: 'Os encargos e provisões da folha CLT passam a usar as novas alíquotas.',
       });
+    } catch (error) {
+      setFeedback({ tone: 'bad', title: 'Parâmetros de encargos', text: error instanceof Error ? error.message : 'Não foi possível salvar.' });
     } finally {
       setSaving(false);
     }
@@ -448,47 +462,19 @@ export function TeamView({
 
   async function handleSendPayrollToFinance(e: React.FormEvent) {
     e.preventDefault();
-    if (payroll.custoTotalMensal === null || payroll.custoTotalMensal <= 0) return;
-    const totalAmount = payroll.custoTotalMensal;
+    setFeedback(null);
     setSaving(true);
     try {
-      const today = todayISO();
-      await createRecord(
-        'transactions',
-        uid,
-        payrollActor,
-        {
-          date: today,
-          dueDate: today,
-          description: clampStr(`Folha e encargos (${payroll.totalColaboradores} pessoas)`, 200),
-          entryKind: 'expense',
-          category: 'Folha',
-          projectId: 'Empresa',
-          projectName: 'Empresa',
-          amount: Math.round(totalAmount * 100) / 100,
-          isForecast: false,
-          status: 'Pago',
-          invoiceStatus: 'Não se aplica',
-          paymentMethod: 'Transferência',
-          installmentLabel: monthKey(today),
-          quoteId: '',
-          debtId: '',
-          source: 'folha',
-        },
-        `Folha do mês enviada ao Financeiro: ${formatBRL(totalAmount)}`
-      );
+      await submitTeamPayroll(uid, payrollActor, data, payrollMonth, payrollDueDate);
       setPayrollModalOpen(false);
-      setFeedback({
-        tone: 'ok',
-        title: 'Folha enviada ao Financeiro',
-        text: `Lançamento de ${formatBRL(totalAmount)} criado em Contas pagas.`,
-      });
+      setFeedback({ tone: 'ok', title: 'Folha enviada', text: 'Lançamentos previstos registrados em Contas a pagar por centro de custo.' });
+    } catch (error) {
+      setFeedback({ tone: 'bad', title: 'Não foi possível enviar a folha', text: error instanceof Error ? error.message : 'Revise os dados e tente novamente.' });
     } finally {
       setSaving(false);
     }
   }
 
-  // Collaborator Profile View
   if (selectedEmployee) {
     const isClt = selectedEmployee.employmentType === 'CLT';
     const empCharges = calcularEncargosColaborador(selectedEmployee, data.settings, todayStr);
@@ -502,9 +488,12 @@ export function TeamView({
       .map((p) => p[0].toUpperCase())
       .join('');
 
-    const occurrencesList = selectedEmployee.occurrencesNote
-      ? selectedEmployee.occurrencesNote.split('\n').filter(Boolean)
-      : [];
+    const occurrencesList = selectedEmployee.occurrencesNote?.split('\n').filter(Boolean) ?? [];
+    const assignments = data.allocations.filter((row) => row.employeeId === selectedEmployee.id && row.status === 'Obra' &&
+      row.projectId !== 'Sem obra').sort((a, b) => b.weekStart.localeCompare(a.weekStart));
+    const integrationDate = onboardingDeadline(selectedEmployee.onboardingStart, selectedEmployee.startDate);
+    const epiDate = avaliarValidadeSst(selectedEmployee.epiExpiry, todayStr);
+    const currentAssignment = resolveTeamWeek(selectedEmployee, weeks[0], data);
 
     return (
       <div className="flex flex-col gap-6">
@@ -557,10 +546,10 @@ export function TeamView({
             <h2 className="text-lg font-bold text-[#14181F]">{selectedEmployee.name}</h2>
             <div className="flex flex-wrap gap-2">
               <StatusBadge label={selectedEmployee.employmentType} />
-              <StatusBadge label={selectedEmployee.currentProjectName || 'Sem obra alocada'} />
+              <StatusBadge label={currentAssignment.label} />
               <StatusBadge
                 label={
-                  asoStatus.expiredOrSoon || nr18Status.expiredOrSoon || nr35Status.expiredOrSoon || selectedEmployee.epiStatus !== 'Em dia'
+                  asoStatus.expiredOrSoon || nr18Status.expiredOrSoon || nr35Status.expiredOrSoon || epiDate.expiredOrSoon || (integrationDate && integrationDate < todayStr && selectedEmployee.onboardingStatus !== 'Concluída') || selectedEmployee.epiStatus !== 'Em dia'
                     ? 'Segurança com pendências'
                     : 'Segurança em dia'
                 }
@@ -627,9 +616,13 @@ export function TeamView({
               <StatusBadge label={selectedEmployee.epiStatus || 'Pendente'} />
             </div>
             <div className="flex justify-between items-center text-[13px] py-1">
-              <span className="text-[#5B6472]">Integração</span>
+              <span className="text-[#5B6472]">Integração · prazo de uma semana</span>
               <StatusBadge label={selectedEmployee.onboardingStatus || 'Pendente'} />
-            </div>
+            {integrationDate && selectedEmployee.onboardingStatus !== 'Concluída' && (
+                <StatusBadge label={integrationDate < todayStr ? 'Integração em atraso' : 'Até ' + formatDateBR(integrationDate)}
+                  tone={integrationDate < todayStr ? 'bad' : 'info'} />
+              )}
+              </div>
           </section>
 
           <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-3">
@@ -637,7 +630,7 @@ export function TeamView({
             <div className="flex justify-between text-[13px] py-1 border-b border-[#E4E1DA]">
               <span className="text-[#5B6472]">Alocação atual</span>
               <strong className="text-[#14181F]">
-                {selectedEmployee.currentProjectName || 'Sem obra alocada'}
+                {currentAssignment.label}
               </strong>
             </div>
             <div className="flex justify-between text-[13px] py-1 border-b border-[#E4E1DA]">
@@ -660,12 +653,23 @@ export function TeamView({
         </div>
 
         <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-3">
-          <h3 className="text-base font-semibold text-[#14181F]">Ocorrências e histórico</h3>
-          {occurrencesList.length === 0 ? (
+          <h3 className="text-base font-semibold text-[#14181F]">Ocorrências</h3>
+          {occurrenceError && <AlertNote tone="bad" title="Não foi possível carregar as ocorrências">Confira a conexão com o sistema.</AlertNote>}
+          {occurrences.length > 0 && (
+            <ul className="grid gap-2">
+              {occurrences.map((item) => (
+                <li key={item.id} className="rounded-lg border border-[#E4E1DA] p-3 text-sm">
+                  <StatusBadge label={item.kind} /> · {formatDateBR(item.date)} · {item.createdBy}
+                  <p className="mt-1 whitespace-pre-line">{item.description}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+          {occurrencesList.length === 0 ? (occurrences.length === 0 && !occurrenceError && (
             <p className="text-sm text-[#5B6472]">
               Nenhuma ocorrência registrada para este colaborador.
             </p>
-          ) : (
+          )) : (
             <ul className="flex flex-col gap-2">
               {occurrencesList.map((line, i) => (
                 <li
@@ -679,12 +683,32 @@ export function TeamView({
           )}
         </section>
 
+        <section className="rounded-xl border border-[#E4E1DA] bg-white p-5 grid gap-2">
+          <h3 className="font-semibold">Histórico em obras</h3>
+          {assignments.length === 0 ? <p className="text-sm text-[#5B6472]">Sem alocações semanais registradas.</p> : (
+            <ul className="grid gap-1 text-sm">
+              {assignments.map((row) => <li key={row.id}>{formatDateBR(row.weekStart)} · {row.projectName}</li>)}
+            </ul>
+          )}
+        </section>
         <Modal
           open={occurrenceModalOpen}
           onClose={() => setOccurrenceModalOpen(false)}
           title={`Registrar ocorrência · ${selectedEmployee.name}`}
         >
           <form onSubmit={handleSaveOccurrence} className="flex flex-col gap-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="text-sm">Tipo de ocorrência
+                <select value={occType} onChange={(e) => setOccType(e.target.value as EmployeeOccurrenceKind)}
+                  className="block w-full rounded-lg border border-[#E4E1DA] p-2">
+                  {OCCURRENCE_TYPES.map((type) => <option key={type}>{type}</option>)}
+                </select>
+              </label>
+              <label className="text-sm">Data da ocorrência
+                <input type="date" value={occDate} required max={todayStr} onChange={(e) => setOccDate(e.target.value)}
+                  className="block w-full rounded-lg border border-[#E4E1DA] p-2" />
+              </label>
+            </div>
             <div className="flex flex-col gap-1.5">
               <label htmlFor="occ-text" className="text-[13px] font-semibold text-[#14181F]">
                 Descrição da ocorrência, elogio ou treinamento
@@ -695,11 +719,12 @@ export function TeamView({
                 required
                 value={occText}
                 onChange={(e) => setOccText(e.target.value)}
-                placeholder="Ex.: Treinamento concluído no POP de revestimento ou elogio de acabamento."
+                maxLength={1000}
                 className="w-full rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
               />
             </div>
-            <RegisteredBySelect value={occActor} onChange={setOccActor} id="occ-actor" />
+            {feedback?.tone === 'bad' && <AlertNote tone="bad" title={feedback.title}>{feedback.text}</AlertNote>}
+          <RegisteredBySelect value={occActor} onChange={setOccActor} id="occ-actor" />
             <div className="flex justify-end gap-2 pt-2">
               <button
                 type="button"
@@ -774,21 +799,18 @@ export function TeamView({
                 onChange={(e) => setEmpType(e.target.value as EmploymentType)}
                 className="w-full rounded-lg border border-[#E4E1DA] bg-white px-3.5 py-2.5 text-sm"
               >
-                <option value="CLT">CLT</option>
-                <option value="Autônomo">Autônomo</option>
-                <option value="Diarista">Diarista</option>
+                {EMPLOYMENT_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
               </select>
             </div>
             <div className="flex flex-col gap-1.5">
               <label htmlFor="emp-sal" className="text-[13px] font-semibold text-[#14181F]">
-                Salário ou valor mensal (R$)
+                {empType === 'Sócio' ? 'Pró-labore fixo mensal (R$)' : paymentFrequency === 'oneOff' && empType !== 'CLT' ? 'Valor avulso (R$)' : 'Valor mensal (R$)'}
               </label>
               <input
                 id="emp-sal"
                 required
                 value={empSalary}
                 onChange={(e) => setEmpSalary(e.target.value)}
-                placeholder="3200,00"
                 className="w-full rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm tabular-nums"
               />
             </div>
@@ -799,6 +821,7 @@ export function TeamView({
               <input
                 id="emp-start"
                 type="date"
+                required
                 value={empStartDate}
                 onChange={(e) => setEmpStartDate(e.target.value)}
                 className="w-full rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
@@ -806,6 +829,22 @@ export function TeamView({
             </div>
           </div>
 
+          {empType !== 'CLT' && empType !== 'Sócio' && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="text-sm flex flex-col gap-1">Frequência do pagamento
+                <select value={paymentFrequency} onChange={(e) => setPaymentFrequency(e.target.value as 'monthly' | 'oneOff')}
+                  className="rounded-lg border border-[#E4E1DA] p-2">
+                  <option value="monthly">Mensal recorrente</option><option value="oneOff">Avulso</option>
+                </select>
+              </label>
+              {paymentFrequency === 'oneOff' && (
+                <label className="text-sm flex flex-col gap-1">Mês de referência
+                  <input type="month" required value={paymentMonth} onChange={(e) => { if (e.target.value || !e.target.validity.badInput) setPaymentMonth(e.target.value); }}
+                    className="rounded-lg border border-[#E4E1DA] p-2" />
+                </label>
+              )}
+            </div>
+          )}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5">
               <label htmlFor="emp-pay" className="text-[13px] font-semibold text-[#14181F]">
@@ -813,10 +852,12 @@ export function TeamView({
               </label>
               <select
                 id="emp-pay"
+                required
                 value={empPaymentMethod}
                 onChange={(e) => setEmpPaymentMethod(e.target.value)}
                 className="w-full rounded-lg border border-[#E4E1DA] bg-white px-3.5 py-2.5 text-sm"
               >
+                <option value="">Selecione</option>
                 <option value="Transferência">Transferência</option>
                 <option value="PIX">PIX</option>
                 <option value="Dinheiro">Dinheiro</option>
@@ -824,7 +865,7 @@ export function TeamView({
             </div>
             <div className="flex flex-col gap-1.5">
               <label htmlFor="emp-proj" className="text-[13px] font-semibold text-[#14181F]">
-                Obra atual
+                Obra padrão para semanas sem alocação
               </label>
               <select
                 id="emp-proj"
@@ -914,6 +955,7 @@ export function TeamView({
             </div>
           </div>
 
+          {feedback?.tone === 'bad' && <AlertNote tone="bad" title={feedback.title}>{feedback.text}</AlertNote>}
           <RegisteredBySelect value={empActor} onChange={setEmpActor} id="emp-actor" />
 
           <div className="flex justify-end gap-2 pt-2">
@@ -949,8 +991,8 @@ export function TeamView({
               <button
                 type="button"
                 onClick={() => {
-                  setAllocEmpId(data.employees[0]?.id || '');
-                  setAllocProjectId(data.projects[0]?.id || '');
+                  setAllocEmpId('');
+                  setAllocProjectId('');
                   setAllocWeekStart(weeks[0] || todayISO());
                   setAllocStatus('Obra');
                   setAllocModalOpen(true);
@@ -964,12 +1006,12 @@ export function TeamView({
               <button
                 type="button"
                 onClick={() => {
-                  setInssRate(String(data.settings?.inssRate ?? 20));
-                  setFgtsRate(String(data.settings?.fgtsRate ?? 8));
-                  setVacationRate(String(data.settings?.vacationRate ?? 11.11));
-                  setThirteenthRate(String(data.settings?.thirteenthRate ?? 8.33));
-                  setTaxEffectiveDate(data.settings?.taxParamsEffectiveDate || todayISO());
-                  setTaxSource(data.settings?.taxParamsSource || 'Contador · regime atual');
+                  setInssRate(String(data.settings?.inssRate ?? ''));
+                  setFgtsRate(String(data.settings?.fgtsRate ?? ''));
+                  setVacationRate(String(data.settings?.vacationRate ?? ''));
+                  setThirteenthRate(String(data.settings?.thirteenthRate ?? ''));
+                  setTaxEffectiveDate(data.settings?.taxParamsEffectiveDate || '');
+                  setTaxSource(data.settings?.taxParamsSource || '');
                   setParamsModalOpen(true);
                 }}
                 className="px-4 py-2.5 rounded-lg border border-[#E4E1DA] bg-white text-sm font-semibold text-[#14181F] hover:bg-[#F0EEE9] cursor-pointer"
@@ -1002,7 +1044,7 @@ export function TeamView({
           value={data.employees.length > 0 ? String(data.employees.length) : 'Sem dados'}
           subtext={
             data.employees.length > 0
-              ? `${payroll.cltCount} CLT · ${payroll.outrosCount} autônomos/diaristas`
+              ? `${payroll.cltCount} CLT · ${payroll.outrosCount} outros vínculos`
               : 'Cadastre os colaboradores'
           }
           isEmpty={data.employees.length === 0}
@@ -1055,7 +1097,7 @@ export function TeamView({
                   Equipe cadastrada ({filteredEmployees.length})
                 </h2>
                 <SegmentedControl
-                  items={['Todos', 'CLT', 'Autônomo', 'Diarista']}
+                  items={['Todos', ...EMPLOYMENT_TYPES]}
                   active={filterType}
                   onChange={setFilterType}
                 />
@@ -1143,8 +1185,8 @@ export function TeamView({
                   <button
                     type="button"
                     onClick={() => {
-                      setAllocEmpId(data.employees[0]?.id || '');
-                      setAllocProjectId(data.projects[0]?.id || '');
+                      setAllocEmpId('');
+                      setAllocProjectId('');
                       setAllocWeekStart(weeks[0] || todayISO());
                       setAllocStatus('Obra');
                       setAllocModalOpen(true);
@@ -1163,7 +1205,7 @@ export function TeamView({
                         {formatShortDateBR(w)}
                       </div>
                     ))}
-                    {data.employees.map((emp) => (
+                    {matrix.map(({ employee: emp, cells }) => (
                       <div key={emp.id} className="contents">
                         <button
                           type="button"
@@ -1172,17 +1214,10 @@ export function TeamView({
                         >
                           {emp.name}
                         </button>
-                        {weeks.map((w) => {
-                          const alloc = data.allocations.find(
-                            (a) => a.employeeId === emp.id && a.weekStart === w
-                          );
-                          const label = alloc
-                            ? alloc.status === 'Férias'
-                              ? 'Férias'
-                              : alloc.projectName || 'Obra'
-                            : emp.currentProjectName || 'Sem obra';
-                          const isVac = alloc?.status === 'Férias';
-                          const isNone = label === 'Sem obra';
+                        {cells.map((cell, index) => {
+                          const w = weeks[index];
+                          const alloc = cell.allocation;
+                          const { label, vacation: isVac, idle: isNone } = cell;
                           return (
                             <button
                               key={`${emp.id}-${w}`}
@@ -1196,7 +1231,7 @@ export function TeamView({
                               }}
                               title={`${emp.name} · ${formatDateBR(w)}: ${label}`}
                               className={`h-8 rounded-md px-1.5 text-[11px] font-semibold truncate cursor-pointer ${
-                                isVac
+                                cell.conflict ? 'bg-[#FDECEA] text-[#B42318]' : isVac
                                   ? 'bg-[#ECEAE4] text-[#5B6472]'
                                   : isNone
                                   ? 'bg-[#FDECEA] text-[#B42318]'
@@ -1225,11 +1260,24 @@ export function TeamView({
                 </div>
               </section>
 
-              {unallocatedEmployeesCount !== null && unallocatedEmployeesCount > 0 && (
-                <AlertNote tone="warn" title={`${unallocatedEmployeesCount} pessoa(s) sem obra na semana atual`}>
-                  Avalie realocar para obras satélites ou confirmar novos orçamentos no funil comercial.
+              {idleWeeks > 0 && (
+                <AlertNote tone="warn" title="Ociosidade prevista">
+                  {idleWeeks} semana(s) sem obra na matriz das próximas oito semanas.
                 </AlertNote>
               )}
+              {conflictWeeks > 0 && (
+                <AlertNote tone="bad" title="Conflitos de alocação">
+                  {conflictWeeks} semana(s) com registros divergentes. Abra a célula e salve a alocação correta para substituir os registros da semana.
+                </AlertNote>
+              )}
+              <section className="rounded-xl border border-[#E4E1DA] bg-white p-5">
+                <h2 className="font-semibold mb-2">Custo de equipe por centro · {formatMonthLabelBR(payrollMonth)}</h2>
+                <DataList rows={monthlyPayroll.centers} keyExtractor={(row) => row.id} emptyTitle="Sem dados"
+                  columns={[
+                    { key: 'name', header: 'Centro de custo', render: (row) => row.name },
+                    { key: 'cost', header: monthlyPayroll.configured ? 'Custo previsto' : 'Custo conhecido', render: (row) => formatBRL(row.amount) },
+                  ]} />
+              </section>
             </div>
           )}
 
@@ -1244,7 +1292,8 @@ export function TeamView({
                       const first = data.employees.find((e) => e.employmentType === 'CLT') || data.employees[0];
                       setVacEmpId(first?.id || '');
                       setVacPeriod(first?.vacationPeriod || '');
-                      setVacScheduled(first?.vacationScheduled || '');
+                      setVacStart(first?.vacationStart || '');
+                      setVacEnd(first?.vacationEnd || '');
                       setVacationModalOpen(true);
                     }}
                     className="px-3 py-1.5 rounded-lg border border-[#E4E1DA] text-xs font-semibold text-[#14181F] hover:bg-[#F0EEE9] cursor-pointer"
@@ -1345,8 +1394,10 @@ export function TeamView({
                         const emp = data.employees[0];
                         if (!emp) return;
                         setSafetyEmpId(emp.id);
-                        setSafetyAso(emp.asoExpiry || addDaysISO(todayISO(), 365));
-                        setSafetyNr18(emp.nr18Expiry || addDaysISO(todayISO(), 365));
+                        setSafetyAso(emp.asoExpiry || '');
+                      setSafetyEpiExpiry(emp.epiExpiry || '');
+                      setSafetyOnboardingStart(emp.onboardingStart || emp.startDate || '');
+                        setSafetyNr18(emp.nr18Expiry || '');
                         setSafetyNr35(emp.nr35Expiry || '');
                         setSafetyEpi(emp.epiStatus || 'Em dia');
                         setSafetyOnboarding(emp.onboardingStatus || 'Concluída');
@@ -1390,9 +1441,10 @@ export function TeamView({
                             </td>
                             <td className="py-3 px-3">
                               <StatusBadge label={emp.epiStatus || 'Pendente'} />
+                              {emp.epiExpiry && <StatusBadge label={avaliarValidadeSst(emp.epiExpiry, todayStr).label} />}
                             </td>
                             <td className="py-3 px-3">
-                              <StatusBadge label={emp.onboardingStatus || 'Pendente'} />
+                              <StatusBadge label={getOnboardingAlert(emp.onboardingStart, emp.startDate, emp.onboardingStatus, todayStr) ?? emp.onboardingStatus ?? 'Pendente'} />
                             </td>
                           </tr>
                         );
@@ -1408,7 +1460,10 @@ export function TeamView({
                       <div className="flex flex-wrap gap-1.5">
                         <StatusBadge label={`ASO: ${avaliarValidadeSst(emp.asoExpiry, todayStr).label}`} />
                         <StatusBadge label={`EPI: ${emp.epiStatus || 'Pendente'}`} />
-                        <StatusBadge label={`Integração: ${emp.onboardingStatus || 'Pendente'}`} />
+                        <StatusBadge label={`NR-18: ${avaliarValidadeSst(emp.nr18Expiry, todayStr).label}`} />
+                        <StatusBadge label={`NR-35: ${avaliarValidadeSst(emp.nr35Expiry, todayStr).label}`} />
+                        {emp.epiExpiry && <StatusBadge label={`Validade do EPI: ${avaliarValidadeSst(emp.epiExpiry, todayStr).label}`} />}
+                        <StatusBadge label={getOnboardingAlert(emp.onboardingStart, emp.startDate, emp.onboardingStatus, todayStr) ?? emp.onboardingStatus ?? 'Pendente'} />
                       </div>
                     </div>
                   ))}
@@ -1417,116 +1472,50 @@ export function TeamView({
             </div>
           )}
 
-          {tab === 'Folha e encargos' && (
-            <div className="flex flex-col gap-4">
-              <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <h2 className="text-base font-semibold text-[#14181F]">Folha calculada do mês</h2>
-                    <p className="text-xs text-[#5B6472]">
-                      {payroll.configurado
-                        ? `Alíquotas vigentes desde ${formatDateBR(data.settings?.taxParamsEffectiveDate)} (${data.settings?.taxParamsSource || 'Configurado'})`
-                        : 'Configure as alíquotas e vigência validadas com o contador em “Parâmetros de encargos”.'}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {currentMonthPayrollSent && (
-                      <StatusBadge label="Enviado ao Financeiro neste mês" tone="ok" />
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setPayrollModalOpen(true)}
-                      disabled={payroll.custoTotalMensal === null || payroll.custoTotalMensal <= 0}
-                      className="px-4 py-2 rounded-lg bg-[#1F3A5F] text-white text-xs font-semibold hover:bg-[#182E4C] cursor-pointer disabled:opacity-50"
-                    >
-                      Enviar folha do mês ao Financeiro
-                    </button>
-                  </div>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse">
-                    <thead>
-                      <tr className="bg-[#F0EEE9] text-left text-xs font-semibold text-[#5B6472]">
-                        <th className="py-2.5 px-3 rounded-l-lg">Grupo</th>
-                        <th className="py-2.5 px-3 text-right">Salários e valores</th>
-                        <th className="py-2.5 px-3 text-right">Encargos (INSS/FGTS)</th>
-                        <th className="py-2.5 px-3 text-right">Provisões (férias/13º)</th>
-                        <th className="py-2.5 px-3 text-right rounded-r-lg">Custo total</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr className="border-b border-[#E4E1DA] text-[13px]">
-                        <td className="py-3 px-3 font-medium text-[#14181F]">
-                          CLT ({payroll.cltCount})
-                        </td>
-                        <td className="py-3 px-3 text-right tabular-nums">
-                          {formatBRL(payroll.cltSalarioBase)}
-                        </td>
-                        <td className="py-3 px-3 text-right tabular-nums">
-                          {payroll.encargosMensais !== null
-                            ? formatBRL(payroll.encargosMensais)
-                            : 'não configurado'}
-                        </td>
-                        <td className="py-3 px-3 text-right tabular-nums">
-                          {payroll.provisoesMensais !== null
-                            ? formatBRL(payroll.provisoesMensais)
-                            : 'não configurado'}
-                        </td>
-                        <td className="py-3 px-3 text-right font-semibold text-[#14181F] tabular-nums">
-                          {payroll.cltCustoTotal !== null
-                            ? formatBRL(payroll.cltCustoTotal)
-                            : 'não configurado'}
-                        </td>
-                      </tr>
-                      <tr className="border-b border-[#E4E1DA] text-[13px]">
-                        <td className="py-3 px-3 font-medium text-[#14181F]">
-                          Autônomos e diaristas ({payroll.outrosCount})
-                        </td>
-                        <td className="py-3 px-3 text-right tabular-nums">
-                          {formatBRL(payroll.outrosSalarioBase)}
-                        </td>
-                        <td className="py-3 px-3 text-right text-[#5B6472]">—</td>
-                        <td className="py-3 px-3 text-right text-[#5B6472]">—</td>
-                        <td className="py-3 px-3 text-right font-semibold text-[#14181F] tabular-nums">
-                          {formatBRL(payroll.outrosSalarioBase)}
-                        </td>
-                      </tr>
-                      <tr className="text-[13px] font-bold bg-[#F6F5F2]">
-                        <td className="py-3 px-3 text-[#14181F]">Total mensal</td>
-                        <td className="py-3 px-3 text-right tabular-nums">{formatBRL(payroll.folhaBase)}</td>
-                        <td className="py-3 px-3 text-right tabular-nums">
-                          {payroll.encargosMensais !== null
-                            ? formatBRL(payroll.encargosMensais)
-                            : 'não configurado'}
-                        </td>
-                        <td className="py-3 px-3 text-right tabular-nums">
-                          {payroll.provisoesMensais !== null
-                            ? formatBRL(payroll.provisoesMensais)
-                            : 'não configurado'}
-                        </td>
-                        <td className="py-3 px-3 text-right text-[#1F3A5F] tabular-nums">
-                          {payroll.custoTotalMensal !== null
-                            ? formatBRL(payroll.custoTotalMensal)
-                            : 'não configurado'}
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <AlertNote tone="info" title="Parâmetros validados com o contador">
-                  Alíquotas e regras por vínculo ficam parametrizadas com data de vigência e fonte, nunca fixas no código.
-                </AlertNote>
-                {payroll.recorrentesNaoCltCount > 0 && (
-                  <AlertNote tone="warn" title="Atenção a vínculos autônomos recorrentes">
-                    {payroll.recorrentesNaoCltCount} autônomo(s) possuem valor mensal recorrente cadastrado. Avalie o enquadramento com contador ou advogado.
-                  </AlertNote>
+{tab === 'Folha e encargos' && (
+            <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <label className="text-sm font-semibold">Competência da folha
+                  <input type="month" value={payrollMonth} onChange={(e) => { if (e.target.value) setPayrollMonth(e.target.value); }}
+                    className="block rounded-lg border border-[#E4E1DA] p-2 font-normal" />
+                </label>
+                {currentMonthPayrollSent ? <StatusBadge label="Enviada ao Financeiro" tone="ok" /> : (
+                  <button type="button" onClick={() => setPayrollModalOpen(true)}
+                    disabled={!monthlyPayroll.configured || !monthlyPayroll.lines.length || !!monthlyPayroll.conflicts.length}
+                    className="rounded-lg bg-[#1F3A5F] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                    Enviar ao Financeiro
+                  </button>
                 )}
               </div>
-            </div>
+              {!monthlyPayroll.configured && (
+                <AlertNote tone="warn" title="Encargos não configurados">
+                  Os valores-base permanecem visíveis. Informe as alíquotas da empresa e a vigência para enviar a folha.
+                </AlertNote>
+              )}
+              {monthlyPayroll.conflicts.length > 0 && (
+                <AlertNote tone="bad" title="Resolva os conflitos de alocação">
+                  {monthlyPayroll.conflicts.join(', ')}. Corrija as semanas na aba Alocação.
+                </AlertNote>
+              )}
+              <DataList rows={monthlyPayroll.lines} keyExtractor={(row, index) => row.employeeId + '-' + index} emptyTitle="Sem dados"
+                columns={[
+                  { key: 'person', header: 'Colaborador', render: (row) => row.employeeName },
+                  { key: 'center', header: 'Centro de custo', render: (row) => row.projectName + (row.vacation ? ' · Férias' : '') },
+                  { key: 'base', header: 'Remuneração', render: (row) => formatBRL(row.base) + (row.category === 'Pró-labore' ? ' · Pró-labore' : '') },
+                  { key: 'charges', header: 'Encargos', render: (row) => row.charges === null ? 'não configurado' : formatBRL(row.charges) },
+                  { key: 'provisions', header: 'Provisões de férias e 13º', render: (row) => row.provisions === null ? 'não configurado' : formatBRL(row.provisions) },
+                  { key: 'total', header: 'Custo previsto', render: (row) => row.charges === null ? 'não configurado' : formatBRL(row.amount) },
+                ]} />
+              {monthlyPayroll.lines.length > 0 && (
+                <p className="text-sm font-semibold">{monthlyPayroll.configured ? 'Total previsto' : 'Total conhecido'} · {formatBRL(monthlyPayroll.totalKnown)}</p>
+              )}
+              <p className="text-xs text-[#5B6472]">O rateio usa dias corridos por centro de custo. O pró-labore é o valor fixo mensal cadastrado para cada sócio.</p>
+              {payroll.recorrentesNaoCltCount > 0 && (
+                <AlertNote tone="warn" title="Atenção a pagamentos recorrentes">
+                  {payroll.recorrentesNaoCltCount} vínculo(s) PJ ou autônomo recebem mensalmente. Avalie o enquadramento com contador ou advogado.
+                </AlertNote>
+              )}
+            </section>
           )}
         </>
       )}
@@ -1546,10 +1535,12 @@ export function TeamView({
             </label>
             <select
               id="alloc-emp"
+              required
               value={allocEmpId}
               onChange={(e) => setAllocEmpId(e.target.value)}
               className="w-full rounded-lg border border-[#E4E1DA] bg-white px-3.5 py-2.5 text-sm"
             >
+              <option value="">Selecione</option>
               {data.employees.map((emp) => (
                 <option key={emp.id} value={emp.id}>
                   {emp.name} ({emp.role})
@@ -1562,18 +1553,10 @@ export function TeamView({
               <label htmlFor="alloc-week" className="text-[13px] font-semibold text-[#14181F]">
                 Semana iniciando em
               </label>
-              <select
-                id="alloc-week"
-                value={allocWeekStart}
+              <input type="date" required id="alloc-week" value={allocWeekStart}
                 onChange={(e) => setAllocWeekStart(e.target.value)}
-                className="w-full rounded-lg border border-[#E4E1DA] bg-white px-3.5 py-2.5 text-sm"
-              >
-                {weeks.map((w) => (
-                  <option key={w} value={w}>
-                    {formatDateBR(w)}
-                  </option>
-                ))}
-              </select>
+                className="w-full rounded-lg border border-[#E4E1DA] bg-white px-3.5 py-2.5 text-sm" />
+              <span className="text-xs text-[#5B6472]">Informe a segunda-feira da semana.</span>
             </div>
             <div className="flex flex-col gap-1.5">
               <label htmlFor="alloc-status" className="text-[13px] font-semibold text-[#14181F]">
@@ -1610,6 +1593,7 @@ export function TeamView({
               </select>
             </div>
           )}
+          {feedback?.tone === 'bad' && <AlertNote tone="bad" title={feedback.title}>{feedback.text}</AlertNote>}
           <RegisteredBySelect value={allocActor} onChange={setAllocActor} id="alloc-actor" />
           <div className="flex justify-end gap-2 pt-2">
             <button
@@ -1649,6 +1633,8 @@ export function TeamView({
                 setSafetyEmpId(e.target.value);
                 if (emp) {
                   setSafetyAso(emp.asoExpiry || '');
+                      setSafetyEpiExpiry(emp.epiExpiry || '');
+                      setSafetyOnboardingStart(emp.onboardingStart || emp.startDate || '');
                   setSafetyNr18(emp.nr18Expiry || '');
                   setSafetyNr35(emp.nr35Expiry || '');
                   setSafetyEpi(emp.epiStatus || 'Em dia');
@@ -1734,6 +1720,17 @@ export function TeamView({
               </select>
             </div>
           </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-sm">Validade dos EPIs
+              <input type="date" value={safetyEpiExpiry} onChange={(e) => setSafetyEpiExpiry(e.target.value)}
+                className="block w-full rounded-lg border border-[#E4E1DA] p-2" />
+            </label>
+            <label className="text-sm">Início da integração
+              <input type="date" value={safetyOnboardingStart} onChange={(e) => setSafetyOnboardingStart(e.target.value)}
+                className="block w-full rounded-lg border border-[#E4E1DA] p-2" />
+            </label>
+          </div>
+          {feedback?.tone === 'bad' && <AlertNote tone="bad" title={feedback.title}>{feedback.text}</AlertNote>}
           <RegisteredBySelect value={safetyActor} onChange={setSafetyActor} id="saf-actor" />
           <div className="flex justify-end gap-2 pt-2">
             <button
@@ -1772,11 +1769,12 @@ export function TeamView({
                 const emp = data.employees.find((x) => x.id === e.target.value);
                 setVacEmpId(e.target.value);
                 setVacPeriod(emp?.vacationPeriod || '');
-                setVacScheduled(emp?.vacationScheduled || '');
+                setVacStart(emp?.vacationStart || '');
+                setVacEnd(emp?.vacationEnd || '');
               }}
               className="w-full rounded-lg border border-[#E4E1DA] bg-white px-3.5 py-2.5 text-sm"
             >
-              {data.employees.map((emp) => (
+              {data.employees.filter((emp) => emp.employmentType === 'CLT').map((emp) => (
                 <option key={emp.id} value={emp.id}>
                   {emp.name} ({emp.employmentType})
                 </option>
@@ -1797,18 +1795,18 @@ export function TeamView({
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="vac-sch" className="text-[13px] font-semibold text-[#14181F]">
-                Férias programadas
+              <label className="text-sm">Início das férias
+                <input type="date" value={vacStart} onChange={(e) => setVacStart(e.target.value)}
+                  className="block w-full rounded-lg border border-[#E4E1DA] p-2" />
               </label>
-              <input
-                id="vac-sch"
-                value={vacScheduled}
-                onChange={(e) => setVacScheduled(e.target.value)}
-                placeholder="Ex.: 02/02 a 21/02/2027"
-                className="w-full rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
-              />
+              <label className="text-sm">Fim das férias
+                <input type="date" value={vacEnd} min={vacStart || undefined} onChange={(e) => setVacEnd(e.target.value)}
+                  className="block w-full rounded-lg border border-[#E4E1DA] p-2" />
+              </label>
             </div>
           </div>
+          <p className="text-xs text-[#5B6472]">Os dias de férias saem da alocação em obra e vão para o centro Empresa na folha. A projeção mantém a remuneração e as provisões calculadas.</p>
+          {feedback?.tone === 'bad' && <AlertNote tone="bad" title={feedback.title}>{feedback.text}</AlertNote>}
           <RegisteredBySelect value={vacActor} onChange={setVacActor} id="vac-actor" />
           <div className="flex justify-end gap-2 pt-2">
             <button
@@ -1920,6 +1918,7 @@ export function TeamView({
               />
             </div>
           </div>
+          {feedback?.tone === 'bad' && <AlertNote tone="bad" title={feedback.title}>{feedback.text}</AlertNote>}
           <RegisteredBySelect value={taxActor} onChange={setTaxActor} id="tax-actor" />
           <div className="flex justify-end gap-2 pt-2">
             <button
@@ -1947,15 +1946,14 @@ export function TeamView({
         title="Enviar folha do mês ao Financeiro"
       >
         <form onSubmit={handleSendPayrollToFinance} className="flex flex-col gap-4">
-          <AlertNote tone="info" title="Lançamento integrado">
-            Será registrada uma saída de{' '}
-            <strong>
-              {payroll.custoTotalMensal !== null
-                ? formatBRL(payroll.custoTotalMensal)
-                : 'não configurado'}
-            </strong>{' '}
-            na categoria <strong>Folha</strong> para {payroll.totalColaboradores} colaborador(es).
+          <AlertNote tone="info" title="Despesas previstas por pessoa e centro">
+            {monthlyPayroll.lines.length} lançamento(s) em {formatMonthLabelBR(payrollMonth)}, no total de {formatBRL(monthlyPayroll.totalKnown)}. A baixa é feita em Contas a pagar.
           </AlertNote>
+          <label className="text-sm font-semibold">Vencimento da folha
+            <input type="date" required min={payrollMonth + '-01'} value={payrollDueDate}
+              onChange={(e) => setPayrollDueDate(e.target.value)} className="block w-full rounded-lg border border-[#E4E1DA] p-2" />
+          </label>
+          {feedback?.tone === 'bad' && <AlertNote tone="bad" title={feedback.title}>{feedback.text}</AlertNote>}
           <RegisteredBySelect value={payrollActor} onChange={setPayrollActor} id="pay-actor" />
           <div className="flex justify-end gap-2 pt-2">
             <button

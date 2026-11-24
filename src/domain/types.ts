@@ -144,6 +144,8 @@ export interface LancamentoRecord extends AuditFields {
   previsto: boolean;
   originalmentePrevisto?: boolean;
   statementKey?: string;
+  payrollPeriod?: string;
+  payrollProvisions?: number;
   status: LancamentoStatus;
   notaFiscal: NotaFiscalStatus;
   formaPagamento: string;
@@ -188,13 +190,15 @@ export interface DividaRecord extends AuditFields {
 }
 
 /* 9. colaboradores */
-export type VinculoTipo = 'CLT' | 'Autônomo' | 'Diarista';
+export type VinculoTipo = 'CLT' | 'PJ' | 'Autônomo' | 'Freelancer' | 'Diarista' | 'Informal' | 'Sócio';
 export interface ColaboradorRecord extends AuditFields {
   id: string;
   nome: string;
   funcao: string;
   vinculo: VinculoTipo;
   salarioBase: number;
+  paymentFrequency?: 'monthly' | 'oneOff';
+  paymentMonth?: string;
   formaPagamento: string;
   dataAdmissao: string;
   obraAtualId?: string;

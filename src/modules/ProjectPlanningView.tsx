@@ -30,6 +30,11 @@ import {
   calcularCaminhoCriticoObra,
   calcularCurvaSObra,
   calcularDreObra,
+  calculateTeamPayroll,
+  formatMonthLabelBR,
+  monthKey,
+  resolveTeamWeek,
+  weekStartingOn,
   calcularProgressoObra,
   calcularResumoFasesEap,
   clampStr,
@@ -1004,37 +1009,33 @@ export function ProjectPlanningView({
             </div>
           )}
 
-          {tab === 'Recursos' && (
-            <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
-              <h2 className="text-base font-semibold text-[#14181F]">
-                Equipe alocada nesta obra
-              </h2>
-              {data.employees.filter((e) => e.currentProjectId === activeProject.id).length === 0 ? (
-                <p className="text-sm text-[#5B6472]">
-                  Nenhum colaborador atribuído diretamente a esta obra no cadastro de Equipe.
+          {tab === 'Recursos' && (() => {
+            const today = todayISO();
+            const month = monthKey(today);
+            const payroll = calculateTeamPayroll(data, month);
+            const people = data.employees.filter((employee) => {
+              const cell = resolveTeamWeek(employee, weekStartingOn(today), data);
+              return cell.project?.id === activeProject.id && !cell.vacation && !cell.conflict;
+            });
+            const cost = payroll.centers.find((center) => center.id === activeProject.id)?.amount;
+            return (
+              <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
+                <h2 className="text-base font-semibold">Equipe alocada nesta obra</h2>
+                <p className="text-sm">
+                  {payroll.configured ? 'Custo de equipe previsto' : 'Custo de equipe conhecido'} · {formatMonthLabelBR(month)} · <strong>{formatBRL(cost)}</strong>
                 </p>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {data.employees
-                    .filter((e) => e.currentProjectId === activeProject.id)
-                    .map((emp) => (
-                      <div
-                        key={emp.id}
-                        className="border border-[#E4E1DA] rounded-xl p-4 flex items-center justify-between gap-3"
-                      >
-                        <div>
-                          <strong className="block text-sm text-[#14181F]">{emp.name}</strong>
-                          <span className="text-xs text-[#5B6472]">
-                            {emp.role} · {emp.employmentType}
-                          </span>
-                        </div>
-                        <StatusBadge label={emp.epiStatus} />
-                      </div>
+                {people.length ? (
+                  <ul className="grid gap-2 sm:grid-cols-2">
+                    {people.map((employee) => (
+                      <li key={employee.id} className="rounded-lg border border-[#E4E1DA] p-3 text-sm">
+                        <strong>{employee.name}</strong> · {employee.role} · {employee.employmentType}
+                      </li>
                     ))}
-                </div>
-              )}
-            </section>
-          )}
+                  </ul>
+                ) : <p className="text-sm text-[#5B6472]">Sem colaboradores disponíveis nesta obra na semana atual.</p>}
+              </section>
+            );
+          })()}
 
           {tab === 'Riscos e linha de base' && (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

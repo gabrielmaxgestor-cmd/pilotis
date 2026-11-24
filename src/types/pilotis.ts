@@ -211,6 +211,11 @@ export interface FinancialTransaction extends AuditMeta {
   isForecast: boolean;
   wasForecast?: boolean;
   statementKey?: string;
+  payrollEmployeeId?: string;
+  payrollPeriod?: string;
+  payrollBase?: number;
+  payrollCharges?: number;
+  payrollProvisions?: number;
   status: TransactionStatus;
   invoiceStatus: InvoiceStatus;
   paymentMethod: string;
@@ -243,7 +248,14 @@ export interface Debt extends AuditMeta {
   notes: string;
 }
 
-export type EmploymentType = 'CLT' | 'Autônomo' | 'Diarista';
+export type EmploymentType = 'CLT' | 'PJ' | 'Autônomo' | 'Freelancer' | 'Diarista' | 'Informal' | 'Sócio';
+export type EmployeeOccurrenceKind = 'Elogio' | 'Registro' | 'Advertência' | 'Acidente' | 'Quase acidente';
+export interface EmployeeOccurrence extends AuditMeta {
+  id: string;
+  kind: EmployeeOccurrenceKind;
+  date: string;
+  description: string;
+}
 export type EpiStatus = 'Em dia' | 'A repor' | 'Pendente';
 export type OnboardingStatus = 'Concluída' | 'Em andamento' | 'Pendente';
 
@@ -253,6 +265,8 @@ export interface Employee extends AuditMeta {
   role: string;
   employmentType: EmploymentType;
   baseSalary: number;
+  paymentFrequency?: 'monthly' | 'oneOff';
+  paymentMonth?: string;
   paymentMethod: string;
   startDate: string;
   currentProjectId: string;
@@ -262,6 +276,10 @@ export interface Employee extends AuditMeta {
   nr35Expiry: string;
   epiStatus: EpiStatus;
   onboardingStatus: OnboardingStatus;
+  onboardingStart?: string;
+  epiExpiry?: string;
+  vacationStart?: string;
+  vacationEnd?: string;
   vacationPeriod: string;
   vacationScheduled: string;
   occurrencesNote: string;

@@ -17,8 +17,12 @@ import {
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import type {
   ActorRole,
+  Allocation,
+  Employee,
   CompanySettings,
   Debt,
+  EmployeeOccurrence,
+  EmployeeOccurrenceKind,
   FinancialTransaction,
   Installment,
   PilotisDataState,
@@ -30,6 +34,8 @@ import type {
 } from '../types/pilotis';
 import {
   addMonthsISO,
+  calculateTeamPayroll,
+  weekStartingOn,
   clampStr,
   formatBRL,
   formatDateBR as domainFormatDateBR,
@@ -1314,4 +1320,101 @@ export async function importBankStatement(uid: string, actor: ActorRole, rows: S
       createdAt: serverTimestamp(),
     });
   });
+}
+
+export function subscribeEmployeeOccurrences(
+  uid: string, employeeId: string, onChange: (rows: EmployeeOccurrence[]) => void, onError: () => void,
+): Unsubscribe {
+  return onSnapshot(
+    query(collection(db, 'employees', employeeId, 'occurrences'), where('ownerUid', '==', uid)),
+    (snapshot) => onChange(snapshot.docs.map((item) => ({ ...item.data(), id: item.id }) as EmployeeOccurrence)
+      .sort((a, b) => b.date.localeCompare(a.date))),
+    onError,
+  );
+}
+
+export async function recordEmployeeOccurrence(
+  uid: string, employeeId: string, actor: ActorRole, kind: EmployeeOccurrenceKind, date: string, description: string,
+) {
+  if (!isValidISODate(date) || date > todayISO() || !description.trim()) {
+    throw new Error('Informe a data e a descrição da ocorrência.');
+  }
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'employees', employeeId, 'occurrences', generateId('occ')), {
+    ...auditFields(uid, actor), kind, date, description: clampStr(description, 1000),
+  });
+  batch.set(doc(db, 'auditLogs', generateId('aud')), {
+    ownerUid: uid, registeredBy: actor, action: 'Criação', entityType: 'employee-occurrence',
+    summary: 'Ocorrência registrada: ' + kind + ' em ' + formatDateBR(date), createdAt: serverTimestamp(),
+  });
+  await batch.commit();
+}
+
+export async function submitTeamPayroll(
+  uid: string, actor: ActorRole, data: PilotisDataState, month: string, dueDate: string,
+) {
+  if (!isValidISODate(dueDate) || dueDate < month + '-01') {
+    throw new Error('Informe um vencimento válido a partir do mês de referência.');
+  }
+  if (data.transactions.some((transaction) => transaction.source === 'folha' &&
+    (transaction.payrollPeriod || transaction.installmentLabel || transaction.date.slice(0, 7)) === month)) {
+    throw new Error('A folha deste mês já foi enviada ao Financeiro.');
+  }
+  const payroll = calculateTeamPayroll(data, month);
+  if (!payroll.configured) throw new Error('Encargos não configurados para a competência selecionada.');
+  if (payroll.conflicts.length) throw new Error('Resolva os conflitos de alocação deste mês antes de enviar.');
+  if (payroll.lines.length === 0) throw new Error('Sem valores de folha para esta competência.');
+  if (payroll.lines.some((line) => !line.paymentMethod.trim())) {
+    throw new Error('Informe a forma de pagamento dos colaboradores incluídos nesta folha.');
+  }
+  if (payroll.lines.length >= 500) throw new Error('Esta folha excede o limite de lançamentos por envio.');
+  const batch = writeBatch(db);
+  for (const line of payroll.lines) {
+    const payload: TransactionPayload = {
+      date: dueDate, dueDate, description: clampStr(line.category + ' · ' + line.employeeName + (line.vacation ? ' · Férias' : ''), 200),
+      entryKind: 'expense', category: line.category, projectId: line.projectId, projectName: line.projectName,
+      amount: line.amount, isForecast: true, status: 'A vencer', invoiceStatus: 'Não se aplica',
+      paymentMethod: line.paymentMethod, installmentLabel: month, quoteId: '', debtId: '', source: 'folha',
+      payrollEmployeeId: line.employeeId, payrollPeriod: month, payrollBase: line.base,
+      payrollCharges: line.charges ?? 0, payrollProvisions: line.provisions ?? 0,
+    };
+    stageNewTransaction(batch, uid, actor, payload, generateId('tx'));
+  }
+  // Audit records are create-only. This key prevents duplicate sends even across sessions.
+  batch.set(doc(db, 'auditLogs', 'payroll-' + uid + '-' + month), {
+    ownerUid: uid, registeredBy: actor, action: 'Criação', entityType: 'payroll',
+    summary: 'Folha ' + month + ' enviada: ' + payroll.lines.length + ' lançamento(s) · ' + formatBRL(payroll.totalKnown),
+    createdAt: serverTimestamp(),
+  });
+  await batch.commit();
+}
+
+export async function saveWeeklyAllocation(
+  uid: string, actor: ActorRole, employee: Employee, week: string,
+  target: { status: Allocation['status']; projectId: string; projectName: string },
+  allocations: Allocation[],
+) {
+  if (!isValidISODate(week) || weekStartingOn(week) !== week) {
+    throw new Error('Escolha a segunda-feira de início da semana.');
+  }
+  const existing = allocations.filter((item) =>
+    item.ownerUid === uid && item.employeeId === employee.id && item.weekStart === week,
+  );
+  const [previous, ...duplicates] = existing;
+  const batch = writeBatch(db);
+  const ref = doc(db, 'allocations', previous?.id ?? 'alloc-' + employee.id + '-' + week);
+  const row = { ...target, employeeId: employee.id, employeeName: employee.name, weekStart: week };
+  if (previous) {
+    batch.update(ref, { ...row, updatedBy: actor, updatedAt: serverTimestamp() });
+  } else {
+    batch.set(ref, { ...row, ...auditFields(uid, actor) });
+  }
+  for (const duplicate of duplicates) batch.delete(doc(db, 'allocations', duplicate.id));
+  batch.set(doc(db, 'auditLogs', generateId('aud')), {
+    ownerUid: uid, registeredBy: actor, action: previous ? 'Atualização' : 'Criação', entityType: 'allocations',
+    summary: clampStr('Alocação de ' + employee.name + ' na semana de ' + formatDateBR(week), 240),
+    beforeValue: clampStr(existing.map((item) => item.projectName).join(' / '), 240),
+    afterValue: clampStr(target.projectName, 240), createdAt: serverTimestamp(),
+  });
+  await batch.commit();
 }

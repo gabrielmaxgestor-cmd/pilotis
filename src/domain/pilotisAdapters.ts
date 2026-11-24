@@ -30,7 +30,9 @@ import {
   type ObraDreInput,
 } from './dre';
 import {
+  avaliarValidadeSst,
   calcularEncargos,
+  getOnboardingAlert,
   contarPendenciasSegurancaEquipe,
   resumoFolhaEquipe,
   type EncargosColaboradorResult,
@@ -49,7 +51,8 @@ import {
   installmentProgress,
   signedCashAmount,
 } from './financeiro';
-import { monthKey, roundCents, todayISO } from './formatters';
+import { addMonthsISO, monthKey, roundCents, todayISO } from './formatters';
+import { planMonthlyPayroll } from './teamPlanning';
 import {
   indicadoresDashboard,
   type IndicadoresDashboardResult,
@@ -112,6 +115,8 @@ export function toDomainTransactions(
     previsto: t.isForecast,
     originalmentePrevisto: t.wasForecast,
     statementKey: t.statementKey,
+    payrollPeriod: t.payrollPeriod,
+    payrollProvisions: t.payrollProvisions,
     status: t.status,
     notaFiscal: t.invoiceStatus || 'Não se aplica',
     formaPagamento: t.paymentMethod || '',
@@ -176,6 +181,8 @@ export function toDomainEmployees(employees: Employee[]): ColaboradorRecord[] {
     funcao: e.role,
     vinculo: e.employmentType,
     salarioBase: e.baseSalary,
+    paymentFrequency: e.paymentFrequency,
+    paymentMonth: e.paymentMonth,
     formaPagamento: e.paymentMethod,
     dataAdmissao: e.startDate,
     obraAtualId: e.currentProjectId || undefined,
@@ -207,17 +214,13 @@ export function toDomainTaxParams(
   referenceDate = todayISO(),
 ): TaxChargeParameters | null {
   if (!settings) return null;
-  const totalRate =
-    (settings.inssRate || 0) +
-    (settings.fgtsRate || 0) +
-    (settings.vacationRate || 0) +
-    (settings.thirteenthRate || 0);
-  if (totalRate <= 0) return null;
+  const { inssRate, fgtsRate, vacationRate, thirteenthRate } = settings;
+  if (inssRate == null || fgtsRate == null || vacationRate == null || thirteenthRate == null) return null;
   return {
-    inssPct: settings.inssRate || 0,
-    fgtsPct: settings.fgtsRate || 0,
-    feriasPct: settings.vacationRate || 0,
-    decimoTerceiroPct: settings.thirteenthRate || 0,
+    inssPct: inssRate,
+    fgtsPct: fgtsRate,
+    feriasPct: vacationRate,
+    decimoTerceiroPct: thirteenthRate,
     vigenciaInicio: settings.taxParamsEffectiveDate || referenceDate,
     fonte: settings.taxParamsSource || undefined,
   };
@@ -405,6 +408,11 @@ export function calcularPrevisaoCaixa(
     orcamentos: toDomainQuotes(data.quotes),
     colaboradores: toDomainEmployees(data.employees),
     parametrosEncargos: toDomainTaxParams(data.settings, dataBase),
+    payrollByMonth: new Map(Array.from({ length: mesesCount }, (_, index) => {
+      const month = monthKey(addMonthsISO(dataBase, index));
+      const payroll = calculateTeamPayroll(data, month);
+      return [month, { amount: payroll.totalKnown, provisions: payroll.provisions ?? 0 }] as const;
+    })),
   });
 }
 
@@ -453,7 +461,10 @@ export function calcularResumoFolhaEquipe(
   dataReferencia = todayISO(),
 ): ResumoFolhaEquipe {
   return resumoFolhaEquipe(
-    toDomainEmployees(employees),
+    toDomainEmployees(employees.filter((employee) =>
+      (!employee.startDate || employee.startDate <= dataReferencia) &&
+      (employee.paymentFrequency !== 'oneOff' || employee.paymentMonth === monthKey(dataReferencia)),
+    )),
     toDomainTaxParams(settings, dataReferencia),
     dataReferencia,
   );
@@ -466,7 +477,10 @@ export function calcularPendenciasSegurancaEquipe(
   return contarPendenciasSegurancaEquipe(
     toDomainEmployees(employees),
     dataReferencia,
-  );
+  ) + employees.filter((employee) => avaliarValidadeSst(employee.epiExpiry, dataReferencia).expiredOrSoon).length
+    + employees.filter((employee) =>
+      getOnboardingAlert(employee.onboardingStart, employee.startDate, employee.onboardingStatus, dataReferencia) === 'Integração em atraso',
+    ).length;
 }
 
 export function calcularResumoDividas(debts: Debt[]): ResumoDividasResult {
@@ -598,4 +612,8 @@ export function conciliarExtratoPilotis(
 
 export function calculateInstallmentProgress(installments: Installment[], projectId: string) {
   return installmentProgress(toDomainInstallments(installments), projectId);
+}
+
+export function calculateTeamPayroll(data: Pick<PilotisDataState, 'employees' | 'allocations' | 'projects' | 'settings'>, month: string) {
+  return planMonthlyPayroll(data, month, toDomainTaxParams(data.settings, month + '-01'));
 }
