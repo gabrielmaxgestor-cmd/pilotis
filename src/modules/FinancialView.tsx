@@ -616,8 +616,8 @@ export function FinancialView({
   const activeDreProject =
     data.projects.find((p) => p.id === selectedDreProjectId) || data.projects[0] || null;
   const activeDre = useMemo(
-    () => (activeDreProject ? calcularDreObra(activeDreProject, data.transactions) : null),
-    [activeDreProject, data.transactions],
+    () => (activeDreProject ? calcularDreObra(activeDreProject, data.transactions, data.stages) : null),
+    [activeDreProject, data.transactions, data.stages],
   );
 
   const companyDre = useMemo(
@@ -1418,8 +1418,10 @@ export function FinancialView({
                         ['(−) Equipamentos e EPI', activeDre.equipamentos],
                         ['(−) Tributos', activeDre.impostos],
                         ['(−) BDI e comissões', activeDre.bdi],
-                      ] as const).map(([label, line]) => {
-                        const diffPct = activeDre.possuiRealizado ? line.variacaoPct : null;
+                        ['(−) Ajuste do orçamento pela EAP', activeDre.ajusteEap],
+                      ] as const).filter(([, line]) => line !== activeDre.ajusteEap || line.orcado !== 0).map(([label, line]) => {
+                        const isEapAdjustment = line === activeDre.ajusteEap;
+                        const diffPct = activeDre.possuiRealizado && !isEapAdjustment ? line.variacaoPct : null;
                         const isCost = String(label).startsWith('(−)');
                         const tone: BadgeTone =
                           diffPct == null || diffPct === 0
@@ -1435,7 +1437,7 @@ export function FinancialView({
                           <tr key={String(label)} className="border-b border-[#E4E1DA] text-[13px]">
                             <td className="py-3 px-3 font-medium text-[#14181F]">{label}</td>
                             <td className="py-3 px-3 text-right tabular-nums">{formatBRL(line.orcado)}</td>
-                            <td className="py-3 px-3 text-right tabular-nums">{formatBRL(activeDre.possuiRealizado ? line.realizado : null)}</td>
+                            <td className="py-3 px-3 text-right tabular-nums">{formatBRL(activeDre.possuiRealizado && !isEapAdjustment ? line.realizado : null)}</td>
                             <td className="py-3 px-3">
                               <StatusBadge
                                 label={formatPercentBR(diffPct)}

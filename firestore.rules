@@ -165,7 +165,7 @@ service cloud.firestore {
         'ownerUid', 'name', 'type', 'contractValue', 'status', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
       ])
         && data.keys().hasOnly([
-          'ownerUid', 'name', 'quoteId', 'clientId', 'clientName', 'type', 'contractKind', 'planningStatus',
+          'ownerUid', 'name', 'quoteId', 'clientId', 'clientName', 'type', 'contractKind', 'planningStatus', 'scheduleRevision', 'scheduleStageIds',
           'contractValue', 'contractPdf', 'downPaymentPct', 'installmentsCount', 'addendaTotalValue',
           'budgetedLabor', 'budgetedSubcontract', 'budgetedEquipment', 'budgetedBdi', 'budgetedTax',
           'startDate', 'baselineEndDate', 'forecastEndDate', 'status', 'contractSigned',
@@ -176,6 +176,8 @@ service cloud.firestore {
         && data.type in ['Casa residencial', 'Reforma', 'Obra satélite']
         && (!('contractKind' in data) || data.contractKind in ['Principal', 'Satélite'])
         && (!('planningStatus' in data) || data.planningStatus in ['Aguardando modelo de cronograma', 'Cronograma criado'])
+        && (!('scheduleStageIds' in data) || data.scheduleStageIds is list)
+        && (!('scheduleRevision' in data) || (data.scheduleRevision is int && data.scheduleRevision >= 0))
         && isValidNonNegNum(data.contractValue)
         && (!('contractPdf' in data) || (data.contractPdf is bytes && data.contractPdf.size() > 0 && data.contractPdf.size() <= 65536))
         && (!('downPaymentPct' in data) || (isValidNonNegNum(data.downPaymentPct) && data.downPaymentPct <= 100))
@@ -228,8 +230,8 @@ service cloud.firestore {
         'ownerUid', 'projectId', 'wbsCode', 'phase', 'name', 'status', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
       ])
         && data.keys().hasOnly([
-          'ownerUid', 'projectId', 'wbsCode', 'phase', 'name', 'responsible', 'durationWeeks',
-          'startWeek', 'baselineStartWeek', 'baselineDurationWeeks', 'progressPct', 'budgetedCost',
+          'ownerUid', 'projectId', 'wbsCode', 'phase', 'deliverable', 'name', 'responsible', 'durationWeeks',
+          'startWeek', 'baselineStartWeek', 'baselineDurationWeeks', 'baselineBudgetedCost', 'progressPct', 'budgetedCost',
           'popId', 'dependsOn', 'isMilestone', 'status', 'materialExpectedDate', 'delayCategory',
           'delayJustification', 'checklistCompleted', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
         ])
@@ -243,6 +245,8 @@ service cloud.firestore {
         && (!('durationWeeks' in data) || isValidNonNegNum(data.durationWeeks))
         && (!('startWeek' in data) || isValidNonNegNum(data.startWeek))
         && (!('baselineStartWeek' in data) || isValidNonNegNum(data.baselineStartWeek))
+        && (!('deliverable' in data) || isValidStr(data.deliverable, 120))
+        && (!('baselineBudgetedCost' in data) || isValidNonNegNum(data.baselineBudgetedCost))
         && (!('baselineDurationWeeks' in data) || isValidNonNegNum(data.baselineDurationWeeks))
         && (!('progressPct' in data) || (isValidNonNegNum(data.progressPct) && data.progressPct <= 100))
         && (!('budgetedCost' in data) || isValidNonNegNum(data.budgetedCost))

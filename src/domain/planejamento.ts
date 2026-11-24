@@ -16,6 +16,7 @@ export interface CpmEtapaDetalhe {
 export interface CaminhoCriticoResult {
   cicloDetectado: boolean;
   nosEmCiclo: string[];
+  primeiroCiclo?: string[];
   duracaoTotal: number;
   etapasCriticas: string[];
   detalhes: CpmEtapaDetalhe[];
@@ -46,6 +47,7 @@ export function caminhoCritico(
   const nosEmCicloSet = new Set<string>();
   const stack: string[] = [];
   let cicloDetectado = false;
+  let primeiroCiclo: string[] | undefined;
 
   const dfsCycle = (id: string) => {
     const state = color.get(id) ?? 0;
@@ -53,6 +55,7 @@ export function caminhoCritico(
       cicloDetectado = true;
       const idx = stack.indexOf(id);
       if (idx >= 0) {
+        primeiroCiclo ??= [...stack.slice(idx), id].reverse();
         for (let i = idx; i < stack.length; i++) {
           nosEmCicloSet.add(stack[i]);
         }
@@ -85,6 +88,7 @@ export function caminhoCritico(
     return {
       cicloDetectado: true,
       nosEmCiclo: Array.from(nosEmCicloSet),
+      primeiroCiclo,
       duracaoTotal: 0,
       etapasCriticas: [],
       detalhes: [],
@@ -245,16 +249,10 @@ export function curvaS(
 
   const normalized = etapasAtivas.map((e) => {
     const b = baselineById.get(e.id);
-    const start = b ? b.semanaInicioBaseline : e.semanaInicio;
-    const dur = Math.max(0, b ? b.duracaoBaselineSemanas : e.duracaoSemanas);
-    const weight = Math.max(
-      1,
-      b && b.custoOrcadoBaseline > 0
-        ? b.custoOrcadoBaseline
-        : e.custoOrcado > 0
-        ? e.custoOrcado
-        : dur || 1,
-    );
+    const start = b?.semanaInicioBaseline ?? e.semanaInicio;
+    const dur = Math.max(0, b?.duracaoBaselineSemanas ?? e.duracaoSemanas);
+    const cost = b?.custoOrcadoBaseline ?? e.custoOrcado;
+    const weight = cost > 0 ? cost : dur || 1;
     maxWeek = Math.max(maxWeek, start + dur, e.semanaInicio + e.duracaoSemanas);
     totalWeight += weight;
 
@@ -320,7 +318,7 @@ export function curvaS(
   }
 
   const progressoPlanejadoPct = computePlannedAtWeek(refWeek);
-  const progressoRealizadoPct = computeRealizedAtWeek(refWeek);
+  const progressoRealizadoPct = computeRealizedAtWeek(maxWeekInt);
   const indicePrazo =
     progressoPlanejadoPct > 0
       ? roundCents(progressoRealizadoPct / progressoPlanejadoPct)
@@ -395,3 +393,18 @@ export function resumoFasesEap(
   }));
 }
 
+
+export function allocateScheduleBudget(total: number, weights: number[]): number[] {
+  const cents = Math.round(roundCents(total) * 100);
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+  if (!totalWeight) return weights.map(() => 0);
+  let allocated = 0;
+  let cumulativeWeight = 0;
+  return weights.map((weight) => {
+    cumulativeWeight += weight;
+    const target = Math.round(cents * cumulativeWeight / totalWeight);
+    const share = target - allocated;
+    allocated = target;
+    return share / 100;
+  });
+}

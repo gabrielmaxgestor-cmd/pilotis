@@ -15,6 +15,7 @@ import {
   applyScheduleTemplateToProject,
   createProjectFromTemplate,
   createRecord,
+  saveProjectStage,
   updateRecord,
 } from '../services/pilotisService';
 import type {
@@ -27,8 +28,11 @@ import type {
   WeatherType,
 } from '../types/pilotis';
 import {
-  calcularCaminhoCriticoObra,
   calcularCurvaSObra,
+  describeScheduleCycle,
+  getProjectSchedule,
+  getWorkPackageBudget,
+  roundCents,
   calcularDreObra,
   calculateTeamPayroll,
   formatMonthLabelBR,
@@ -52,7 +56,7 @@ const PLAN_TABS = [
   'Cronograma',
   'Kanban',
   'Recursos',
-  'Riscos e linha de base',
+  'Riscos',
   'Diário de obra',
   'Encerramento',
 ];
@@ -64,6 +68,43 @@ const KANBAN_COLS: Array<{ status: StageStatus; subtitle: string }> = [
   { status: 'Em conferência', subtitle: 'Checklist do POP' },
   { status: 'Concluída', subtitle: 'Entregue e conferida' },
 ];
+
+
+const TEMPLATE_OPTIONS: { type: ProjectType; description: string }[] = [
+  { type: 'Casa residencial', description: 'Estrutura, instalações e entrega · 52 semanas' },
+  { type: 'Reforma', description: 'Demolição, instalações e entrega · 10 semanas' },
+  { type: 'Obra satélite', description: 'Mobilização, execução e entrega · 4 semanas' },
+];
+
+function ScheduleTemplateOptions({ value, onChange }: { value: ProjectType; onChange: (value: ProjectType) => void }) {
+  return (
+    <fieldset className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <legend className="sr-only">Modelo de cronograma</legend>
+      {TEMPLATE_OPTIONS.map(({ type, description }) => (
+        <label key={type} className="cursor-pointer">
+          <input type="radio" name="schedule-template" checked={value === type} onChange={() => onChange(type)} className="peer sr-only" />
+          <span className="block h-full rounded-xl p-3.5 border border-[#E4E1DA] bg-white peer-checked:border-[#1F3A5F] peer-checked:bg-[#E6EEFB] peer-focus-visible:ring-2 peer-focus-visible:ring-[#1F3A5F]">
+            <strong className="block text-sm text-[#14181F]">{type}</strong>
+            <span className="text-xs text-[#5B6472]">{description}</span>
+          </span>
+        </label>
+      ))}
+    </fieldset>
+  );
+}
+
+function groupStages(stages: ProjectStage[]) {
+  const phases = new Map<string, Map<string, ProjectStage[]>>();
+  for (const stage of stages) {
+    const phase = phases.get(stage.phase) ?? new Map<string, ProjectStage[]>();
+    phases.set(stage.phase, phase);
+    const delivery = stage.deliverable || 'Entrega ainda não informada';
+    const packages = phase.get(delivery) ?? [];
+    packages.push(stage);
+    phase.set(delivery, packages);
+  }
+  return [...phases];
+}
 
 export function ProjectPlanningView({
   uid,
@@ -79,6 +120,7 @@ export function ProjectPlanningView({
   onSelectProject: (id: string) => void;
 }) {
   const [tab, setTab] = useState('Visão geral');
+  const [projectFilter, setProjectFilter] = useState('Todas');
   const [kanbanPhaseFilter, setKanbanPhaseFilter] = useState('Todas as fases');
 
   // New Project from Template Modal
@@ -88,15 +130,17 @@ export function ProjectPlanningView({
   const [npType, setNpType] = useState<ProjectType>('Casa residencial');
   const [npContractKind, setNpContractKind] = useState<ProjectContractKind>('Principal');
   const [npValue, setNpValue] = useState('');
+  const [npBudget, setNpBudget] = useState('');
+  const [npError, setNpError] = useState<string | null>(null);
   const [npStart, setNpStart] = useState(todayISO());
-  const [npMonths, setNpMonths] = useState('18');
+  const [npMonths, setNpMonths] = useState('');
   const [npActor, setNpActor] = useState<ActorRole>('Sócio');
   const [npSaving, setNpSaving] = useState(false);
 
   // Schedule Template Onboarding for Contratada projects awaiting cronograma
   const [tplType, setTplType] = useState<ProjectType>('Casa residencial');
   const [tplStart, setTplStart] = useState(todayISO());
-  const [tplMonths, setTplMonths] = useState('18');
+  const [tplMonths, setTplMonths] = useState('');
   const [tplActor, setTplActor] = useState<ActorRole>('Sócio');
   const [tplSaving, setTplSaving] = useState(false);
   const [tplError, setTplError] = useState<string | null>(null);
@@ -107,6 +151,8 @@ export function ProjectPlanningView({
   const [stWbs, setStWbs] = useState('1.1');
   const [stPhase, setStPhase] = useState('1 · Fundação, estrutura e cobertura');
   const [stName, setStName] = useState('');
+  const [stDeliverable, setStDeliverable] = useState('');
+  const [stageRevision, setStageRevision] = useState<number | undefined>();
   const [stResp, setStResp] = useState('');
   const [stStartWeek, setStStartWeek] = useState('0');
   const [stDurWeeks, setStDurWeeks] = useState('4');
@@ -147,14 +193,14 @@ export function ProjectPlanningView({
   }, []);
 
   const activeProject =
-    data.projects.find((p) => p.id === selectedProjectId) || data.projects[0] || null;
+    data.projects.find((p) => p.id === selectedProjectId) ?? null;
 
   useEffect(() => {
     if (!activeProject) return;
     setTplType(activeProject.type || 'Casa residencial');
     setTplStart(activeProject.startDate || todayISO());
     const linkedQuote = data.quotes.find((q) => q.id === activeProject.quoteId);
-    setTplMonths(String(linkedQuote?.estimatedMonths || 18));
+    setTplMonths(linkedQuote?.estimatedMonths ? String(linkedQuote.estimatedMonths) : '');
     setTplError(null);
   }, [activeProject, data.quotes]);
 
@@ -170,25 +216,29 @@ export function ProjectPlanningView({
 
   const awaitingScheduleTemplate = Boolean(
     activeProject &&
-      (activeProject.planningStatus === 'Aguardando modelo de cronograma' ||
-        (activeProject.status === 'Contratada' && projectStages.length === 0))
+      activeProject.status === 'Contratada' && activeProject.planningStatus !== 'Cronograma criado' && projectStages.length === 0
   );
 
-  const cpmResult = useMemo(
-    () => calcularCaminhoCriticoObra(projectStages),
-    [projectStages]
+  const schedule = useMemo(
+    () => activeProject ? getProjectSchedule(activeProject, projectStages) : null,
+    [activeProject, projectStages],
   );
-  const criticalIds = useMemo(
-    () => new Set(cpmResult.etapasCriticas),
-    [cpmResult.etapasCriticas]
-  );
-  const projectProgress = activeProject ? calcularProgressoObra(activeProject.id, data.stages) : null;
-  const curvaSData = useMemo(() => calcularCurvaSObra(projectStages), [projectStages]);
-  const delayedStages = projectStages.filter((s) => Boolean(s.delayJustification));
+  const criticalIds = new Set(schedule?.criticalPath.etapasCriticas ?? []);
+  const projectProgress = activeProject ? calcularProgressoObra(activeProject.id, projectStages) : null;
+  const curvaSData = calcularCurvaSObra(projectStages, schedule?.referenceWeek);
+  const delayedStages = projectStages.filter((stage) => (
+    (schedule?.details.get(stage.id)?.terminoMaisCedo ?? stage.startWeek + stage.durationWeeks)
+    > stage.baselineStartWeek + stage.baselineDurationWeeks
+  ));
   const totalWeeks = Math.max(
-    12,
-    ...projectStages.map((s) => Math.max(s.startWeek + s.durationWeeks, s.baselineStartWeek + s.baselineDurationWeeks))
+    1, schedule?.criticalPath.duracaoTotal ?? 0,
+    ...projectStages.map((s) => s.baselineStartWeek + s.baselineDurationWeeks),
   );
+  const stagesById = new Map(projectStages.map((stage) => [stage.id, stage]));
+  const scheduleCycle = schedule ? describeScheduleCycle(projectStages, schedule.criticalPath) : null;
+  const filteredProjects = data.projects.filter((project) => projectFilter === 'Todas' || (
+    projectFilter === 'Concluídas' ? project.status === 'Concluída' : project.status === projectFilter
+  ));
 
   const projectLogs = activeProject
     ? data.dailyLogs
@@ -204,8 +254,10 @@ export function ProjectPlanningView({
 
   function openCreateStage() {
     setEditingStage(null);
-    setStWbs(`${phasesList.length + 1}.1`);
-    setStPhase(phasesList[0]?.fase || '1 · Fundação, estrutura e cobertura');
+    setStWbs('');
+    setStPhase('');
+    setStDeliverable('');
+    setStageRevision(activeProject?.scheduleRevision);
     setStName('');
     setStResp('');
     setStStartWeek('0');
@@ -227,6 +279,8 @@ export function ProjectPlanningView({
     setEditingStage(st);
     setStWbs(st.wbsCode);
     setStPhase(st.phase);
+    setStDeliverable(st.deliverable ?? '');
+    setStageRevision(activeProject?.scheduleRevision);
     setStName(st.name);
     setStResp(st.responsible);
     setStStartWeek(String(st.startWeek));
@@ -244,63 +298,10 @@ export function ProjectPlanningView({
     setStageModalOpen(true);
   }
 
-  // Real-time dependency cycle check via src/domain caminhoCritico
-  const cycleError = useMemo(() => {
-    if (!stageModalOpen) return null;
-    const idToCheck = editingStage?.id || '__new_stage__';
-    const candidateStage: ProjectStage = editingStage
-      ? { ...editingStage, dependsOn: stDeps }
-      : {
-          ownerUid: uid,
-          id: idToCheck,
-          projectId: activeProject?.id || '',
-          wbsCode: stWbs,
-          phase: stPhase,
-          name: stName || 'Nova etapa',
-          responsible: stResp,
-          startWeek: Number(stStartWeek) || 0,
-          durationWeeks: Number(stDurWeeks) || 0,
-          baselineStartWeek: Number(stStartWeek) || 0,
-          baselineDurationWeeks: Number(stDurWeeks) || 0,
-          progressPct: Number(stProgress) || 0,
-          budgetedCost: Number(stBudget) || 0,
-          popId: stPopId,
-          dependsOn: stDeps,
-          isMilestone: (Number(stDurWeeks) || 0) === 0,
-          status: stStatus,
-          materialExpectedDate: stMatDate,
-          delayCategory: stDelayCat,
-          delayJustification: stDelayJust,
-          checklistCompleted: stChecklistDone,
-          createdBy: stActor,
-          createdAt: '',
-          updatedBy: stActor,
-          updatedAt: '',
-        };
-    const candidateStages = editingStage
-      ? projectStages.map((s) => (s.id === editingStage.id ? candidateStage : s))
-      : [...projectStages, candidateStage];
-    if (calcularCaminhoCriticoObra(candidateStages).cicloDetectado) {
-      return 'Esta dependência cria um ciclo entre etapas. Remova uma das ligações para salvar.';
-    }
-    return null;
-  }, [
-    stageModalOpen,
-    editingStage,
-    projectStages,
-    stDeps,
-    activeProject,
-    stWbs,
-    stPhase,
-    stName,
-    stResp,
-    stStartWeek,
-    stDurWeeks,
-    stProgress,
-    stBudget,
-    stStatus,
-    stActor,
-  ]);
+  const cycleError = stageModalOpen && editingStage
+    ? describeScheduleCycle(projectStages.map((stage) =>
+        stage.id === editingStage.id ? { ...stage, wbsCode: stWbs, name: stName, dependsOn: stDeps } : stage))
+    : null;
 
   async function handleSaveStage(e: React.FormEvent) {
     e.preventDefault();
@@ -347,16 +348,17 @@ export function ProjectPlanningView({
     try {
       const payload = {
         projectId: activeProject.id,
-        wbsCode: clampStr(stWbs, 24),
-        phase: clampStr(stPhase, 100),
-        name: clampStr(stName, 140),
+        wbsCode: clampStr(stWbs.trim(), 24),
+        phase: clampStr(stPhase.trim(), 100),
+        deliverable: clampStr(stDeliverable.trim(), 120),
+        name: clampStr(stName.trim(), 140),
         responsible: clampStr(stResp, 120),
         startWeek: startNum,
         durationWeeks: durNum,
         baselineStartWeek: baseStart,
         baselineDurationWeeks: baseDur,
         progressPct: stStatus === 'Concluída' ? 100 : Math.min(100, Math.max(0, Number(stProgress) || 0)),
-        budgetedCost: Number(stBudget) || 0,
+        budgetedCost: roundCents(Number(stBudget) || 0),
         popId: stPopId,
         dependsOn: stDeps,
         isMilestone: durNum === 0,
@@ -367,20 +369,10 @@ export function ProjectPlanningView({
         checklistCompleted: stChecklistDone,
       };
 
-      if (editingStage) {
-        await updateRecord(
-          'stages',
-          editingStage.id,
-          uid,
-          stActor,
-          payload,
-          `Etapa atualizada: ${stName}`,
-          editingStage.status,
-          stStatus
-        );
-      } else {
-        await createRecord('stages', uid, stActor, payload, `Nova etapa criada: ${stName}`);
-      }
+      await saveProjectStage({
+        uid, actor: stActor, project: { ...activeProject, scheduleRevision: stageRevision },
+        knownStages: projectStages, stageId: editingStage?.id, payload,
+      });
       setStageModalOpen(false);
     } catch (err) {
       setStError(err instanceof Error ? err.message : 'Erro ao salvar etapa.');
@@ -447,25 +439,20 @@ export function ProjectPlanningView({
     }
   }
 
-  const totalEapBudget = projectStages.reduce((s, st) => s + (st.budgetedCost || 0), 0);
+  const totalEapBudget = getWorkPackageBudget(projectStages);
 
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Planejamento de Obras"
-        subtitle="EAP, cronograma com caminho crítico, Kanban, recursos, linha de base e diário de obra"
+        subtitle="Acompanhe o andamento e os prazos das obras"
         companyEmail={companyEmail}
         actions={
           <>
-            {data.projects.length > 0 && (
-              <SegmentedControl
-                items={data.projects.map((p) => p.name)}
-                active={activeProject?.name || ''}
-                onChange={(name) => {
-                  const found = data.projects.find((p) => p.name === name);
-                  if (found) onSelectProject(found.id);
-                }}
-              />
+            {activeProject && (
+              <button type="button" onClick={() => { onSelectProject(''); setTab('Visão geral'); }} className="rounded-lg border border-[#E4E1DA] bg-white px-4 py-2.5 text-sm font-semibold">
+                Voltar às obras
+              </button>
             )}
             <button
               type="button"
@@ -474,7 +461,7 @@ export function ProjectPlanningView({
             >
               Nova obra
             </button>
-            {activeProject && (
+            {activeProject && !awaitingScheduleTemplate && (
               <button
                 type="button"
                 onClick={openCreateStage}
@@ -488,12 +475,41 @@ export function ProjectPlanningView({
       />
 
       {!activeProject ? (
-        <EmptySection
-          title="Nenhuma obra cadastrada"
-          description="Confirme um orçamento em Clientes e Orçamentos ou crie uma obra a partir de um modelo de cronograma."
-          actionLabel="Nova obra a partir de modelo"
-          onAction={() => setNewProjModal(true)}
-        />
+        data.projects.length === 0 ? (
+          <EmptySection title="Nenhuma obra cadastrada" description="Confirme um orçamento em Clientes e Orçamentos ou crie uma obra a partir de um modelo de cronograma."
+            actionLabel="Nova obra a partir de modelo" onAction={() => setNewProjModal(true)} />
+        ) : (
+          <section className="grid gap-4" aria-label="Obras">
+            <SegmentedControl items={['Todas', 'Contratada', 'Em execução', 'Concluídas']} active={projectFilter} onChange={setProjectFilter} />
+            {filteredProjects.length === 0 ? <p className="text-sm text-[#5B6472]">Nenhuma obra neste filtro.</p> : (
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
+                {filteredProjects.map((project) => {
+                  const stages = data.stages.filter((stage) => stage.projectId === project.id);
+                  const next = getProjectSchedule(project, stages).nextStage;
+                  const progress = calcularProgressoObra(project.id, stages);
+                  const dre = calcularDreObra(project, data.transactions, stages);
+                  return (
+                    <article key={project.id} className="grid gap-3 rounded-xl border border-[#E4E1DA] bg-white p-5">
+                      <span className="flex flex-wrap items-center justify-between gap-2">
+                        <strong className="text-base text-[#14181F]">{project.name}</strong>
+                        <StatusBadge label={project.status} />
+                      </span>
+                      <span className="text-xs text-[#5B6472]">{project.type}{project.clientName && ` · ${project.clientName}`}</span>
+                      <span className="flex justify-between gap-2 text-sm"><span>Progresso</span><strong>{formatPercentBR(progress)}</strong></span>
+                      {progress !== null && <ProgressBar pct={progress} />}
+                      <span className="flex justify-between gap-2 text-sm"><span>Margem real</span><strong>{formatPercentBR(dre.receita.realizado > 0 ? dre.margemRealizadaPct : null)}</strong></span>
+                      <span className="text-sm"><strong>Próxima etapa</strong> · {next ? `${next.wbsCode} ${next.name}` : stages.length ? 'Etapas concluídas' : 'Sem dados'}</span>
+                      <button type="button" aria-label={`Abrir planejamento de ${project.name}`} onClick={() => { onSelectProject(project.id); setTab('Visão geral'); setKanbanPhaseFilter('Todas as fases'); }}
+                        className="justify-self-start rounded text-sm font-semibold text-[#1F3A5F] hover:underline focus-visible:ring-2 focus-visible:ring-[#1F3A5F]">
+                        Abrir planejamento →
+                      </button>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        )
       ) : (
         <>
           <div className="bg-white border border-[#E4E1DA] rounded-xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
@@ -529,46 +545,27 @@ export function ProjectPlanningView({
                 <StatusBadge label={`${activeProject.contractKind || 'Principal'} · Contratada`} />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {(['Casa residencial', 'Reforma', 'Obra satélite'] as ProjectType[]).map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setTplType(t)}
-                    className={`text-left rounded-xl p-3.5 border cursor-pointer bg-white ${
-                      tplType === t
-                        ? 'border-2 border-[#1F3A5F] bg-[#E6EEFB]'
-                        : 'border-[#E4E1DA]'
-                    }`}
-                  >
-                    <strong className="block text-sm text-[#14181F]">{t}</strong>
-                    <span className="text-xs text-[#5B6472]">
-                      {t === 'Casa residencial'
-                        ? '10 etapas macro · 12 a 24 meses'
-                        : t === 'Reforma'
-                        ? '5 etapas · 2 a 6 meses'
-                        : '3 etapas · semanas'}
-                    </span>
-                  </button>
-                ))}
-              </div>
+              <ScheduleTemplateOptions value={tplType} onChange={setTplType} />
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-semibold text-[#14181F]">Data de início</label>
+                  <label htmlFor="tpl-start" className="text-xs font-semibold text-[#14181F]">Data de início</label>
                   <input
                     type="date"
+                    id="tpl-start"
                     value={tplStart}
                     onChange={(e) => setTplStart(e.target.value)}
                     className="rounded-lg border border-[#E4E1DA] bg-white px-3 py-2 text-sm"
                   />
                 </div>
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-semibold text-[#14181F]">Prazo (meses)</label>
+                  <label htmlFor="tpl-months" className="text-xs font-semibold text-[#14181F]">Prazo (meses)</label>
                   <input
                     type="number"
                     min={1}
-                    max={60}
+                    max={120}
+                    placeholder="Duração do modelo"
+                    id="tpl-months"
                     value={tplMonths}
                     onChange={(e) => setTplMonths(e.target.value)}
                     className="rounded-lg border border-[#E4E1DA] bg-white px-3 py-2 text-sm tabular-nums"
@@ -597,8 +594,8 @@ export function ProjectPlanningView({
                         actor: tplActor,
                         project: activeProject,
                         templateType: tplType,
-                        startDate: tplStart || activeProject.startDate || todayISO(),
-                        estimatedMonths: Math.max(1, Number(tplMonths) || 12),
+                        startDate: tplStart,
+                        estimatedMonths: tplMonths ? Number(tplMonths) : undefined,
                         pops: data.pops,
                       });
                     } catch (err) {
@@ -633,13 +630,13 @@ export function ProjectPlanningView({
                   ],
                   [
                     '3 · Execução',
-                    'Kanban com limite WIP',
-                    awaitingScheduleTemplate ? 'idle' : 'on',
+                    'Execução das etapas planejadas',
+                    awaitingScheduleTemplate ? 'idle' : activeProject.status === 'Concluída' ? 'done' : 'on',
                   ],
                   [
                     '4 · Monitoramento',
                     'Curva S e replanejamento',
-                    awaitingScheduleTemplate ? 'idle' : 'on',
+                    awaitingScheduleTemplate ? 'idle' : activeProject.status === 'Concluída' ? 'done' : 'on',
                   ],
                   [
                     '5 · Encerramento',
@@ -656,9 +653,10 @@ export function ProjectPlanningView({
                     }`}
                   >
                     <strong className="block text-[13px] text-[#14181F]">
-                      {t} {st === 'done' ? '✓' : ''}
+                      {t}
                     </strong>
-                    <span className="text-xs text-[#5B6472]">{sub}</span>
+                    <span className="block text-xs text-[#5B6472]">{sub}</span>
+                    <span className="mt-1 block text-xs font-semibold text-[#1F3A5F]">{st === 'done' ? 'Concluída' : st === 'on' ? 'Em andamento' : 'A iniciar'}</span>
                   </div>
                 ))}
               </div>
@@ -667,7 +665,7 @@ export function ProjectPlanningView({
                 <KpiCard
                   label="Progresso real"
                   value={projectProgress !== null ? `${projectProgress}%` : 'Sem dados'}
-                  subtext={`${projectStages.filter((s) => s.status === 'Concluída').length} de ${projectStages.length} etapas`}
+                  subtext={projectStages.length ? `${projectStages.filter((s) => s.status === 'Concluída').length} de ${projectStages.length} etapas` : undefined}
                 />
                 <KpiCard
                   label="Etapas críticas"
@@ -676,17 +674,17 @@ export function ProjectPlanningView({
                 />
                 <KpiCard
                   label="Etapas atrasadas"
-                  value={String(delayedStages.length)}
+                  value={projectStages.length ? String(delayedStages.length) : 'Sem dados'}
                   subtext={
                     delayedStages.length > 0
-                      ? 'Justificativa registrada'
-                      : 'Sem desvios da linha de base'
+                      ? 'Fim previsto após a linha de base'
+                      : projectStages.length ? 'Sem desvios da linha de base' : undefined
                   }
                 />
                 <KpiCard
                   label="Entrega prevista"
-                  value={formatDateBR(activeProject.forecastEndDate)}
-                  subtext={`Linha de base: ${formatDateBR(activeProject.baselineEndDate)}`}
+                  value={schedule?.forecastEndDate ? formatDateBR(schedule.forecastEndDate) : 'Sem dados'}
+                  subtext={`Linha de base · ${projectStages.length && activeProject.baselineEndDate ? formatDateBR(activeProject.baselineEndDate) : 'Sem dados'}`}
                 />
               </div>
 
@@ -765,7 +763,7 @@ export function ProjectPlanningView({
 
                   <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-3">
                     <h2 className="text-base font-semibold text-[#14181F]">Caminho crítico</h2>
-                    {criticalIds.size === 0 ? (
+                    {scheduleCycle ? <p role="alert" className="text-sm text-[#B42318]">{scheduleCycle}</p> : criticalIds.size === 0 ? (
                       <p className="text-xs text-[#5B6472]">Sem etapas críticas definidas.</p>
                     ) : (
                       <div className="flex flex-col gap-2">
@@ -776,11 +774,24 @@ export function ProjectPlanningView({
                               <span className="font-medium text-[#14181F] truncate">
                                 {s.wbsCode} · {s.name}
                               </span>
-                              <StatusBadge label={s.status} />
+                              <span className="shrink-0 text-[#5B6472]">Folga {schedule?.details.get(s.id)?.folga ?? 0} sem.</span>
                             </div>
                           ))}
                       </div>
                     )}
+                  </section>
+                  <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-3">
+                    <h2 className="text-base font-semibold text-[#14181F]">Próximos marcos</h2>
+                    {schedule?.milestones.length ? (
+                      <ul className="grid gap-2">
+                        {schedule.milestones.slice(0, 5).map(({ stage, date }) => (
+                          <li key={stage.id} className="flex justify-between gap-3 text-sm">
+                            <span>{stage.wbsCode} · {stage.name}</span>
+                            <span className="shrink-0 text-[#5B6472]">{date ? formatDateBR(date) : 'Sem dados'}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : <p className="text-sm text-[#5B6472]">{projectStages.length ? 'Nenhum marco pendente.' : 'Sem dados'}</p>}
                   </section>
                 </div>
               </div>
@@ -788,71 +799,47 @@ export function ProjectPlanningView({
           )}
 
           {tab === 'EAP' && (
-            <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
-              <div className="flex items-center justify-between">
-                <h2 className="text-base font-semibold text-[#14181F]">
-                  Estrutura analítica do projeto (EAP)
-                </h2>
-                <button
-                  type="button"
-                  onClick={openCreateStage}
-                  className="px-3 py-1.5 rounded-lg border border-[#E4E1DA] text-xs font-semibold cursor-pointer"
-                >
-                  Adicionar pacote
-                </button>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse">
-                  <thead>
-                    <tr className="bg-[#F0EEE9] text-left text-xs font-semibold text-[#5B6472]">
-                      <th className="py-2.5 px-3 rounded-l-lg">Código</th>
-                      <th className="py-2.5 px-3">Entrega / pacote de trabalho</th>
-                      <th className="py-2.5 px-3">Responsável</th>
-                      <th className="py-2.5 px-3">Duração</th>
-                      <th className="py-2.5 px-3 text-right">Custo orçado</th>
-                      <th className="py-2.5 px-3">POP</th>
-                      <th className="py-2.5 px-3 rounded-r-lg">Situação</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {projectStages.map((st) => {
-                      const pop = data.pops.find((p) => p.id === st.popId);
-                      return (
-                        <tr
-                          key={st.id}
-                          onClick={() => openEditStage(st)}
-                          className="border-b border-[#E4E1DA] text-[13px] hover:bg-[#F6F5F2] cursor-pointer"
-                        >
-                          <td className="py-3 px-3 font-medium text-[#14181F] tabular-nums">
-                            {st.wbsCode}
-                          </td>
-                          <td className="py-3 px-3 text-[#14181F] font-medium">{st.name}</td>
-                          <td className="py-3 px-3 text-[#5B6472]">{st.responsible || '—'}</td>
-                          <td className="py-3 px-3 text-[#5B6472] tabular-nums">
-                            {st.durationWeeks > 0 ? `${st.durationWeeks} sem` : 'Marco'}
-                          </td>
-                          <td className="py-3 px-3 text-right tabular-nums">
-                            {formatBRL(st.budgetedCost)}
-                          </td>
-                          <td className="py-3 px-3 text-[#5B6472]">{pop?.title || '—'}</td>
-                          <td className="py-3 px-3">
-                            <StatusBadge label={st.status} />
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    <tr className="font-bold text-[#14181F] text-[13px]">
-                      <td className="py-3 px-3" colSpan={4}>
-                        Total orçado na EAP
-                      </td>
-                      <td className="py-3 px-3 text-right tabular-nums">
-                        {formatBRL(totalEapBudget)}
-                      </td>
-                      <td colSpan={2} />
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
+            <section className="grid gap-4" aria-label="Estrutura analítica do projeto">
+              <header className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#E4E1DA] bg-white p-4">
+                <div>
+                  <h2 className="text-base font-semibold text-[#14181F]">Estrutura analítica do projeto</h2>
+                  <p className="text-sm text-[#5B6472]">Custo orçado da obra · {projectStages.length ? formatBRL(totalEapBudget) : 'Sem dados'}</p>
+                </div>
+                {!awaitingScheduleTemplate && <button type="button" onClick={openCreateStage} className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm font-semibold">Adicionar pacote</button>}
+              </header>
+              {groupStages(projectStages).map(([phase, deliveries]) => (
+                <section key={phase} className="overflow-hidden rounded-xl border border-[#E4E1DA] bg-white">
+                  <div className="flex flex-wrap justify-between gap-2 bg-[#E6EEFB] px-4 py-3">
+                    <h3 className="text-sm font-bold text-[#14181F]">{phase}</h3>
+                    <strong className="text-sm text-[#1F3A5F]">{formatBRL(getWorkPackageBudget([...deliveries.values()].flat()))}</strong>
+                  </div>
+                  {[...deliveries].map(([delivery, packages]) => (
+                    <div key={delivery} className="grid gap-2 border-t border-[#E4E1DA] p-4">
+                      <div className="flex flex-wrap justify-between gap-2">
+                        <h4 className="text-sm font-semibold">{delivery}</h4>
+                        <span className="text-sm text-[#5B6472]">{formatBRL(getWorkPackageBudget(packages))}</span>
+                      </div>
+                      <div className="grid gap-1">
+                        {packages.map((stage) => {
+                          const pop = data.pops.find((item) => item.id === stage.popId);
+                          return (
+                            <button key={stage.id} type="button" onClick={() => openEditStage(stage)}
+                              className="grid items-center gap-2 rounded-lg border border-[#E4E1DA] p-3 text-left text-sm hover:bg-[#F6F5F2] focus-visible:ring-2 focus-visible:ring-[#1F3A5F] md:grid-cols-[2fr_1fr_auto_auto_1fr_auto]">
+                              <strong className="min-w-0 break-words text-[#14181F]">{stage.wbsCode} · {stage.name}</strong>
+                              <span className="text-[#5B6472]">{stage.responsible || 'Sem responsável'}</span>
+                              <span>{stage.isMilestone ? 'Marco' : `${stage.durationWeeks} sem.`}</span>
+                              <span className="tabular-nums">{formatBRL(stage.budgetedCost)}</span>
+                              <span className="text-[#5B6472]">{pop ? `POP · ${pop.title}` : 'Sem POP vinculado'}</span>
+                              <span><StatusBadge label={stage.status} /></span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </section>
+              ))}
+              {!projectStages.length && <p className="text-sm text-[#5B6472]">Sem dados na EAP.</p>}
             </section>
           )}
 
@@ -878,68 +865,98 @@ export function ProjectPlanningView({
                 </div>
               </div>
 
-              <div className="border border-[#E4E1DA] rounded-xl overflow-x-auto">
-                <div className="min-w-[820px]">
+              {!projectStages.length && <p className="text-sm text-[#5B6472]">Sem dados no cronograma.</p>}
+              {scheduleCycle && <p role="alert" className="text-sm text-[#B42318]">{scheduleCycle}</p>}
+              {!!projectStages.length && <ul className="grid gap-2 md:hidden">
+                {projectStages.map((stage) => {
+                  const detail = schedule?.details.get(stage.id);
+                  const dependencies = (stage.dependsOn ?? []).map((id) => stagesById.get(id)?.wbsCode ?? id);
+                  return (
+                    <li key={stage.id}>
+                      <button type="button" onClick={() => openEditStage(stage)} className="grid w-full gap-2 rounded-lg border border-[#E4E1DA] p-3 text-left text-sm focus-visible:ring-2 focus-visible:ring-[#1F3A5F]">
+                        <strong>{stage.wbsCode} · {stage.name}</strong>
+                        <span>{stage.responsible || 'Sem responsável'} · {stage.status}</span>
+                        {detail && <span>Semana {detail.inicioMaisCedo} a {detail.terminoMaisCedo} · {detail.critica ? 'Crítica · ' : ''}Folga {detail.folga} sem.</span>}
+                        <span>Linha de base · semana {stage.baselineStartWeek} a {stage.baselineStartWeek + stage.baselineDurationWeeks}</span>
+                        {delayedStages.includes(stage) && <span className="text-[#B42318]">Atrasada em relação à linha de base</span>}
+                        {dependencies.length > 0 && <span>Predecessoras · {dependencies.join(', ')}</span>}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>}
+              {!!projectStages.length && <div className="hidden rounded-xl border border-[#E4E1DA] md:block">
+                <div>
                   <div className="grid grid-cols-[280px_1fr] bg-[#F0EEE9] border-b border-[#E4E1DA] text-xs font-semibold text-[#5B6472]">
                     <div className="py-2.5 px-3">Etapa · responsável</div>
-                    <div className="py-2.5 px-3">Linha do tempo ({totalWeeks} semanas)</div>
+                    <div className="grid gap-1 py-2.5 px-3">
+                      <span>Linha do tempo · {totalWeeks} sem.</span>
+                      <div className="flex justify-between tabular-nums">
+                        {[...new Set([0, 0.25, 0.5, 0.75, 1].map((ratio) => Math.round(totalWeeks * ratio)))].map((week) => <span key={week}>{week}</span>)}
+                      </div>
+                    </div>
                   </div>
                   {projectStages.map((st) => {
                     const isCrit = criticalIds.has(st.id);
-                    const isLate =
-                      st.startWeek + st.durationWeeks >
-                      st.baselineStartWeek + st.baselineDurationWeeks;
-                    const leftPct = (st.startWeek / totalWeeks) * 100;
-                    const widthPct = Math.max(2, (st.durationWeeks / totalWeeks) * 100);
+                    const detail = schedule?.details.get(st.id);
+                    const isLate = delayedStages.includes(st);
+                    const leftPct = ((detail?.inicioMaisCedo ?? st.startWeek) / totalWeeks) * 100;
+                    const widthPct = (st.durationWeeks / totalWeeks) * 100;
                     const baseLeftPct = (st.baselineStartWeek / totalWeeks) * 100;
-                    const baseWidthPct = Math.max(2, (st.baselineDurationWeeks / totalWeeks) * 100);
+                    const baseWidthPct = (st.baselineDurationWeeks / totalWeeks) * 100;
+                    const dependencies = (st.dependsOn ?? []).map((id) => stagesById.get(id)?.wbsCode ?? id);
 
                     return (
-                      <div
+                      <button
                         key={st.id}
+                        type="button"
                         onClick={() => openEditStage(st)}
-                        className="grid grid-cols-[280px_1fr] border-b border-[#E4E1DA] hover:bg-[#F6F5F2] cursor-pointer items-center"
+                        className="grid w-full grid-cols-[280px_1fr] items-center border-b border-[#E4E1DA] text-left hover:bg-[#F6F5F2] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#1F3A5F]"
                       >
-                        <div className="py-2.5 px-3 flex items-center justify-between gap-2 text-xs border-r border-[#E4E1DA]">
-                          <span className="truncate font-medium text-[#14181F]">
-                            {st.wbsCode} · {st.name}
-                          </span>
-                          {isCrit && <StatusBadge label="Crítica" tone="crit" />}
-                        </div>
-                        <div className="relative h-10 px-2 flex items-center">
+                        <span className="grid gap-1 border-r border-[#E4E1DA] px-3 py-2.5 text-xs">
+                          <strong className="text-[#14181F]">{st.wbsCode} · {st.name}</strong>
+                          <span className="text-[#5B6472]">{st.responsible || 'Sem responsável'} · {st.status}</span>
+                          {detail && <span>Semana {detail.inicioMaisCedo} a {detail.terminoMaisCedo} · Folga {detail.folga} sem.</span>}
+                          {dependencies.length > 0 && <span>Predecessoras · {dependencies.join(', ')}</span>}
+                          {(isCrit || isLate) && <span className="flex flex-wrap gap-2">
+                            {isCrit && <StatusBadge label="Crítica" tone="crit" />}
+                            {isLate && <StatusBadge label="Atrasada" tone="bad" />}
+                          </span>}
+                        </span>
+                        <span className="relative mx-3 flex h-10 items-center" aria-hidden="true">
                           {/* Baseline dashed track */}
-                          <div
+                          <span
                             className="absolute bottom-1.5 h-1.5 rounded bg-[#D5D1C8]"
                             style={{ left: `${baseLeftPct}%`, width: `${baseWidthPct}%` }}
                             title="Linha de base"
                           />
                           {/* Current bar */}
                           {st.isMilestone ? (
-                            <div
+                            <span
                               className="absolute w-3.5 h-3.5 rotate-45 bg-[#9A6212]"
-                              style={{ left: `${leftPct}%` }}
+                              style={{ left: `calc(${leftPct}% - 0.375rem)` }}
                               title={`Marco: ${st.name}`}
                             />
                           ) : (
-                            <div
+                            <span
                               className={`absolute top-2 h-4 rounded overflow-hidden ${
                                 isCrit ? 'bg-[#9A6212]' : 'bg-[#1F3A5F]'
                               } ${isLate ? 'ring-2 ring-[#B42318]' : ''}`}
                               style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                               title={`${st.name}: ${st.progressPct}%`}
                             >
-                              <div
+                              <span
                                 className="h-full bg-black/25"
                                 style={{ width: `${st.progressPct}%` }}
                               />
-                            </div>
+                            </span>
                           )}
-                        </div>
-                      </div>
+                        </span>
+                      </button>
                     );
                   })}
                 </div>
-              </div>
+              </div>}
             </section>
           )}
 
@@ -1037,7 +1054,7 @@ export function ProjectPlanningView({
             );
           })()}
 
-          {tab === 'Riscos e linha de base' && (
+          {tab === 'Riscos' && (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <section className="lg:col-span-2 bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
                 <h2 className="text-base font-semibold text-[#14181F]">Atrasos registrados</h2>
@@ -1200,7 +1217,7 @@ export function ProjectPlanningView({
           {tab === 'Encerramento' && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {(() => {
-                const projectDre = calcularDreObra(activeProject, data.transactions);
+                const projectDre = calcularDreObra(activeProject, data.transactions, projectStages);
                 const doneStages = projectStages.filter((s) => s.status === 'Concluída').length;
                 return (
                   <>
@@ -1268,22 +1285,29 @@ export function ProjectPlanningView({
             e.preventDefault();
             if (!npName.trim()) return;
             setNpSaving(true);
+            setNpError(null);
             try {
               const id = await createProjectFromTemplate(uid, npActor, {
                 name: npName,
                 clientName: npClientName,
                 type: npType,
                 contractKind: npContractKind,
-                contractValue: Number(npValue) || 0,
+                contractValue: Number(npValue),
+                costBudget: Number(npBudget),
                 startDate: npStart,
-                estimatedMonths: Number(npMonths) || 12,
+                estimatedMonths: npMonths ? Number(npMonths) : undefined,
                 pops: data.pops,
               });
               onSelectProject(id);
+              setTab('Visão geral');
               setNpName('');
               setNpClientName('');
               setNpValue('');
+              setNpBudget('');
+              setNpMonths('');
               setNewProjModal(false);
+            } catch (err) {
+              setNpError(err instanceof Error ? err.message : 'Erro ao criar a obra.');
             } finally {
               setNpSaving(false);
             }
@@ -1292,27 +1316,30 @@ export function ProjectPlanningView({
         >
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
             <div className="flex flex-col gap-1.5">
-              <label className="text-[13px] font-semibold">Nome da obra</label>
+              <label htmlFor="np-name" className="text-[13px] font-semibold">Nome da obra</label>
               <input
                 type="text"
                 required
+                id="np-name"
                 value={npName}
                 onChange={(e) => setNpName(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <label className="text-[13px] font-semibold">Cliente</label>
+              <label htmlFor="np-client" className="text-[13px] font-semibold">Cliente</label>
               <input
                 type="text"
+                id="np-client"
                 value={npClientName}
                 onChange={(e) => setNpClientName(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <label className="text-[13px] font-semibold">Tipo de contrato</label>
+              <label htmlFor="np-kind" className="text-[13px] font-semibold">Tipo de contrato</label>
               <select
+                id="np-kind"
                 value={npContractKind}
                 onChange={(e) => setNpContractKind(e.target.value as ProjectContractKind)}
                 className="rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm bg-white"
@@ -1322,58 +1349,48 @@ export function ProjectPlanningView({
               </select>
             </div>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {(['Casa residencial', 'Reforma', 'Obra satélite'] as ProjectType[]).map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => {
-                  setNpType(t);
-                  if (t === 'Obra satélite') setNpContractKind('Satélite');
-                }}
-                className={`text-left rounded-xl p-3.5 border cursor-pointer ${
-                  npType === t
-                    ? 'border-2 border-[#1F3A5F] bg-[#E6EEFB]'
-                    : 'border-[#E4E1DA] bg-white'
-                }`}
-              >
-                <strong className="block text-sm text-[#14181F]">{t}</strong>
-                <span className="text-xs text-[#5B6472]">
-                  {t === 'Casa residencial'
-                    ? '10 etapas macro · 12 a 24 meses'
-                    : t === 'Reforma'
-                    ? '5 etapas · 2 a 6 meses'
-                    : '3 etapas · semanas'}
-                </span>
-              </button>
-            ))}
-          </div>
+          <ScheduleTemplateOptions value={npType} onChange={(type) => {
+            setNpType(type);
+            setNpContractKind(type === 'Obra satélite' ? 'Satélite' : 'Principal');
+          }} />
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="flex flex-col gap-1.5">
-              <label className="text-[13px] font-semibold">Valor do contrato (R$)</label>
+              <label htmlFor="np-value" className="text-[13px] font-semibold">Valor do contrato (R$)</label>
               <input
                 type="number"
                 required
                 min={0}
+                step="0.01"
+                id="np-value"
                 value={npValue}
                 onChange={(e) => setNpValue(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm tabular-nums"
               />
             </div>
+            <label className="flex flex-col gap-1.5 text-[13px] font-semibold">
+              Custo orçado da obra (R$)
+              <input type="number" required min={0} step="0.01" value={npBudget} onChange={(e) => setNpBudget(e.target.value)}
+                className="rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm tabular-nums" />
+            </label>
             <div className="flex flex-col gap-1.5">
-              <label className="text-[13px] font-semibold">Início</label>
+              <label htmlFor="np-start" className="text-[13px] font-semibold">Início</label>
               <input
                 type="date"
+                id="np-start"
+                required
                 value={npStart}
                 onChange={(e) => setNpStart(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <label className="text-[13px] font-semibold">Prazo (meses)</label>
+              <label htmlFor="np-months" className="text-[13px] font-semibold">Prazo (meses)</label>
               <input
                 type="number"
                 min={1}
+                max={120}
+                placeholder="Duração do modelo"
+                id="np-months"
                 value={npMonths}
                 onChange={(e) => setNpMonths(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm tabular-nums"
@@ -1381,6 +1398,7 @@ export function ProjectPlanningView({
             </div>
           </div>
           <RegisteredBySelect value={npActor} onChange={setNpActor} id="np-actor" />
+          {npError && <p role="alert" className="text-sm text-[#B42318]">{npError}</p>}
           <div className="flex justify-end gap-2.5">
             <button
               type="button"
@@ -1410,20 +1428,22 @@ export function ProjectPlanningView({
         <form onSubmit={handleSaveStage} className="flex flex-col gap-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold">Código EAP</label>
+              <label htmlFor="stage-code" className="text-xs font-semibold">Código EAP</label>
               <input
                 type="text"
                 required
+                id="stage-code"
                 value={stWbs}
                 onChange={(e) => setStWbs(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm"
               />
             </div>
             <div className="sm:col-span-2 flex flex-col gap-1">
-              <label className="text-xs font-semibold">Fase da EAP</label>
+              <label htmlFor="stage-phase" className="text-xs font-semibold">Fase da EAP</label>
               <input
                 type="text"
                 required
+                id="stage-phase"
                 value={stPhase}
                 onChange={(e) => setStPhase(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm"
@@ -1431,21 +1451,28 @@ export function ProjectPlanningView({
             </div>
           </div>
 
+          <label className="flex flex-col gap-1 text-xs font-semibold">
+            Entrega da EAP
+            <input type="text" required={!editingStage} maxLength={120} value={stDeliverable} onChange={(e) => setStDeliverable(e.target.value)}
+              className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm font-normal" />
+          </label>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold">Nome da etapa</label>
+              <label htmlFor="stage-name" className="text-xs font-semibold">Pacote de trabalho</label>
               <input
                 type="text"
                 required
+                id="stage-name"
                 value={stName}
                 onChange={(e) => setStName(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm"
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold">Responsável</label>
+              <label htmlFor="stage-owner" className="text-xs font-semibold">Responsável</label>
               <input
                 type="text"
+                id="stage-owner"
                 value={stResp}
                 onChange={(e) => setStResp(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm"
@@ -1455,41 +1482,46 @@ export function ProjectPlanningView({
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold">Início (semana)</label>
+              <label htmlFor="stage-start" className="text-xs font-semibold">Início mais cedo (semana)</label>
               <input
                 type="number"
                 min={0}
+                id="stage-start"
                 value={stStartWeek}
                 onChange={(e) => setStStartWeek(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm tabular-nums"
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold">Duração (semanas)</label>
+              <label htmlFor="stage-duration" className="text-xs font-semibold">Duração (semanas)</label>
               <input
                 type="number"
                 min={0}
+                id="stage-duration"
                 value={stDurWeeks}
                 onChange={(e) => setStDurWeeks(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm tabular-nums"
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold">Progresso (%)</label>
+              <label htmlFor="stage-progress" className="text-xs font-semibold">Progresso (%)</label>
               <input
                 type="number"
                 min={0}
                 max={100}
+                id="stage-progress"
                 value={stProgress}
                 onChange={(e) => setStProgress(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm tabular-nums"
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold">Custo orçado (R$)</label>
+              <label htmlFor="stage-budget" className="text-xs font-semibold">Custo orçado (R$)</label>
               <input
                 type="number"
                 min={0}
+                step="0.01"
+                id="stage-budget"
                 value={stBudget}
                 onChange={(e) => setStBudget(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm tabular-nums"
@@ -1499,8 +1531,9 @@ export function ProjectPlanningView({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold">Situação</label>
+              <label htmlFor="stage-status" className="text-xs font-semibold">Situação</label>
               <select
+                id="stage-status"
                 value={stStatus}
                 onChange={(e) => setStStatus(e.target.value as StageStatus)}
                 className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm bg-white"
@@ -1513,8 +1546,9 @@ export function ProjectPlanningView({
               </select>
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold">POP vinculado</label>
+              <label htmlFor="stage-pop" className="text-xs font-semibold">POP vinculado</label>
               <select
+                id="stage-pop"
                 value={stPopId}
                 onChange={(e) => setStPopId(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm bg-white"
@@ -1562,7 +1596,7 @@ export function ProjectPlanningView({
                     );
                   })}
               </div>
-              {cycleError && <span className="text-xs font-medium text-[#B42318]">{cycleError}</span>}
+              {cycleError && <span role="alert" className="text-xs font-medium text-[#B42318]">{cycleError}</span>}
             </div>
           )}
 

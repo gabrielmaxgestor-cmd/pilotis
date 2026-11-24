@@ -24,6 +24,7 @@ export interface DreObraResult {
   equipamentos: LinhaDre;
   impostos: LinhaDre;
   bdi: LinhaDre;
+  ajusteEap: LinhaDre;
   custosTotais: LinhaDre;
   resultado: LinhaDre;
   margemOrcadaPct: number;
@@ -71,7 +72,7 @@ export type ObraDreInput = Pick<
   | 'orcadoEquipamentos'
   | 'orcadoImpostos'
   | 'orcadoBdi'
->;
+> & { orcadoEap?: number };
 
 export function dre(
   obra: ObraDreInput,
@@ -125,7 +126,8 @@ export function dre(
     impostos.realizado +
     bdi.realizado;
 
-  const custosTotais = makeLinha(totalOrcado, totalRealizado);
+  const custosTotais = makeLinha(obra.orcadoEap ?? totalOrcado, totalRealizado);
+  const ajusteEap = makeLinha(custosTotais.orcado - totalOrcado, 0);
   const resultadoOrcado = roundCents(receita.orcado - custosTotais.orcado);
   const resultadoRealizado = roundCents(
     receita.realizado - custosTotais.realizado,
@@ -149,6 +151,7 @@ export function dre(
     equipamentos,
     impostos,
     bdi,
+    ajusteEap,
     custosTotais,
     resultado,
     margemOrcadaPct,

@@ -113,6 +113,8 @@ export interface Project extends AuditMeta {
   type: ProjectType;
   contractKind?: ProjectContractKind;
   planningStatus?: ProjectPlanningStatus;
+  scheduleRevision?: number;
+  scheduleStageIds?: string[];
   contractValue: number;
   contractPdf?: Bytes;
   downPaymentPct?: number;
@@ -143,12 +145,14 @@ export interface ProjectStage extends AuditMeta {
   projectId: string;
   wbsCode: string;
   phase: string;
+  deliverable?: string;
   name: string;
   responsible: string;
   durationWeeks: number;
   startWeek: number;
   baselineStartWeek: number;
   baselineDurationWeeks: number;
+  baselineBudgetedCost?: number;
   progressPct: number;
   budgetedCost: number;
   popId: string;

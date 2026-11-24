@@ -51,7 +51,7 @@ import {
   installmentProgress,
   signedCashAmount,
 } from './financeiro';
-import { addMonthsISO, monthKey, roundCents, todayISO } from './formatters';
+import { addDaysISO, addMonthsISO, diffDaysISO, monthKey, roundCents, todayISO } from './formatters';
 import { planMonthlyPayroll } from './teamPlanning';
 import {
   indicadoresDashboard,
@@ -226,7 +226,8 @@ export function toDomainTaxParams(
   };
 }
 
-export function toDomainProjectDreInput(project: Project): ObraDreInput {
+export function toDomainProjectDreInput(project: Project, stages: ProjectStage[] = []): ObraDreInput {
+  const projectStages = stages.filter((stage) => stage.projectId === project.id);
   return {
     id: project.id,
     nome: project.name,
@@ -236,6 +237,7 @@ export function toDomainProjectDreInput(project: Project): ObraDreInput {
     orcadoEquipamentos: project.budgetedEquipment || 0,
     orcadoImpostos: project.budgetedTax || 0,
     orcadoBdi: project.budgetedBdi || 0,
+    orcadoEap: projectStages.length ? getWorkPackageBudget(projectStages) : undefined,
   };
 }
 
@@ -267,9 +269,9 @@ export function toDomainBaselineFromStages(
 ): BaselineEtapaItem[] {
   return stages.map((s) => ({
     etapaId: s.id,
-    semanaInicioBaseline: s.baselineStartWeek,
-    duracaoBaselineSemanas: s.baselineDurationWeeks,
-    custoOrcadoBaseline: s.budgetedCost,
+    semanaInicioBaseline: s.baselineStartWeek ?? s.startWeek,
+    duracaoBaselineSemanas: s.baselineDurationWeeks ?? s.durationWeeks,
+    custoOrcadoBaseline: s.baselineBudgetedCost ?? s.budgetedCost,
   }));
 }
 
@@ -374,7 +376,7 @@ export function calcularIndicadoresDashboard(
     lancamentos: toDomainTransactions(data.transactions),
     parcelas: toDomainInstallments(data.installments),
     obras: data.projects.map((p) => ({
-      ...toDomainProjectDreInput(p),
+      ...toDomainProjectDreInput(p, data.stages),
       status: p.status,
     })),
     orcamentos: data.quotes.map((q) => ({ status: q.status })),
@@ -419,9 +421,10 @@ export function calcularPrevisaoCaixa(
 export function calcularDreObra(
   project: Project,
   transactions: FinancialTransaction[],
+  stages: ProjectStage[] = [],
 ): DreObraResult {
   return dre(
-    toDomainProjectDreInput(project),
+    toDomainProjectDreInput(project, stages),
     toDomainTransactions(transactions),
   );
 }
@@ -499,8 +502,12 @@ export function calcularCurvaSObra(
   stages: ProjectStage[],
   semanaReferencia?: number,
 ): CurvaSResult {
+  const schedule = calcularCaminhoCriticoObra(stages);
+  const starts = new Map(schedule.detalhes.map((item) => [item.etapaId, item.inicioMaisCedo]));
   return curvaS(
-    toDomainStages(stages),
+    toDomainStages(stages).map((stage) => ({
+      ...stage, semanaInicio: starts.get(stage.id) ?? stage.semanaInicio,
+    })),
     toDomainBaselineFromStages(stages),
     semanaReferencia,
   );
@@ -616,4 +623,40 @@ export function calculateInstallmentProgress(installments: Installment[], projec
 
 export function calculateTeamPayroll(data: Pick<PilotisDataState, 'employees' | 'allocations' | 'projects' | 'settings'>, month: string) {
   return planMonthlyPayroll(data, month, toDomainTaxParams(data.settings, month + '-01'));
+}
+
+export function getWorkPackageBudget(stages: Pick<ProjectStage, 'budgetedCost'>[]): number {
+  return roundCents(stages.reduce((sum, stage) => sum + (stage.budgetedCost ?? 0), 0));
+}
+
+export function describeScheduleCycle(stages: ProjectStage[], schedule = calcularCaminhoCriticoObra(stages)): string | null {
+  if (!schedule.cicloDetectado) return null;
+  const byId = new Map(stages.map((stage) => [stage.id, stage]));
+  const cycle = (schedule.primeiroCiclo ?? schedule.nosEmCiclo).map((id) => {
+    const stage = byId.get(id);
+    return stage ? `${stage.wbsCode} ${stage.name}` : id;
+  });
+  return `Dependência circular: ${cycle.join(' → ')}. Remova uma das ligações para salvar.`;
+}
+
+export function getProjectSchedule(project: Project, stages: ProjectStage[], referenceDate = todayISO()) {
+  const criticalPath = calcularCaminhoCriticoObra(stages);
+  const details = new Map(criticalPath.detalhes.map((detail) => [detail.etapaId, detail]));
+  const ordered = [...stages].sort((a, b) =>
+    (details.get(a.id)?.inicioMaisCedo ?? a.startWeek) - (details.get(b.id)?.inicioMaisCedo ?? b.startWeek)
+    || a.wbsCode.localeCompare(b.wbsCode, 'pt-BR', { numeric: true }));
+  const pending = ordered.filter((stage) => stage.status !== 'Concluída');
+  const byId = new Map(stages.map((stage) => [stage.id, stage]));
+  const nextStage = pending.find((stage) => stage.status === 'Em andamento')
+    ?? pending.find((stage) => (stage.dependsOn ?? []).every((id) => byId.get(id)?.status === 'Concluída'))
+    ?? pending[0];
+  const elapsedDays = diffDaysISO(referenceDate, project.startDate);
+  const forecastEndDate = stages.length && !criticalPath.cicloDetectado && elapsedDays !== null
+    ? addDaysISO(project.startDate, Math.ceil(criticalPath.duracaoTotal * 7))
+    : null;
+  const milestones = pending.filter((stage) => stage.isMilestone && details.has(stage.id)).map((stage) => ({
+    stage,
+    date: elapsedDays === null ? null : addDaysISO(project.startDate, Math.ceil(details.get(stage.id)!.terminoMaisCedo * 7)),
+  })).sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''));
+  return { criticalPath, details, nextStage, milestones, forecastEndDate, referenceWeek: Math.max(0, (elapsedDays ?? 0) / 7) };
 }

@@ -29,12 +29,18 @@ import type {
   Pop,
   Project,
   ProjectContractKind,
+  ProjectStage,
   ProjectType,
   Quote,
 } from '../types/pilotis';
 import {
   addMonthsISO,
+  allocateScheduleBudget,
   calculateTeamPayroll,
+  describeScheduleCycle,
+  diffDaysISO,
+  getProjectSchedule,
+  roundCents,
   weekStartingOn,
   clampStr,
   formatBRL,
@@ -42,7 +48,6 @@ import {
   gerarParcelas,
   isValidISODate,
   validarLancamentoFinanceiro,
-  normalizeBRDateToISO,
   resolverStatusParcela,
   todayISO,
   validarDadosConfirmacaoOrcamento,
@@ -464,6 +469,7 @@ interface StageTemplateItem {
   durationWeeks: number;
   budgetPct: number;
   depWbs: string[];
+  deliverable?: string;
   isMilestone?: boolean;
 }
 
@@ -472,7 +478,8 @@ export function getStageTemplatesForType(type: ProjectType): StageTemplateItem[]
     return [
       { wbsCode: '1.1', phase: '1 · Mobilização', name: 'Preparação e proteção do local', responsible: 'Equipe geral', startWeek: 0, durationWeeks: 1, budgetPct: 0.2, depWbs: [] },
       { wbsCode: '2.1', phase: '2 · Execução', name: 'Serviço principal da obra satélite', responsible: 'Pedreiros', startWeek: 1, durationWeeks: 2, budgetPct: 0.6, depWbs: ['1.1'] },
-      { wbsCode: '3.1', phase: '3 · Entrega', name: 'Vistoria e limpeza final', responsible: 'Sócios', startWeek: 3, durationWeeks: 1, budgetPct: 0.2, depWbs: ['2.1'], isMilestone: true },
+      { wbsCode: '3.1', phase: '3 · Entrega', deliverable: 'Serviço vistoriado e entregue', name: 'Vistoria e limpeza final', responsible: 'Sócios', startWeek: 3, durationWeeks: 1, budgetPct: 0.2, depWbs: ['2.1'] },
+      { wbsCode: '3.2', phase: '3 · Entrega', deliverable: 'Serviço vistoriado e entregue', name: 'Entrega do serviço', responsible: 'Sócios', startWeek: 4, durationWeeks: 0, budgetPct: 0, depWbs: ['3.1'], isMilestone: true },
     ];
   }
   if (type === 'Reforma') {
@@ -480,21 +487,21 @@ export function getStageTemplatesForType(type: ProjectType): StageTemplateItem[]
       { wbsCode: '1.1', phase: '1 · Demolição e preparo', name: 'Demolição e limpeza inicial', responsible: 'Equipe geral', startWeek: 0, durationWeeks: 2, budgetPct: 0.15, depWbs: [] },
       { wbsCode: '2.1', phase: '2 · Instalações', name: 'Instalações hidráulicas e elétricas', responsible: 'Eletricistas e hidráulica', startWeek: 2, durationWeeks: 3, budgetPct: 0.25, depWbs: ['1.1'] },
       { wbsCode: '3.1', phase: '3 · Revestimentos', name: 'Revestimentos e pisos', responsible: 'Ladrilheiro', startWeek: 5, durationWeeks: 3, budgetPct: 0.3, depWbs: ['2.1'] },
-      { wbsCode: '4.1', phase: '4 · Pintura e entrega', name: 'Pintura e acabamentos finais', responsible: 'Pintores', startWeek: 8, durationWeeks: 2, budgetPct: 0.2, depWbs: ['3.1'] },
-      { wbsCode: '4.2', phase: '4 · Pintura e entrega', name: 'Entrega ao cliente', responsible: 'Sócios', startWeek: 10, durationWeeks: 0, budgetPct: 0.1, depWbs: ['4.1'], isMilestone: true },
+      { wbsCode: '4.1', phase: '4 · Pintura e entrega', deliverable: 'Ambientes acabados e entregues', name: 'Pintura e acabamentos finais', responsible: 'Pintores', startWeek: 8, durationWeeks: 2, budgetPct: 0.2, depWbs: ['3.1'] },
+      { wbsCode: '4.2', phase: '4 · Pintura e entrega', deliverable: 'Ambientes acabados e entregues', name: 'Entrega ao cliente', responsible: 'Sócios', startWeek: 10, durationWeeks: 0, budgetPct: 0.1, depWbs: ['4.1'], isMilestone: true },
     ];
   }
   return [
-    { wbsCode: '1.1', phase: '1 · Fundação, estrutura e cobertura', name: 'Fundação e estrutura', responsible: 'Sócios e pedreiros', startWeek: 0, durationWeeks: 8, budgetPct: 0.2, depWbs: [] },
-    { wbsCode: '1.2', phase: '1 · Fundação, estrutura e cobertura', name: 'Cobertura', responsible: 'Equipe de cobertura', startWeek: 8, durationWeeks: 5, budgetPct: 0.1, depWbs: ['1.1'] },
+    { wbsCode: '1.1', phase: '1 · Fundação, estrutura e cobertura', deliverable: 'Estrutura coberta', name: 'Fundação e estrutura', responsible: 'Sócios e pedreiros', startWeek: 0, durationWeeks: 8, budgetPct: 0.2, depWbs: [] },
+    { wbsCode: '1.2', phase: '1 · Fundação, estrutura e cobertura', deliverable: 'Estrutura coberta', name: 'Cobertura', responsible: 'Equipe de cobertura', startWeek: 8, durationWeeks: 5, budgetPct: 0.1, depWbs: ['1.1'] },
     { wbsCode: '2.1', phase: '2 · Instalações', name: 'Instalações hidráulicas', responsible: 'Hidráulica', startWeek: 9, durationWeeks: 4, budgetPct: 0.08, depWbs: ['1.1'] },
     { wbsCode: '2.2', phase: '2 · Instalações', name: 'Instalações elétricas', responsible: 'Eletricistas', startWeek: 9, durationWeeks: 6, budgetPct: 0.1, depWbs: ['1.1'] },
     { wbsCode: '3.1', phase: '3 · Revestimentos', name: 'Revestimento interno', responsible: 'Ladrilheiro e pedreiros', startWeek: 13, durationWeeks: 6, budgetPct: 0.18, depWbs: ['1.2', '2.1'] },
     { wbsCode: '3.2', phase: '3 · Revestimentos', name: 'Revestimento externo', responsible: 'Pedreiros', startWeek: 13, durationWeeks: 5, budgetPct: 0.1, depWbs: ['1.2'] },
     { wbsCode: '4.1', phase: '4 · Pintura e acabamentos', name: 'Pintura', responsible: 'Pintores', startWeek: 19, durationWeeks: 3, budgetPct: 0.1, depWbs: ['3.1'] },
     { wbsCode: '4.2', phase: '4 · Pintura e acabamentos', name: 'Acabamentos finais', responsible: 'Pedreiros', startWeek: 22, durationWeeks: 2, budgetPct: 0.08, depWbs: ['4.1', '2.2'] },
-    { wbsCode: '5.1', phase: '5 · Entrega', name: 'Limpeza e vistoria final', responsible: 'Equipe geral', startWeek: 24, durationWeeks: 1, budgetPct: 0.06, depWbs: ['4.2'] },
-    { wbsCode: '5.2', phase: '5 · Entrega', name: 'Entrega ao cliente', responsible: 'Sócios', startWeek: 25, durationWeeks: 0, budgetPct: 0, depWbs: ['5.1'], isMilestone: true },
+    { wbsCode: '5.1', phase: '5 · Entrega', deliverable: 'Casa vistoriada e entregue', name: 'Limpeza e vistoria final', responsible: 'Equipe geral', startWeek: 24, durationWeeks: 1, budgetPct: 0.06, depWbs: ['4.2'] },
+    { wbsCode: '5.2', phase: '5 · Entrega', deliverable: 'Casa vistoriada e entregue', name: 'Entrega ao cliente', responsible: 'Sócios', startWeek: 25, durationWeeks: 0, budgetPct: 0, depWbs: ['5.1'], isMilestone: true },
   ];
 }
 
@@ -765,97 +772,219 @@ export async function confirmQuoteAndGenerateProject(
   }
 }
 
-export async function applyScheduleTemplateToProject(params: {
-  uid: string;
-  actor: ActorRole;
-  project: Project;
-  templateType: ProjectType;
-  startDate: string;
-  estimatedMonths: number;
-  pops: Pop[];
-}): Promise<void> {
-  const { uid, actor, project, templateType, startDate, estimatedMonths, pops } = params;
-  const directBudget =
-    (project.budgetedLabor || 0) +
-    (project.budgetedSubcontract || 0) +
-    (project.budgetedEquipment || 0) +
-    (project.budgetedBdi || 0) +
-    (project.budgetedTax || 0);
-  const effectiveBudget = directBudget > 0 ? directBudget : Math.round(project.contractValue * 0.78);
-  const normalizedStart = normalizeBRDateToISO(startDate);
-  const endBaseline = addMonthsISO(normalizedStart, Math.max(1, estimatedMonths));
+type StagePayload = Omit<ProjectStage, keyof import('../types/pilotis').AuditMeta | 'id'>;
 
-  const batch = writeBatch(db);
-  const tpl = getStageTemplatesForType(templateType);
-  const wbsToId = new Map<string, string>();
-  for (const item of tpl) wbsToId.set(item.wbsCode, generateId('stg'));
+function validateScheduleInput(date: string, months: number | undefined, budget: number) {
+  if (!isValidISODate(date)) throw new Error('Informe uma data de início válida.');
+  if (months !== undefined && (!Number.isInteger(months) || months < 1 || months > 120)) {
+    throw new Error('Informe um prazo entre 1 e 120 meses ou use a duração do modelo.');
+  }
+  if (!Number.isFinite(budget) || budget < 0) throw new Error('Informe um custo orçado válido.');
+}
 
-  for (const item of tpl) {
-    const stgId = wbsToId.get(item.wbsCode)!;
-    const matchedPop = pops.find(
-      (p) =>
-        p.status === 'Vigente' &&
-        (item.phase.toLowerCase().includes(p.linkedStagePhase.toLowerCase()) ||
-          item.name.toLowerCase().includes(p.serviceType.toLowerCase()))
-    );
-    batch.set(doc(db, 'stages', stgId), {
+function normalizePopTerm(value: string | undefined): string {
+  return (value ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase()
+    .replace(/^[\d\s·.-]+/, '').trim();
+}
+
+function buildScheduleStages(
+  uid: string, actor: ActorRole, project: Project, type: ProjectType,
+  months: number | undefined, budget: number, pops: Pop[],
+) {
+  const template = getStageTemplatesForType(type);
+  const costs = allocateScheduleBudget(budget, template.map((item) => item.budgetPct));
+  const templateWeeks = Math.max(...template.map((item) => item.startWeek + item.durationWeeks));
+  const durationWeeks = months === undefined ? (type === 'Casa residencial' ? 52 : templateWeeks)
+    : Math.ceil((diffDaysISO(addMonthsISO(project.startDate, months), project.startDate) ?? 0) / 7);
+  const scaleWeek = (week: number) => Math.round(week * durationWeeks / templateWeeks);
+  const wbsToId = new Map(template.map((item) => [item.wbsCode, generateId('stg')]));
+  const currentPops = pops.filter((pop) => pop.status === 'Vigente');
+  const deliverables = new Map<string, Map<string, number>>();
+
+  const stages: ProjectStage[] = template.map((item, index) => {
+    const deliverable = item.deliverable ?? item.name;
+    const packages = deliverables.get(item.phase) ?? new Map<string, number>();
+    deliverables.set(item.phase, packages);
+    const packageNumber = (packages.get(deliverable) ?? 0) + 1;
+    packages.set(deliverable, packageNumber);
+    const wbsCode = `${item.wbsCode.split('.')[0]}.${[...packages.keys()].indexOf(deliverable) + 1}.${packageNumber}`;
+    const phase = normalizePopTerm(item.phase);
+    const activity = normalizePopTerm(item.name);
+    const linkedPop = currentPops.find((pop) => {
+      const service = normalizePopTerm(pop.serviceType);
+      return service && activity.includes(service);
+    }) ?? currentPops.find((pop) => {
+      const linkedPhase = normalizePopTerm(pop.linkedStagePhase);
+      return linkedPhase && phase.includes(linkedPhase);
+    });
+    const startWeek = scaleWeek(item.startWeek);
+    const duration = item.isMilestone ? 0 : Math.max(1, scaleWeek(item.startWeek + item.durationWeeks) - startWeek);
+    return {
+      id: wbsToId.get(item.wbsCode)!,
       ownerUid: uid,
+      createdBy: actor,
+      updatedBy: actor,
       projectId: project.id,
-      wbsCode: item.wbsCode,
-      phase: clampStr(item.phase, 100),
-      name: clampStr(item.name, 140),
-      responsible: clampStr(item.responsible, 120),
-      durationWeeks: item.durationWeeks,
-      startWeek: item.startWeek,
-      baselineStartWeek: item.startWeek,
-      baselineDurationWeeks: item.durationWeeks,
+      wbsCode,
+      phase: item.phase,
+      deliverable,
+      name: item.name,
+      responsible: item.responsible,
+      startWeek,
+      durationWeeks: duration,
+      baselineStartWeek: startWeek,
+      baselineDurationWeeks: duration,
+      baselineBudgetedCost: costs[index],
       progressPct: 0,
-      budgetedCost: Math.round(effectiveBudget * item.budgetPct),
-      popId: matchedPop?.id || '',
-      dependsOn: item.depWbs.map((w) => wbsToId.get(w)!).filter(Boolean),
+      budgetedCost: costs[index],
+      popId: linkedPop?.id ?? '',
+      dependsOn: item.depWbs.map((code) => wbsToId.get(code)!),
       isMilestone: Boolean(item.isMilestone),
       status: 'A fazer',
       materialExpectedDate: '',
       delayCategory: '',
       delayJustification: '',
       checklistCompleted: [],
-      createdBy: actor,
+    };
+  });
+  const schedule = getProjectSchedule(project, stages);
+  const endDate = schedule.forecastEndDate;
+  if (!endDate) throw new Error('Não foi possível calcular o prazo do modelo.');
+  return {
+    endDate,
+    stages: stages.map((stage) => ({
+      ...stage, baselineStartWeek: schedule.details.get(stage.id)!.inicioMaisCedo,
+    })),
+  };
+}
+
+export async function applyScheduleTemplateToProject(params: {
+  uid: string;
+  actor: ActorRole;
+  project: Project;
+  templateType: ProjectType;
+  startDate: string;
+  estimatedMonths?: number;
+  pops: Pop[];
+}): Promise<void> {
+  const { uid, actor, project, templateType, startDate, estimatedMonths, pops } = params;
+  const projectRef = doc(db, 'projects', project.id);
+  await runTransaction(db, async (tx) => {
+    const snapshot = await tx.get(projectRef);
+    const current = { ...snapshot.data(), id: project.id } as Project;
+    if (!snapshot.exists() || current.ownerUid !== uid) throw new Error('Obra indisponível.');
+    if (current.planningStatus === 'Cronograma criado' || current.status !== 'Contratada' || current.scheduleStageIds?.length) {
+      throw new Error('A obra já tem cronograma ou não está aguardando um modelo.');
+    }
+    const budget = roundCents([current.budgetedLabor, current.budgetedSubcontract,
+      current.budgetedEquipment, current.budgetedBdi, current.budgetedTax].reduce((sum, value) => sum + (value ?? 0), 0));
+    validateScheduleInput(startDate, estimatedMonths, budget);
+    const { stages, endDate } = buildScheduleStages(uid, actor, { ...current, startDate }, templateType, estimatedMonths, budget, pops);
+    for (const { id, ...stage } of stages) {
+      tx.set(doc(db, 'stages', id), { ...stage, ...auditFields(uid, actor) });
+    }
+    tx.update(projectRef, {
+      type: templateType,
+      startDate,
+      baselineEndDate: endDate,
+      forecastEndDate: endDate,
+      status: 'Em execução',
+      planningStatus: 'Cronograma criado',
+      scheduleRevision: (current.scheduleRevision ?? 0) + 1,
+      scheduleStageIds: stages.map((stage) => stage.id),
       updatedBy: actor,
-      createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
-  }
-
-  batch.update(doc(db, 'projects', project.id), {
-    type: templateType,
-    startDate,
-    baselineEndDate: endBaseline,
-    forecastEndDate: endBaseline,
-    status: project.status === 'Concluída' ? 'Concluída' : 'Em execução',
-    planningStatus: 'Cronograma criado',
-    updatedBy: actor,
-    updatedAt: serverTimestamp(),
+    tx.set(doc(db, 'auditLogs', generateId('aud')), {
+      ownerUid: uid, registeredBy: actor, action: 'Atualização', entityType: 'projects',
+      summary: clampStr(`Modelo "${templateType}" aplicado à obra ${current.name} (${stages.length} etapas).`, 240),
+      createdAt: serverTimestamp(),
+    });
   });
+}
 
-  batch.set(doc(db, 'auditLogs', generateId('aud')), {
-    ownerUid: uid,
-    registeredBy: actor,
-    action: 'Atualização',
-    entityType: 'projects',
-    summary: clampStr(
-      `Modelo de cronograma "${templateType}" aplicado à obra ${project.name} (${tpl.length} etapas).`,
-      240
-    ),
-    beforeValue: clampStr(project.planningStatus || 'Aguardando modelo de cronograma', 240),
-    afterValue: clampStr(`Cronograma criado · Em execução (${templateType})`, 240),
-    createdAt: serverTimestamp(),
-  });
-
-  try {
-    await batch.commit();
-  } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, `projects/${project.id}`);
+export async function saveProjectStage(params: {
+  uid: string; actor: ActorRole; project: Project; knownStages: ProjectStage[];
+  stageId?: string; payload: StagePayload;
+}): Promise<void> {
+  const { uid, actor, project, knownStages, payload } = params;
+  const stageId = params.stageId ?? generateId('stg');
+  const projectRef = doc(db, 'projects', project.id);
+  const stageRef = doc(db, 'stages', stageId);
+  if (!payload.wbsCode || !payload.phase || !payload.name) {
+    throw new Error('Preencha o código, a fase e o nome do pacote de trabalho.');
   }
+  if (!params.stageId && !payload.deliverable) throw new Error('Informe a entrega do pacote de trabalho.');
+  if (![payload.startWeek, payload.durationWeeks].every((value) => Number.isInteger(value) && value >= 0)) {
+    throw new Error('Informe semanas de início e de duração inteiras e não negativas.');
+  }
+  if (payload.dependsOn.length > 10) throw new Error('Selecione até 10 etapas predecessoras.');
+
+  await runTransaction(db, async (tx) => {
+    const projectSnapshot = await tx.get(projectRef);
+    const current = { ...projectSnapshot.data(), id: project.id } as Project;
+    if (!projectSnapshot.exists() || current.ownerUid !== uid || payload.projectId !== project.id) {
+      throw new Error('Obra indisponível.');
+    }
+    if ((current.scheduleRevision ?? 0) !== (project.scheduleRevision ?? 0)) {
+      throw new Error('O cronograma foi atualizado. Feche e reabra a etapa para revisar a versão atual.');
+    }
+    const ids = current.scheduleStageIds ?? knownStages.map((stage) => stage.id);
+    const snapshots = await Promise.all(ids.map((id) => tx.get(doc(db, 'stages', id))));
+    const stages = snapshots.filter((snapshot) => snapshot.exists()).map((snapshot) => (
+      { ...snapshot.data(), id: snapshot.id } as ProjectStage
+    ));
+    if (stages.some((stage) => stage.projectId !== project.id)) throw new Error('Há etapas vinculadas a outra obra.');
+    const previous = stages.find((stage) => stage.id === stageId);
+    if (params.stageId && !previous) throw new Error('Etapa indisponível.');
+    const others = stages.filter((stage) => stage.id !== stageId);
+    if (others.some((stage) => stage.wbsCode === payload.wbsCode)) {
+      throw new Error('Esse código EAP já existe nesta obra. Informe um código diferente.');
+    }
+    if (payload.dependsOn.some((id) => !stages.some((stage) => stage.id === id))) {
+      throw new Error('Uma etapa predecessora está indisponível. Revise as dependências.');
+    }
+    const candidate = {
+      ...payload, id: stageId, ownerUid: uid,
+      createdBy: previous?.createdBy ?? actor, updatedBy: actor,
+    };
+    const nextStages = [...others, candidate];
+    const schedule = getProjectSchedule(current, nextStages);
+    const cycle = describeScheduleCycle(nextStages, schedule.criticalPath);
+    if (cycle) throw new Error(cycle);
+    if (candidate.status !== 'A fazer') {
+      const predecessor = stages.find((stage) => candidate.dependsOn.includes(stage.id) && stage.status !== 'Concluída');
+      if (predecessor) throw new Error(`Conclua a etapa predecessora “${predecessor.name}” antes de iniciar esta etapa.`);
+    }
+    if (previous) {
+      tx.update(stageRef, {
+        ...payload,
+        baselineStartWeek: previous.baselineStartWeek ?? previous.startWeek ?? payload.startWeek,
+        baselineDurationWeeks: previous.baselineDurationWeeks ?? previous.durationWeeks ?? payload.durationWeeks,
+        baselineBudgetedCost: previous.baselineBudgetedCost ?? previous.budgetedCost ?? payload.budgetedCost,
+        updatedBy: actor, updatedAt: serverTimestamp(),
+      });
+    } else {
+      tx.set(stageRef, {
+        ...payload, baselineBudgetedCost: payload.budgetedCost,
+        baselineStartWeek: schedule.details.get(stageId)!.inicioMaisCedo,
+        ...auditFields(uid, actor),
+      });
+    }
+    tx.update(projectRef, {
+      forecastEndDate: schedule.forecastEndDate ?? current.forecastEndDate,
+      scheduleRevision: (current.scheduleRevision ?? 0) + 1,
+      scheduleStageIds: nextStages.map((stage) => stage.id),
+      updatedBy: actor,
+      updatedAt: serverTimestamp(),
+    });
+    tx.set(doc(db, 'auditLogs', generateId('aud')), {
+      ownerUid: uid, registeredBy: actor, action: previous ? 'Atualização' : 'Criação',
+      entityType: 'stages', summary: clampStr(`Etapa ${previous ? 'atualizada' : 'criada'}: ${payload.name}`, 240),
+      beforeValue: previous?.status ?? '', afterValue: payload.status,
+      createdAt: serverTimestamp(),
+    });
+  });
 }
 
 type TransactionPayload = Omit<FinancialTransaction, keyof import('../types/pilotis').AuditMeta | 'id'>;
@@ -1135,21 +1264,21 @@ export async function createProjectFromTemplate(
     type: ProjectType;
     contractKind?: ProjectContractKind;
     contractValue: number;
+    costBudget: number;
     startDate: string;
-    estimatedMonths: number;
+    estimatedMonths?: number;
     pops: Pop[];
   }
 ): Promise<string> {
+  if (!params.name.trim() || !Number.isFinite(params.contractValue) || params.contractValue < 0) {
+    throw new Error('Informe o nome da obra e um valor de contrato válido.');
+  }
+  validateScheduleInput(params.startDate, params.estimatedMonths, params.costBudget);
   const projectId = generateId('proj');
-  const normalizedStart = normalizeBRDateToISO(params.startDate);
-  const endBaseline = addMonthsISO(normalizedStart, Math.max(1, params.estimatedMonths));
-  const contractKind: ProjectContractKind =
-    params.contractKind || (params.type === 'Obra satélite' ? 'Satélite' : 'Principal');
-  const batch = writeBatch(db);
-
-  const projectRef = doc(db, 'projects', projectId);
-  batch.set(projectRef, {
-    ownerUid: uid,
+  const contractKind = params.contractKind ?? (params.type === 'Obra satélite' ? 'Satélite' : 'Principal');
+  const project: Project = {
+    id: projectId,
+    ...auditFields(uid, actor),
     name: clampStr(params.name, 160),
     quoteId: '',
     clientId: '',
@@ -1157,79 +1286,36 @@ export async function createProjectFromTemplate(
     type: params.type,
     contractKind,
     planningStatus: 'Cronograma criado',
-    contractValue: params.contractValue,
-    budgetedLabor: Math.round(params.contractValue * 0.45),
-    budgetedSubcontract: Math.round(params.contractValue * 0.15),
-    budgetedEquipment: Math.round(params.contractValue * 0.08),
-    budgetedBdi: Math.round(params.contractValue * 0.1),
-    budgetedTax: Math.round(params.contractValue * 0.08),
+    contractValue: roundCents(params.contractValue),
+    budgetedLabor: 0,
+    budgetedSubcontract: 0,
+    budgetedEquipment: 0,
+    budgetedBdi: 0,
+    budgetedTax: 0,
     startDate: params.startDate,
-    baselineEndDate: endBaseline,
-    forecastEndDate: endBaseline,
+    baselineEndDate: '',
+    forecastEndDate: '',
     status: 'Em execução',
-    contractSigned: true,
+    contractSigned: false,
     warrantyStartDate: '',
-    createdBy: actor,
-    updatedBy: actor,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
+  };
+  const { stages, endDate } = buildScheduleStages(uid, actor, project, params.type, params.estimatedMonths, params.costBudget, params.pops);
+  const { id, ...record } = project;
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'projects', id), {
+    ...record, baselineEndDate: endDate, forecastEndDate: endDate,
+    scheduleRevision: 1, scheduleStageIds: stages.map((stage) => stage.id),
   });
-
-  const tpl = getStageTemplatesForType(params.type);
-  const wbsToId = new Map<string, string>();
-  for (const item of tpl) wbsToId.set(item.wbsCode, generateId('stg'));
-
-  for (const item of tpl) {
-    const stgId = wbsToId.get(item.wbsCode)!;
-    const matchedPop = params.pops.find(
-      (p) =>
-        p.status === 'Vigente' &&
-        (item.phase.toLowerCase().includes(p.linkedStagePhase.toLowerCase()) ||
-          item.name.toLowerCase().includes(p.serviceType.toLowerCase()))
-    );
-    batch.set(doc(db, 'stages', stgId), {
-      ownerUid: uid,
-      projectId,
-      wbsCode: item.wbsCode,
-      phase: clampStr(item.phase, 100),
-      name: clampStr(item.name, 140),
-      responsible: clampStr(item.responsible, 120),
-      durationWeeks: item.durationWeeks,
-      startWeek: item.startWeek,
-      baselineStartWeek: item.startWeek,
-      baselineDurationWeeks: item.durationWeeks,
-      progressPct: 0,
-      budgetedCost: Math.round(params.contractValue * 0.78 * item.budgetPct),
-      popId: matchedPop?.id || '',
-      dependsOn: item.depWbs.map((w) => wbsToId.get(w)!).filter(Boolean),
-      isMilestone: Boolean(item.isMilestone),
-      status: 'A fazer',
-      materialExpectedDate: '',
-      delayCategory: '',
-      delayJustification: '',
-      checklistCompleted: [],
-      createdBy: actor,
-      updatedBy: actor,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
+  for (const { id, ...stage } of stages) {
+    batch.set(doc(db, 'stages', id), { ...stage, ...auditFields(uid, actor) });
   }
-
   batch.set(doc(db, 'auditLogs', generateId('aud')), {
-    ownerUid: uid,
-    registeredBy: actor,
-    action: 'Criação',
-    entityType: 'projects',
+    ownerUid: uid, registeredBy: actor, action: 'Criação', entityType: 'projects',
     summary: clampStr(`Obra (${contractKind}) criada a partir do modelo ${params.type}: ${params.name}`, 240),
     createdAt: serverTimestamp(),
   });
-
-  try {
-    await batch.commit();
-    return projectId;
-  } catch (err) {
-    handleFirestoreError(err, OperationType.CREATE, `projects/${projectId}`);
-  }
+  await batch.commit();
+  return projectId;
 }
 
 export async function importTransactionsBatch(
