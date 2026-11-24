@@ -9,7 +9,7 @@ import {
   Select,
   StatusBadge,
 } from '../../components/ui/PilotisUI';
-import { gerarParcelas } from '../../domain/orcamentos';
+import { simularPagamentoOrcamento } from '../../domain/orcamentos';
 import { updateRecord } from '../../services/pilotisService';
 import type {
   ActorRole,
@@ -95,21 +95,16 @@ export function ContractModal({
   const currentContractTotal = (quote?.totalValue || 0) + addendaTotal;
 
   const paymentPreview = useMemo(() => {
-    if (!quote || quote.totalValue <= 0) return null;
+    if (!quote || quote.totalValue <= 0 || quote.downPaymentPct == null || quote.installmentsCount == null) {
+      return null;
+    }
     try {
-      const parcelas = gerarParcelas(
-        quote.totalValue,
-        quote.downPaymentPct ?? 20,
-        Math.max(1, quote.installmentsCount || 13),
-        todayISO()
-      );
-      const downItem = (quote.downPaymentPct ?? 20) > 0 ? parcelas[0] : null;
-      const monthlyItems = downItem ? parcelas.slice(1) : parcelas;
-      return {
-        downValue: downItem?.valor ?? 0,
-        firstParcel: monthlyItems[0]?.valor ?? 0,
-        lastParcel: monthlyItems[monthlyItems.length - 1]?.valor ?? 0,
-      };
+      return simularPagamentoOrcamento({
+        valorTotal: quote.totalValue,
+        entradaPct: quote.downPaymentPct,
+        nParcelas: quote.installmentsCount,
+        dataInicio: todayISO(),
+      });
     } catch {
       return null;
     }
@@ -196,8 +191,12 @@ export function ContractModal({
   async function handleSaveAddendum(e: React.FormEvent) {
     e.preventDefault();
     if (!quote || !addendumDesc.trim()) return;
-    const delta = Number(addendumAmount) || 0;
-    if (delta === 0) return;
+    const delta = Number(addendumAmount);
+    if (!Number.isFinite(delta) || delta === 0) return;
+    if (currentContractTotal + delta < 0) {
+      setFeedback('O valor contratual após o aditivo deve ser maior ou igual a zero.');
+      return;
+    }
 
     setSavingAddendum(true);
     setFeedback(null);
@@ -311,22 +310,20 @@ export function ContractModal({
                 <div>
                   <h4 className="text-sm font-bold text-[#14181F] mb-1">Cláusula 2 · Pagamento</h4>
                   <p className="text-[13px] text-[#5B6472] leading-relaxed">
-                    Entrada de {quote.downPaymentPct}% (
-                    <strong className="text-[#14181F]">
-                      {formatBRL(paymentPreview?.downValue ?? 0)}
-                    </strong>
-                    ) no início da obra e saldo em{' '}
-                    <strong className="text-[#14181F]">
-                      {quote.installmentsCount} parcelas mensais
-                    </strong>{' '}
-                    de{' '}
-                    <strong className="text-[#14181F]">
-                      {formatBRL(paymentPreview?.firstParcel ?? 0)}
-                    </strong>
-                    {paymentPreview &&
-                    paymentPreview.lastParcel !== paymentPreview.firstParcel
-                      ? ` (última parcela ajustada para ${formatBRL(paymentPreview.lastParcel)}).`
-                      : '.'}
+                    {paymentPreview ? (
+                      <>
+                        Entrada de {quote.downPaymentPct}% ({formatBRL(paymentPreview.valorEntrada)}) no início da obra.
+                        {paymentPreview.saldoParcelado > 0 && (
+                          <>
+                            {' '}Saldo de {formatBRL(paymentPreview.saldoParcelado)} em {quote.installmentsCount} parcela(s) mensal(is)
+                            de {formatBRL(paymentPreview.primeiraParcela)}
+                            {paymentPreview.ultimaParcela !== paymentPreview.primeiraParcela
+                              ? `, com última parcela de ${formatBRL(paymentPreview.ultimaParcela)}.`
+                              : '.'}
+                          </>
+                        )}
+                      </>
+                    ) : 'Condições de pagamento não registradas.'}
                   </p>
                 </div>
 
@@ -344,7 +341,8 @@ export function ContractModal({
                     Cláusula 4 · Prazo e garantia contratual
                   </h4>
                   <p className="text-[13px] text-[#5B6472] leading-relaxed">
-                    Prazo estimado de execução de {quote.estimatedMonths || 12} mês(es), com garantia contratual de{' '}
+                    {quote.estimatedMonths > 0 ? `Prazo estimado de execução de ${quote.estimatedMonths} mês(es). ` : ''}
+                    Garantia contratual de{' '}
                     <strong className="text-[#14181F]">1 (um) ano</strong> contada da data de conclusão e entrega formal da obra.
                   </p>
                 </div>
@@ -511,7 +509,21 @@ export function ContractModal({
                     <StatusBadge label={quote.contractSignStatus || 'Aguardando assinatura'} />
                   </div>
 
-                  <Button variant="primary" fullWidth onClick={() => window.print()}>
+                  {linkedProject?.contractPdf && (
+                  <Button variant="primary" fullWidth onClick={() => {
+                    const bytes = linkedProject.contractPdf?.toUint8Array();
+                    if (!bytes) return;
+                    const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: 'application/pdf' }));
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = `contrato-${linkedProject.id}.pdf`;
+                    link.click();
+                    window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+                  }}>
+                    Baixar PDF da confirmação
+                  </Button>
+                )}
+                <Button variant={linkedProject?.contractPdf ? 'secondary' : 'primary'} fullWidth onClick={() => window.print()}>
                     Imprimir / Salvar PDF
                   </Button>
 
@@ -557,7 +569,7 @@ export function ContractModal({
                   <p className="text-xs text-[#5B6472]">
                     O valor aprovado ({formatBRL(quote.totalValue)}) permanece congelado. Alterações de escopo ou valor devem ser formalizadas aqui.
                   </p>
-                  <Button variant="secondary" fullWidth onClick={() => setAddendumModalOpen(true)}>
+                  <Button variant="secondary" fullWidth onClick={() => { setFeedback(null); setAddendumModalOpen(true); }}>
                     + Novo aditivo
                   </Button>
                 </div>
@@ -579,6 +591,7 @@ export function ContractModal({
         subtitle={quote ? `${quote.code} · Valor base congelado: ${formatBRL(quote.totalValue)}` : undefined}
       >
         <form onSubmit={handleSaveAddendum} className="flex flex-col gap-4">
+          {feedback && <Note variant="warning" title="Verifique o valor do aditivo">{feedback}</Note>}
           <Input
             label="Descrição e justificativa do aditivo"
             required

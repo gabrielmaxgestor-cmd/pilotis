@@ -109,10 +109,9 @@ export function ClientsQuotesView({
   const [preselectedQuoteClientId, setPreselectedQuoteClientId] = useState<string>('');
   const isQuoteModalOpen = quoteModalOpen || Boolean(externalNewQuoteOpen);
 
-  // Confirm Quote Modal (transactional conversion to Obra/Contrato + /parcelas + checklist)
-  const [confirmingQuote, setConfirmingQuote] = useState<Quote | null>(null);
-
   // Contract Modal
+  const [confirmingQuoteId, setConfirmingQuoteId] = useState<string | null>(null);
+  const confirmingQuote = data.quotes.find((quote) => quote.id === confirmingQuoteId) ?? null;
   const [contractModalQuoteId, setContractModalQuoteId] = useState<string | null>(null);
 
   // Move stage in Funnel modal
@@ -141,9 +140,9 @@ export function ClientsQuotesView({
   const [clientModalOpen, setClientModalOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
   const [cName, setCName] = useState('');
-  const [cOrigin, setCOrigin] = useState('Indicação');
+  const [cOrigin, setCOrigin] = useState('');
   const [cReferredBy, setCReferredBy] = useState('');
-  const [cCity, setCCity] = useState('Valença · RJ');
+  const [cCity, setCCity] = useState('');
   const [cPhone, setCPhone] = useState('');
   const [cEmail, setCEmail] = useState('');
   const [cNotes, setCNotes] = useState('');
@@ -163,7 +162,7 @@ export function ClientsQuotesView({
   const [editingTender, setEditingTender] = useState<Tender | null>(null);
   const [tAgency, setTAgency] = useState('');
   const [tObject, setTObject] = useState('');
-  const [tDate, setTDate] = useState(todayISO());
+  const [tDate, setTDate] = useState('');
   const [tValue, setTValue] = useState('');
   const [tStatus, setTStatus] = useState<TenderStatus>('Em preparo');
   const [tNotes, setTNotes] = useState('');
@@ -335,9 +334,9 @@ export function ClientsQuotesView({
   function openNewClientModal() {
     setEditingClient(null);
     setCName('');
-    setCOrigin('Indicação');
+    setCOrigin('');
     setCReferredBy('');
-    setCCity(data.settings?.city || 'Valença · RJ');
+    setCCity('');
     setCPhone('');
     setCEmail('');
     setCNotes('');
@@ -349,9 +348,9 @@ export function ClientsQuotesView({
   function openEditClientModal(client: Client) {
     setEditingClient(client);
     setCName(client.name);
-    setCOrigin(client.origin || 'Indicação');
+    setCOrigin(client.origin || '');
     setCReferredBy(client.referredBy || '');
-    setCCity(client.city || data.settings?.city || 'Valença · RJ');
+    setCCity(client.city || '');
     setCPhone(client.phone || '');
     setCEmail(client.email || '');
     setCNotes(client.notes || '');
@@ -362,7 +361,7 @@ export function ClientsQuotesView({
 
   async function handleSaveClient(e: React.FormEvent) {
     e.preventDefault();
-    if (!cName.trim()) return;
+    if (!cName.trim() || !cOrigin) return;
     setCSaving(true);
     try {
       const payload = {
@@ -411,7 +410,7 @@ export function ClientsQuotesView({
   function openStageModal(quote: Quote) {
     setStageModalQuote(quote);
     setStageNextStatus(quote.status === 'Descartado' ? 'Em negociação' : quote.status);
-    setStageNextProb(String(quote.probabilityPct ?? 50));
+    setStageNextProb(String(quote.probabilityPct ?? ''));
     setStageLossReason(quote.lossReason || '');
     setStageActor('Sócio');
   }
@@ -420,6 +419,10 @@ export function ClientsQuotesView({
     e.preventDefault();
     if (!stageModalQuote) return;
     if (stageNextStatus === 'Perdido' && !stageLossReason.trim()) return;
+    if (stageNextStatus === 'Ganho' && stageModalQuote.totalValue <= 0) {
+      showToast({ tone: 'danger', title: 'Edite o orçamento e registre um valor válido antes de marcar como ganho.' });
+      return;
+    }
 
     setStageSaving(true);
     try {
@@ -521,7 +524,7 @@ export function ClientsQuotesView({
     setEditingTender(null);
     setTAgency('');
     setTObject('');
-    setTDate(todayISO());
+    setTDate('');
     setTValue('');
     setTStatus('Em preparo');
     setTNotes('');
@@ -533,7 +536,7 @@ export function ClientsQuotesView({
     setEditingTender(tender);
     setTAgency(tender.agency);
     setTObject(tender.objectTitle);
-    setTDate(tender.openingDate || todayISO());
+    setTDate(tender.openingDate || '');
     setTValue(String(tender.estimatedValue || 0));
     setTStatus(tender.status);
     setTNotes(tender.notes || '');
@@ -543,7 +546,7 @@ export function ClientsQuotesView({
 
   async function handleSaveTender(e: React.FormEvent) {
     e.preventDefault();
-    if (!tAgency.trim() || !tObject.trim()) return;
+    if (!tAgency.trim() || !tObject.trim() || !tDate || !tValue.trim()) return;
     setTSaving(true);
     try {
       const payload = {
@@ -719,11 +722,7 @@ export function ClientsQuotesView({
             {q.status === 'Ganho' ? 'Detalhes' : 'Editar / Versão'}
           </Button>
           {!q.projectId && q.status !== 'Perdido' && q.status !== 'Descartado' && (
-            <Button
-              size="sm"
-              variant="primary"
-              onClick={() => setConfirmingQuote(q)}
-            >
+            <Button size="sm" variant="primary" onClick={() => setConfirmingQuoteId(q.id)}>
               Confirmar orçamento
             </Button>
           )}
@@ -943,12 +942,12 @@ export function ClientsQuotesView({
   }, [activeQuoteComp, data.settings?.targetMarginPct]);
 
   const activeQuoteSim = useMemo(() => {
-    if (!activeQuote || activeQuote.totalValue <= 0) return null;
+    if (!activeQuote || activeQuote.totalValue <= 0 || activeQuote.downPaymentPct == null || activeQuote.installmentsCount == null) return null;
     try {
       return simularPagamentoOrcamento({
         valorTotal: activeQuote.totalValue,
-        entradaPct: activeQuote.downPaymentPct ?? 20,
-        nParcelas: Math.max(1, activeQuote.installmentsCount || 13),
+        entradaPct: activeQuote.downPaymentPct,
+        nParcelas: activeQuote.installmentsCount,
         dataInicio: todayISO(),
         folhaMensalEstimada: payrollMonthly,
       });
@@ -974,7 +973,7 @@ export function ClientsQuotesView({
     () =>
       activeClient
         ? data.projects.filter(
-            (p) => p.clientId === activeClient.id || p.clientName === activeClient.name
+            (p) => p.clientId ? p.clientId === activeClient.id : p.clientName === activeClient.name
           )
         : [],
     [activeClient, data.projects]
@@ -1264,7 +1263,7 @@ export function ClientsQuotesView({
                         }
                         title={
                           activeQuoteMarginCheck.status === 'acima'
-                            ? `Margem acima da meta (${activeQuoteMarginCheck.metaPct?.toFixed(1).replace('.', ',')}%)`
+                            ? `Margem ${activeQuoteMarginCheck.diferencaPct === 0 ? 'na' : 'acima da'} meta (${activeQuoteMarginCheck.metaPct?.toFixed(1).replace('.', ',')}%)`
                             : activeQuoteMarginCheck.status === 'abaixo'
                               ? `Margem abaixo da meta (${activeQuoteMarginCheck.metaPct?.toFixed(1).replace('.', ',')}%)`
                               : 'Meta de margem não configurada'
@@ -1319,17 +1318,12 @@ export function ClientsQuotesView({
                           : 'Editar / Nova versão & Simulador'}
                       </Button>
 
-                      {!activeQuote.projectId &&
-                        activeQuote.status !== 'Perdido' &&
-                        activeQuote.status !== 'Descartado' && (
-                          <Button
-                            variant="primary"
-                            onClick={() => setConfirmingQuote(activeQuote)}
-                          >
-                            Confirmar orçamento
-                          </Button>
-                        )}
 
+                      {!activeQuote.projectId && activeQuote.status !== 'Perdido' && activeQuote.status !== 'Descartado' && (
+                        <Button variant="primary" onClick={() => setConfirmingQuoteId(activeQuote.id)}>
+                          Confirmar orçamento
+                        </Button>
+                      )}
                       {activeQuote.status !== 'Ganho' && (
                         <Button
                           variant={activeQuote.projectId ? 'primary' : 'secondary'}
@@ -1377,9 +1371,9 @@ export function ClientsQuotesView({
 
                   <Card
                     title="Versões e efeito no caixa"
-                    subtitle={`Prazo estimado: ${activeQuote.estimatedMonths || 12} meses · Validade: ${
-                      activeQuote.validityDays || 30
-                    } dias`}
+                    subtitle={`Prazo estimado: ${activeQuote.estimatedMonths ? `${activeQuote.estimatedMonths} meses` : 'Sem dados'} · Validade: ${
+                      activeQuote.validityDays ? `${activeQuote.validityDays} dias` : 'Sem dados'
+                    }`}
                   >
                     {activeQuoteSim && (
                       <div className="flex flex-col gap-2 text-[13px]">
@@ -1598,24 +1592,15 @@ export function ClientsQuotesView({
                                   : q.status
                               }
                             />
-                            <Button
-                              size="sm"
-                              variant="secondary"
-                              onClick={() => openEditQuote(q)}
-                            >
-                              Abrir
-                            </Button>
-                            {!q.projectId &&
-                              q.status !== 'Perdido' &&
-                              q.status !== 'Descartado' && (
-                                <Button
-                                  size="sm"
-                                  variant="primary"
-                                  onClick={() => setConfirmingQuote(q)}
-                                >
-                                  Confirmar orçamento
-                                </Button>
-                              )}
+                            {q.status !== 'Descartado' && (
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => openEditQuote(q)}
+                              >
+                                Abrir
+                              </Button>
+                            )}
                             {(q.status === 'Ganho' || q.projectId) && (
                               <Button
                                 size="sm"
@@ -1916,9 +1901,11 @@ export function ClientsQuotesView({
             />
             <Select
               label="Origem do contato"
+              required
               value={cOrigin}
               onChange={(e) => setCOrigin(e.target.value)}
             >
+              <option value="" disabled>Selecione a origem</option>
               {CLIENT_ORIGINS.map((opt) => (
                 <option key={opt} value={opt}>
                   {opt}
@@ -2008,19 +1995,18 @@ export function ClientsQuotesView({
         onRequestNewClient={openNewClientModal}
       />
 
-      {/* MODAL: CONFIRMAR ORÇAMENTO (Transação atômica -> Obra/Contrato + /parcelas + Checklist + Planejamento) */}
       <ConfirmQuoteModal
-        open={Boolean(confirmingQuote)}
-        onClose={() => setConfirmingQuote(null)}
+        open={confirmingQuote !== null}
+        onClose={() => setConfirmingQuoteId(null)}
         quote={confirmingQuote}
-        clients={data.clients}
         uid={uid}
+        clients={data.clients}
         onConfirmed={(quoteId, result) => {
           setSelectedQuoteId(quoteId);
           setContractModalQuoteId(quoteId);
           showToast({
             tone: 'success',
-            title: `Orçamento confirmado! Obra contratada, ${result.parcelasCount} parcela(s) e checklist de ${result.checklistCount} documentos gerados.`,
+            title: `Obra contratada com ${result.parcelasCount} parcela(s), PDF e checklist.`,
           });
         }}
       />
@@ -2069,6 +2055,8 @@ export function ClientsQuotesView({
               type="number"
               min={0}
               max={100}
+              step="0.01"
+              required={stageNextStatus === 'Enviado' || stageNextStatus === 'Em negociação'}
               disabled={stageNextStatus === 'Ganho' || stageNextStatus === 'Perdido'}
               value={
                 stageNextStatus === 'Perdido'

@@ -72,26 +72,27 @@ export function QuoteEditorModal({
   onRequestNewClient: () => void;
 }) {
   const isApprovedLocked = editingQuote?.status === 'Ganho';
+  const isConfirmed = Boolean(editingQuote?.projectId);
 
   const [clientId, setClientId] = useState('');
-  const [origin, setOrigin] = useState('Indicação');
+  const [origin, setOrigin] = useState('');
   const [title, setTitle] = useState('');
   const [type, setType] = useState<ProjectType>('Casa residencial');
-  const [city, setCity] = useState('Valença · RJ');
-  const [areaM2, setAreaM2] = useState('240');
-  const [estimatedMonths, setEstimatedMonths] = useState('18');
-  const [validityDays, setValidityDays] = useState('30');
+  const [city, setCity] = useState('');
+  const [areaM2, setAreaM2] = useState('');
+  const [estimatedMonths, setEstimatedMonths] = useState('');
+  const [validityDays, setValidityDays] = useState('');
   const [description, setDescription] = useState('');
   const [laborCost, setLaborCost] = useState('');
   const [subcontractCost, setSubcontractCost] = useState('');
   const [equipmentCost, setEquipmentCost] = useState('');
   const [bdiCost, setBdiCost] = useState('');
   const [taxCost, setTaxCost] = useState('');
-  const [totalValue, setTotalValue] = useState('');
-  const [downPaymentPct, setDownPaymentPct] = useState('20');
-  const [installmentsCount, setInstallmentsCount] = useState('18');
-  const [probabilityPct, setProbabilityPct] = useState('60');
-  const [status, setStatus] = useState<QuoteStatus>('Em negociação');
+  const [pricingMargin, setPricingMargin] = useState('');
+  const [downPaymentPct, setDownPaymentPct] = useState('');
+  const [installmentsCount, setInstallmentsCount] = useState('');
+  const [probabilityPct, setProbabilityPct] = useState('');
+  const [status, setStatus] = useState<QuoteStatus>('Rascunho');
   const [lossReason, setLossReason] = useState('');
   const [createNewVersion, setCreateNewVersion] = useState(false);
   const [versionNote, setVersionNote] = useState('');
@@ -104,24 +105,24 @@ export function QuoteEditorModal({
     setError(null);
     if (editingQuote) {
       setClientId(editingQuote.clientId);
-      setOrigin(editingQuote.origin || 'Indicação');
+      setOrigin(editingQuote.origin || '');
       setTitle(editingQuote.title);
       setType(editingQuote.type);
-      setCity(editingQuote.city || settings?.city || 'Valença · RJ');
-      setAreaM2(String(editingQuote.areaM2 || 0));
-      setEstimatedMonths(String(editingQuote.estimatedMonths || 18));
-      setValidityDays(String(editingQuote.validityDays || 30));
+      setCity(editingQuote.city || '');
+      setAreaM2(String(editingQuote.areaM2 ?? ''));
+      setEstimatedMonths(String(editingQuote.estimatedMonths ?? ''));
+      setValidityDays(String(editingQuote.validityDays ?? ''));
       setDescription(editingQuote.description || '');
       setLaborCost(String(editingQuote.laborCost || 0));
       setSubcontractCost(String(editingQuote.subcontractCost || 0));
       setEquipmentCost(String(editingQuote.equipmentCost || 0));
       setBdiCost(String(editingQuote.bdiCost || 0));
       setTaxCost(String(editingQuote.taxCost || 0));
-      setTotalValue(String(editingQuote.totalValue || 0));
-      setDownPaymentPct(String(editingQuote.downPaymentPct ?? 20));
-      setInstallmentsCount(String(editingQuote.installmentsCount ?? 18));
-      setProbabilityPct(String(editingQuote.probabilityPct ?? 50));
-      setStatus(editingQuote.status === 'Descartado' ? 'Em negociação' : editingQuote.status);
+      setPricingMargin(String(editingQuote.pricingMarginPct ?? ''));
+      setDownPaymentPct(String(editingQuote.downPaymentPct ?? ''));
+      setInstallmentsCount(String(editingQuote.installmentsCount ?? ''));
+      setProbabilityPct(String(editingQuote.probabilityPct ?? ''));
+      setStatus(editingQuote.status === 'Descartado' ? 'Rascunho' : editingQuote.status);
       setLossReason(editingQuote.lossReason || '');
       setCreateNewVersion(false);
       setVersionNote('');
@@ -129,56 +130,78 @@ export function QuoteEditorModal({
       return;
     }
 
-    const initialClient =
-      clients.find((c) => c.id === preselectedClientId) || clients[0] || null;
-    setClientId(preselectedClientId || '');
-    setOrigin(initialClient?.origin || 'Indicação');
+    setClientId('');
+    setOrigin('');
     setTitle('');
     setType('Casa residencial');
-    setCity(initialClient?.city || settings?.city || 'Valença · RJ');
-    setAreaM2('240');
-    setEstimatedMonths('18');
-    setValidityDays('30');
+    setCity('');
+    setAreaM2('');
+    setEstimatedMonths('');
+    setValidityDays('');
     setDescription('');
     setLaborCost('');
     setSubcontractCost('');
     setEquipmentCost('');
     setBdiCost('');
     setTaxCost('');
-    setTotalValue('');
-    setDownPaymentPct('20');
-    setInstallmentsCount('18');
-    setProbabilityPct('60');
-    setStatus('Em negociação');
+    setPricingMargin('');
+    setDownPaymentPct('');
+    setInstallmentsCount('');
+    setProbabilityPct('');
+    setStatus('Rascunho');
     setLossReason('');
     setCreateNewVersion(false);
     setVersionNote('');
     setActor('Sócio');
-  }, [open, editingQuote, preselectedClientId, clients, settings?.city]);
+  }, [open, editingQuote]);
 
-  // Keep origin & city synced when selecting client during creation
+  const preselectedClient = clients.find((client) => client.id === preselectedClientId);
+  useEffect(() => {
+    if (!open || editingQuote || !preselectedClient) return;
+    setClientId(preselectedClient.id);
+    setOrigin(preselectedClient.origin);
+    setCity((current) => current || preselectedClient.city || '');
+  }, [open, editingQuote, preselectedClient]);
+
+  // Use known client details when selecting the client for a new quote.
   function handleClientChange(nextClientId: string) {
     setClientId(nextClientId);
     const selected = clients.find((c) => c.id === nextClientId);
     if (selected && !editingQuote) {
-      setOrigin(selected.origin || 'Indicação');
-      if (selected.city) setCity(selected.city);
+      setOrigin(selected.origin);
+      setCity((current) => current || selected.city || '');
     }
   }
 
-  const totalNum = Math.max(0, Number(totalValue) || 0);
-  const comp = useMemo(
-    () =>
-      composicaoOrcamento({
-        maoDeObra: Number(laborCost) || 0,
-        empreita: Number(subcontractCost) || 0,
-        equipamentos: Number(equipmentCost) || 0,
-        bdi: Number(bdiCost) || 0,
-        impostos: Number(taxCost) || 0,
-        valorTotal: totalNum,
-      }),
-    [laborCost, subcontractCost, equipmentCost, bdiCost, taxCost, totalNum]
+  const marginPct = pricingMargin.trim() ? Number(pricingMargin) : null;
+  const hasValidPricingMargin =
+    marginPct !== null && Number.isFinite(marginPct) && marginPct >= 0 && marginPct <= 99.99;
+  const costs = {
+    laborCost: Number(laborCost) || 0,
+    subcontractCost: Number(subcontractCost) || 0,
+    equipmentCost: Number(equipmentCost) || 0,
+    bdiCost: Number(bdiCost) || 0,
+    taxCost: Number(taxCost) || 0,
+  };
+  const costsChanged = editingQuote
+    ? Object.entries(costs).some(([key, value]) => value !== (editingQuote[key as keyof typeof costs] ?? 0))
+    : false;
+  const keepExistingPrice = Boolean(
+    editingQuote && (isApprovedLocked || (editingQuote.pricingMarginPct == null && marginPct === null && !costsChanged))
   );
+  const comp = composicaoOrcamento({
+    maoDeObra: costs.laborCost,
+    empreita: costs.subcontractCost,
+    equipamentos: costs.equipmentCost,
+    bdi: costs.bdiCost,
+    impostos: costs.taxCost,
+    valorTotal: keepExistingPrice ? editingQuote?.totalValue : undefined,
+    margemDesejadaPct: hasValidPricingMargin ? marginPct : undefined,
+  });
+  const hasPrice =
+    keepExistingPrice || (hasValidPricingMargin && comp.custoTotal > 0 && Number.isFinite(comp.valorTotal));
+  const totalNum = hasPrice ? comp.valorTotal : 0;
+  const pricingFields = hasValidPricingMargin ? { pricingMarginPct: marginPct } : {};
 
   const marginCheck = useMemo(
     () => avaliarMargemContraMeta(comp.margemPct, settings?.targetMarginPct),
@@ -191,9 +214,13 @@ export function QuoteEditorModal({
   }, [employees, settings]);
 
   const downPctNum = Math.min(100, Math.max(0, Number(downPaymentPct) || 0));
-  const installmentsNum = Math.min(36, Math.max(1, Math.round(Number(installmentsCount) || 13)));
+  const installmentsNum = Number(installmentsCount);
+  const hasPaymentTerms =
+    downPaymentPct.trim() !== '' && downPctNum === Number(downPaymentPct) &&
+    Number.isInteger(installmentsNum) && installmentsNum >= 1 && installmentsNum <= 36;
 
   const paymentSim = useMemo(() => {
+    if (!hasPrice || !hasPaymentTerms) return null;
     try {
       return simularPagamentoOrcamento({
         valorTotal: totalNum,
@@ -205,7 +232,7 @@ export function QuoteEditorModal({
     } catch {
       return null;
     }
-  }, [totalNum, downPctNum, installmentsNum, payrollMonthly]);
+  }, [totalNum, downPctNum, installmentsNum, payrollMonthly, hasPrice, hasPaymentTerms]);
 
   const parsedHistory = useMemo(
     () => parseVersionHistory(editingQuote?.versionHistory),
@@ -214,16 +241,21 @@ export function QuoteEditorModal({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (isConfirmed) return;
     if (!clientId) {
       setError('Selecione ou cadastre um cliente antes de salvar o orçamento.');
       return;
     }
-    if (!title.trim()) {
-      setError('Informe o nome ou título da obra.');
+    if (!title.trim() || (!editingQuote && !city.trim())) {
+      setError('Informe o nome ou título da obra e a localidade.');
       return;
     }
-    if (totalNum <= 0) {
-      setError('Informe um valor total fechado maior que zero.');
+    if (!isApprovedLocked && (!hasPrice || totalNum <= 0 || Object.values(costs).some((cost) => !Number.isFinite(cost) || cost < 0))) {
+      setError('Informe os custos e uma margem de precificação de 0 a 99,99% para calcular o valor fechado.');
+      return;
+    }
+    if (!isApprovedLocked && !hasPaymentTerms) {
+      setError('Informe o percentual de entrada e um número de parcelas de 1 a 36.');
       return;
     }
     if (status === 'Perdido' && !lossReason.trim()) {
@@ -270,19 +302,16 @@ export function QuoteEditorModal({
             type,
             city: clampStr(city, 80),
             areaM2: Math.max(0, Number(areaM2) || 0),
-            estimatedMonths: Math.max(1, Number(estimatedMonths) || 12),
-            validityDays: Math.max(1, Number(validityDays) || 30),
+            estimatedMonths: Number(estimatedMonths),
+            validityDays: Number(validityDays),
             description: clampStr(description, 1500),
             origin: clampStr(origin || client.origin, 80),
-            laborCost: Math.max(0, Number(laborCost) || 0),
-            subcontractCost: Math.max(0, Number(subcontractCost) || 0),
-            equipmentCost: Math.max(0, Number(equipmentCost) || 0),
-            bdiCost: Math.max(0, Number(bdiCost) || 0),
-            taxCost: Math.max(0, Number(taxCost) || 0),
+            ...costs,
+            ...pricingFields,
             totalValue: totalNum,
             downPaymentPct: downPctNum,
             installmentsCount: installmentsNum,
-            probabilityPct: status === 'Perdido' ? 0 : Math.min(100, Math.max(0, Number(probabilityPct) || 0)),
+            probabilityPct: status === 'Perdido' ? 0 : status === 'Ganho' ? 100 : Number(probabilityPct),
             status,
             discardReason: '',
             lossReason: status === 'Perdido' ? clampStr(lossReason, 300) : '',
@@ -313,7 +342,7 @@ export function QuoteEditorModal({
             description: clampStr(description, 1500),
             city: clampStr(city, 80),
             areaM2: Math.max(0, Number(areaM2) || 0),
-            estimatedMonths: Math.max(1, Number(estimatedMonths) || 12),
+            estimatedMonths: Number(estimatedMonths),
           },
           `Dados complementares do orçamento aprovado ${editingQuote.code} atualizados`
         );
@@ -323,9 +352,12 @@ export function QuoteEditorModal({
       }
 
       const currentVersion = editingQuote.version || 'v1.0';
-      const nextVersion = createNewVersion ? incrementQuoteVersion(currentVersion) : currentVersion;
+      const termsChanged = costsChanged || totalNum !== editingQuote.totalValue ||
+        downPctNum !== editingQuote.downPaymentPct || installmentsNum !== editingQuote.installmentsCount;
+      const shouldVersion = createNewVersion || termsChanged;
+      const nextVersion = shouldVersion ? incrementQuoteVersion(currentVersion) : currentVersion;
       const existingHistory = editingQuote.versionHistory ? [...editingQuote.versionHistory] : [];
-      if (createNewVersion || existingHistory.length === 0) {
+      if (shouldVersion || existingHistory.length === 0) {
         existingHistory.push(
           serializeVersionEntry({
             version: nextVersion,
@@ -334,7 +366,7 @@ export function QuoteEditorModal({
             totalCost: comp.custoTotal,
             marginPct: comp.margemPct,
             registeredBy: actor,
-            note: createNewVersion ? versionNote : 'Revisão atualizada',
+            note: createNewVersion ? versionNote : termsChanged ? 'Alteração de valores ou condições de pagamento' : 'Versão inicial',
           })
         );
       }
@@ -351,15 +383,12 @@ export function QuoteEditorModal({
           type,
           city: clampStr(city, 80),
           areaM2: Math.max(0, Number(areaM2) || 0),
-          estimatedMonths: Math.max(1, Number(estimatedMonths) || 12),
-          validityDays: Math.max(1, Number(validityDays) || 30),
+          estimatedMonths: Number(estimatedMonths),
+          validityDays: Number(validityDays),
           description: clampStr(description, 1500),
           origin: clampStr(origin || client.origin, 80),
-          laborCost: Math.max(0, Number(laborCost) || 0),
-          subcontractCost: Math.max(0, Number(subcontractCost) || 0),
-          equipmentCost: Math.max(0, Number(equipmentCost) || 0),
-          bdiCost: Math.max(0, Number(bdiCost) || 0),
-          taxCost: Math.max(0, Number(taxCost) || 0),
+          ...costs,
+          ...pricingFields,
           totalValue: totalNum,
           downPaymentPct: downPctNum,
           installmentsCount: installmentsNum,
@@ -455,6 +484,7 @@ export function QuoteEditorModal({
               disabled={isApprovedLocked}
               onChange={(e) => setOrigin(e.target.value)}
             >
+              <option value="">Selecione a origem</option>
               {QUOTE_ORIGINS.map((opt) => (
                 <option key={opt} value={opt}>
                   {opt}
@@ -474,6 +504,8 @@ export function QuoteEditorModal({
             />
             <Input
               label="Localidade"
+              disabled={isConfirmed}
+              required={!editingQuote}
               value={city}
               onChange={(e) => setCity(e.target.value)}
               placeholder="Valença · RJ"
@@ -493,14 +525,19 @@ export function QuoteEditorModal({
             </Select>
             <Input
               label="Área (m²)"
+              disabled={isConfirmed}
+              required={!editingQuote}
               type="number"
               min={0}
+              step="0.01"
               value={areaM2}
               onChange={(e) => setAreaM2(e.target.value)}
               className="tabular-nums"
             />
             <Input
               label="Prazo (meses)"
+              disabled={isConfirmed}
+              required={!editingQuote}
               type="number"
               min={1}
               max={48}
@@ -510,6 +547,7 @@ export function QuoteEditorModal({
             />
             <Input
               label="Validade (dias)"
+              required={!editingQuote}
               type="number"
               min={1}
               max={180}
@@ -544,6 +582,7 @@ export function QuoteEditorModal({
 
           <Textarea
             label="Descrição da obra / escopo"
+            disabled={isConfirmed}
             rows={2}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
@@ -620,20 +659,28 @@ export function QuoteEditorModal({
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
             <Input
-              label="Valor total fechado (R$)"
+              label="Margem de precificação (%)"
               type="number"
-              min={1}
+              min={0}
+              max={99.99}
               step="0.01"
-              required
+              required={!keepExistingPrice}
               disabled={isApprovedLocked}
-              value={totalValue}
-              onChange={(e) => setTotalValue(e.target.value)}
-              className="font-semibold tabular-nums"
+              value={pricingMargin}
+              onChange={(e) => setPricingMargin(e.target.value)}
+              help="Percentual sobre o valor final. A meta da empresa serve de referência."
+              className="tabular-nums"
             />
+            <div className="bg-[#F6F5F2] border border-[#E4E1DA] rounded-[8px] px-3.5 py-2.5">
+              <span className="block text-[11px] text-[#5B6472]">Valor total fechado</span>
+              <strong className="text-sm tabular-nums">{hasPrice ? formatBRL(totalNum) : 'Sem dados'}</strong>
+            </div>
             <Input
               label="Probabilidade de fechamento (%)"
               type="number"
+              required={status === 'Enviado' || status === 'Em negociação'}
               min={0}
+              step="0.01"
               max={100}
               disabled={isApprovedLocked || status === 'Perdido' || status === 'Ganho'}
               value={status === 'Perdido' ? '0' : status === 'Ganho' ? '100' : probabilityPct}
@@ -647,7 +694,7 @@ export function QuoteEditorModal({
                   comp.margemReais < 0 ? 'text-[#B42318]' : 'text-[#14181F]'
                 }`}
               >
-                {formatBRL(comp.margemReais)} ({comp.margemPct.toFixed(1).replace('.', ',')}%)
+                {hasPrice ? `${formatBRL(comp.margemReais)} (${comp.margemPct.toFixed(2).replace('.', ',')}%)` : 'Sem dados'}
               </strong>
             </div>
           </div>
@@ -667,7 +714,7 @@ export function QuoteEditorModal({
               }
               title={
                 marginCheck.status === 'acima'
-                  ? `Margem acima da meta (${marginCheck.metaPct?.toFixed(1).replace('.', ',')}% configurada)`
+                  ? `Margem ${marginCheck.diferencaPct === 0 ? 'na' : 'acima da'} meta (${marginCheck.metaPct?.toFixed(1).replace('.', ',')}%)`
                   : marginCheck.status === 'abaixo'
                     ? `Margem abaixo da meta (${marginCheck.metaPct?.toFixed(1).replace('.', ',')}% configurada)`
                     : 'Meta de margem não configurada'
@@ -709,6 +756,8 @@ export function QuoteEditorModal({
             <Input
               label="Entrada (%)"
               type="number"
+              step="0.01"
+              required={!isApprovedLocked}
               min={0}
               max={100}
               disabled={isApprovedLocked}
@@ -719,7 +768,7 @@ export function QuoteEditorModal({
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between text-[13px] font-semibold text-[#14181F]">
                 <label htmlFor="sim-installments">Parcelas (13–24x padrão)</label>
-                <span className="tabular-nums text-[#1F3A5F]">{installmentsNum}x</span>
+                <span className="tabular-nums text-[#1F3A5F]">{installmentsCount ? `${installmentsNum}x` : 'Sem dados'}</span>
               </div>
               <div className="flex items-center gap-3">
                 <input
@@ -728,7 +777,7 @@ export function QuoteEditorModal({
                   min={1}
                   max={36}
                   disabled={isApprovedLocked}
-                  value={installmentsNum}
+                  value={installmentsNum || 1}
                   onChange={(e) => setInstallmentsCount(e.target.value)}
                   className="flex-1 accent-[#1F3A5F]"
                 />
@@ -737,7 +786,8 @@ export function QuoteEditorModal({
                   min={1}
                   max={36}
                   disabled={isApprovedLocked}
-                  value={installmentsNum}
+                  required={!isApprovedLocked}
+                  value={installmentsCount}
                   onChange={(e) => setInstallmentsCount(e.target.value)}
                   aria-label="Número de parcelas"
                   className="w-20 rounded-[8px] border border-[#E4E1DA] px-2.5 py-2 text-sm tabular-nums text-right"
@@ -844,7 +894,7 @@ export function QuoteEditorModal({
           </div>
         )}
 
-        <RegisteredBySelect value={actor} onChange={setActor} id="quote-editor-actor" />
+        {!isConfirmed && <RegisteredBySelect value={actor} onChange={setActor} id="quote-editor-actor" />}
 
         {error && (
           <Note variant="danger" title="Verifique os dados">
@@ -856,7 +906,7 @@ export function QuoteEditorModal({
           <Button variant="secondary" onClick={onClose}>
             {isApprovedLocked ? 'Fechar' : 'Cancelar'}
           </Button>
-          <Button type="submit" variant="primary" disabled={saving}>
+          {!isConfirmed && <Button type="submit" variant="primary" disabled={saving}>
             {saving
               ? 'Salvando...'
               : isApprovedLocked
@@ -866,7 +916,7 @@ export function QuoteEditorModal({
                     ? `Salvar versão ${incrementQuoteVersion(editingQuote.version)}`
                     : 'Salvar alterações'
                   : 'Salvar orçamento'}
-          </Button>
+          </Button>}
         </div>
       </form>
     </Modal>

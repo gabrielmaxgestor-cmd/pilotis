@@ -474,3 +474,45 @@ describe('Orçamentos, parcelas e classificação financeira', () => {
   });
 });
 
+it('recalcula o preço fechado a partir dos custos e da margem de precificação', () => {
+  const result = composicaoOrcamento({
+    maoDeObra: 53000.15,
+    empreita: 11300.25,
+    equipamentos: 6200.35,
+    bdi: 6000.19,
+    impostos: 3400.07,
+    margemDesejadaPct: 20,
+  });
+
+  assert.equal(result.custoTotal, 79901.01);
+  assert.equal(result.valorTotal, 99876.26);
+  assert.equal(result.margemReais, 19975.25);
+  assert.equal(result.margemPct, 20);
+});
+
+it('preserva o preço registrado ao calcular a margem de um orçamento anterior', () => {
+  const result = composicaoOrcamento({
+    maoDeObra: 92000,
+    empreita: 0,
+    equipamentos: 0,
+    valorTotal: 90000,
+  });
+
+  assert.equal(result.valorTotal, 90000);
+  assert.equal(result.margemReais, -2000);
+  assert.equal(result.margemPct, -2.22);
+});
+
+it('identifica a entrada pela numeração quando o percentual arredonda para zero', () => {
+  const result = simularPagamentoOrcamento({
+    valorTotal: 10,
+    entradaPct: 0.01,
+    nParcelas: 2,
+    dataInicio: '2026-11-23',
+  });
+
+  assert.equal(result.valorEntrada, 0);
+  assert.equal(result.saldoParcelado, 10);
+  assert.equal(result.primeiraParcela, 5);
+  assert.equal(result.ultimaParcela, 5);
+});

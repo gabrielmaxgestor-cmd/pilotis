@@ -121,7 +121,7 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'ownerUid', 'code', 'clientId', 'clientName', 'title', 'type', 'city', 'areaM2',
           'estimatedMonths', 'validityDays', 'description', 'origin', 'laborCost', 'subcontractCost',
-          'equipmentCost', 'bdiCost', 'taxCost', 'totalValue', 'downPaymentPct', 'installmentsCount',
+          'equipmentCost', 'bdiCost', 'taxCost', 'pricingMarginPct', 'totalValue', 'downPaymentPct', 'installmentsCount',
           'probabilityPct', 'status', 'discardReason', 'lossReason', 'version', 'versionHistory',
           'contractSignStatus', 'contractSignedAt', 'contractAddenda', 'addendaTotalValue',
           'projectId', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
@@ -145,6 +145,7 @@ service cloud.firestore {
         && (!('equipmentCost' in data) || isValidNonNegNum(data.equipmentCost))
         && (!('bdiCost' in data) || isValidNonNegNum(data.bdiCost))
         && (!('taxCost' in data) || isValidNonNegNum(data.taxCost))
+        && (!('pricingMarginPct' in data) || (isValidNonNegNum(data.pricingMarginPct) && data.pricingMarginPct <= 99.99))
         && (!('downPaymentPct' in data) || (isValidNonNegNum(data.downPaymentPct) && data.downPaymentPct <= 100))
         && (!('installmentsCount' in data) || (isValidNonNegNum(data.installmentsCount) && data.installmentsCount <= 36))
         && (!('probabilityPct' in data) || (isValidNonNegNum(data.probabilityPct) && data.probabilityPct <= 100))
@@ -165,7 +166,7 @@ service cloud.firestore {
       ])
         && data.keys().hasOnly([
           'ownerUid', 'name', 'quoteId', 'clientId', 'clientName', 'type', 'contractKind', 'planningStatus',
-          'contractValue', 'downPaymentPct', 'installmentsCount', 'addendaTotalValue',
+          'contractValue', 'contractPdf', 'downPaymentPct', 'installmentsCount', 'addendaTotalValue',
           'budgetedLabor', 'budgetedSubcontract', 'budgetedEquipment', 'budgetedBdi', 'budgetedTax',
           'startDate', 'baselineEndDate', 'forecastEndDate', 'status', 'contractSigned',
           'warrantyStartDate', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
@@ -176,6 +177,7 @@ service cloud.firestore {
         && (!('contractKind' in data) || data.contractKind in ['Principal', 'Satélite'])
         && (!('planningStatus' in data) || data.planningStatus in ['Aguardando modelo de cronograma', 'Cronograma criado'])
         && isValidNonNegNum(data.contractValue)
+        && (!('contractPdf' in data) || (data.contractPdf is bytes && data.contractPdf.size() > 0 && data.contractPdf.size() <= 65536))
         && (!('downPaymentPct' in data) || (isValidNonNegNum(data.downPaymentPct) && data.downPaymentPct <= 100))
         && (!('installmentsCount' in data) || (isValidNonNegNum(data.installmentsCount) && data.installmentsCount <= 36))
         && (!('addendaTotalValue' in data) || isValidNum(data.addendaTotalValue))
@@ -495,6 +497,17 @@ service cloud.firestore {
       allow delete: if isValidId(clientId) && isSignedIn() && existing().ownerUid == request.auth.uid;
     }
 
+    function confirmedProjectMatches(quoteId, quote) {
+      let project = getAfter(/databases/$(database)/documents/projects/$(quote.projectId)).data;
+      return project.ownerUid == request.auth.uid
+        && project.quoteId == quoteId
+        && project.clientId == quote.clientId
+        && project.contractValue == quote.totalValue
+        && project.status == 'Contratada'
+        && project.planningStatus == 'Aguardando modelo de cronograma'
+        && project.contractPdf is bytes;
+    }
+
     match /quotes/{quoteId} {
       allow get: if isValidId(quoteId) && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
@@ -509,6 +522,16 @@ service cloud.firestore {
         && incoming().createdBy == existing().createdBy
         && incoming().updatedAt == request.time
         && (
+          incoming().get('projectId', '') == existing().get('projectId', '')
+          || (
+            existing().get('projectId', '') == ''
+            && isValidId(incoming().projectId)
+            && incoming().status == 'Ganho'
+            && incoming().totalValue == existing().totalValue
+            && confirmedProjectMatches(quoteId, incoming())
+          )
+        )
+        && (
           existing().status != 'Ganho'
           || (
             incoming().status == 'Ganho'
@@ -518,6 +541,10 @@ service cloud.firestore {
             && (!('equipmentCost' in existing()) || incoming().equipmentCost == existing().equipmentCost)
             && (!('bdiCost' in existing()) || incoming().bdiCost == existing().bdiCost)
             && (!('taxCost' in existing()) || incoming().taxCost == existing().taxCost)
+            && incoming().get('pricingMarginPct', null) == existing().get('pricingMarginPct', null)
+            && (existing().get('projectId', '') == '' || incoming().diff(existing()).affectedKeys().hasOnly([
+              'contractSignStatus', 'contractSignedAt', 'contractAddenda', 'addendaTotalValue', 'updatedBy', 'updatedAt'
+            ]))
           )
         );
       allow delete: if isValidId(quoteId) && isSignedIn() && existing().ownerUid == request.auth.uid;
@@ -533,7 +560,8 @@ service cloud.firestore {
         && incoming().ownerUid == existing().ownerUid
         && incoming().createdAt == existing().createdAt
         && incoming().createdBy == existing().createdBy
-        && incoming().updatedAt == request.time;
+        && incoming().updatedAt == request.time
+        && incoming().get('contractPdf', null) == existing().get('contractPdf', null);
       allow delete: if isValidId(projectId) && isSignedIn() && existing().ownerUid == request.auth.uid;
     }
 
