@@ -72,6 +72,7 @@ export function QuoteEditorModal({
   onRequestNewClient: () => void;
 }) {
   const isApprovedLocked = editingQuote?.status === 'Ganho';
+  const isConfirmed = Boolean(editingQuote?.projectId);
 
   const [clientId, setClientId] = useState('');
   const [origin, setOrigin] = useState('');
@@ -240,6 +241,7 @@ export function QuoteEditorModal({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (isConfirmed) return;
     if (!clientId) {
       setError('Selecione ou cadastre um cliente antes de salvar o orçamento.');
       return;
@@ -502,6 +504,7 @@ export function QuoteEditorModal({
             />
             <Input
               label="Localidade"
+              disabled={isConfirmed}
               required={!editingQuote}
               value={city}
               onChange={(e) => setCity(e.target.value)}
@@ -522,6 +525,7 @@ export function QuoteEditorModal({
             </Select>
             <Input
               label="Área (m²)"
+              disabled={isConfirmed}
               required={!editingQuote}
               type="number"
               min={0}
@@ -532,6 +536,7 @@ export function QuoteEditorModal({
             />
             <Input
               label="Prazo (meses)"
+              disabled={isConfirmed}
               required={!editingQuote}
               type="number"
               min={1}
@@ -577,6 +582,7 @@ export function QuoteEditorModal({
 
           <Textarea
             label="Descrição da obra / escopo"
+            disabled={isConfirmed}
             rows={2}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
@@ -888,7 +894,7 @@ export function QuoteEditorModal({
           </div>
         )}
 
-        <RegisteredBySelect value={actor} onChange={setActor} id="quote-editor-actor" />
+        {!isConfirmed && <RegisteredBySelect value={actor} onChange={setActor} id="quote-editor-actor" />}
 
         {error && (
           <Note variant="danger" title="Verifique os dados">
@@ -900,7 +906,7 @@ export function QuoteEditorModal({
           <Button variant="secondary" onClick={onClose}>
             {isApprovedLocked ? 'Fechar' : 'Cancelar'}
           </Button>
-          <Button type="submit" variant="primary" disabled={saving}>
+          {!isConfirmed && <Button type="submit" variant="primary" disabled={saving}>
             {saving
               ? 'Salvando...'
               : isApprovedLocked
@@ -910,7 +916,7 @@ export function QuoteEditorModal({
                     ? `Salvar versão ${incrementQuoteVersion(editingQuote.version)}`
                     : 'Salvar alterações'
                   : 'Salvar orçamento'}
-          </Button>
+          </Button>}
         </div>
       </form>
     </Modal>

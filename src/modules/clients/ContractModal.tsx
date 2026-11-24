@@ -509,7 +509,21 @@ export function ContractModal({
                     <StatusBadge label={quote.contractSignStatus || 'Aguardando assinatura'} />
                   </div>
 
-                  <Button variant="primary" fullWidth onClick={() => window.print()}>
+                  {linkedProject?.contractPdf && (
+                  <Button variant="primary" fullWidth onClick={() => {
+                    const bytes = linkedProject.contractPdf?.toUint8Array();
+                    if (!bytes) return;
+                    const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: 'application/pdf' }));
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = `contrato-${linkedProject.id}.pdf`;
+                    link.click();
+                    window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+                  }}>
+                    Baixar PDF da confirmação
+                  </Button>
+                )}
+                <Button variant={linkedProject?.contractPdf ? 'secondary' : 'primary'} fullWidth onClick={() => window.print()}>
                     Imprimir / Salvar PDF
                   </Button>
 

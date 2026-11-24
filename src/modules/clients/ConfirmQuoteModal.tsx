@@ -22,7 +22,7 @@ import type {
   ProjectContractKind,
   Quote,
 } from '../../types/pilotis';
-import { formatBRL, formatDateBR as domainFormatDateBR, todayISO } from '../../domain';
+import { formatBRL, formatDateBR as domainFormatDateBR } from '../../domain';
 
 const formatDateBR = (val: string | null | undefined) => domainFormatDateBR(val, '—');
 
@@ -43,10 +43,9 @@ export function ConfirmQuoteModal({
 }) {
   const [clientId, setClientId] = useState('');
   const [contractKind, setContractKind] = useState<ProjectContractKind>('Principal');
-  const [totalValueStr, setTotalValueStr] = useState('');
-  const [downPctStr, setDownPctStr] = useState('20');
-  const [installmentsStr, setInstallmentsStr] = useState('18');
-  const [startDate, setStartDate] = useState(todayISO());
+  const [downPctStr, setDownPctStr] = useState('');
+  const [installmentsStr, setInstallmentsStr] = useState('');
+  const [startDate, setStartDate] = useState('');
   const [actor, setActor] = useState<ActorRole>('Sócio');
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -55,18 +54,16 @@ export function ConfirmQuoteModal({
     if (!open || !quote) return;
     setClientId(quote.clientId || '');
     setContractKind(quote.type === 'Obra satélite' ? 'Satélite' : 'Principal');
-    setTotalValueStr(String(quote.totalValue || 0));
-    setDownPctStr(String(quote.downPaymentPct ?? 20));
-    setInstallmentsStr(String(quote.installmentsCount || 18));
-    setStartDate(todayISO());
+    setDownPctStr(String(quote.downPaymentPct ?? ''));
+    setInstallmentsStr(String(quote.installmentsCount ?? ''));
+    setStartDate('');
     setActor('Sócio');
     setSubmitError(null);
   }, [open, quote]);
 
-  const numericTotal = quote?.status === 'Ganho'
-    ? quote.totalValue
-    : Number(totalValueStr.replace(',', '.'));
-  const numericDownPct = Number(downPctStr.replace(',', '.'));
+  const numericTotal = quote?.totalValue ?? 0;
+  const numericDownPct = downPctStr.trim() ? Number(downPctStr.replace(',', '.')) : NaN;
+  const isApproved = quote?.status === 'Ganho';
   const numericInstallments = Number(installmentsStr);
 
   const validation = useMemo(() => {
@@ -90,7 +87,7 @@ export function ConfirmQuoteModal({
         numericDownPct,
         numericInstallments,
         validation.dataInicioISO
-      );
+      ).filter((installment) => installment.valor > 0);
     } catch {
       return [];
     }
@@ -140,7 +137,7 @@ export function ConfirmQuoteModal({
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={() => { if (!submitting) onClose(); }}
       title={quote ? `Confirmar orçamento · ${quote.code}` : 'Confirmar orçamento'}
       subtitle="Transação atômica: cria a obra, gera parcelas em /parcelas, contrato em PDF, checklist e envia ao Planejamento"
       maxWidth="max-w-3xl"
@@ -155,7 +152,7 @@ export function ConfirmQuoteModal({
 
           {quote.status === 'Ganho' && !quote.projectId && (
             <Note variant="warning" title="Orçamento aprovado com valor congelado">
-              O valor fechado de {formatBRL(quote.totalValue)} está congelado e não pode ser alterado nesta confirmação.
+              O valor fechado de {formatBRL(quote.totalValue)}, o cliente e as condições de pagamento já aprovadas ficam congelados.
             </Note>
           )}
 
@@ -163,6 +160,7 @@ export function ConfirmQuoteModal({
             <Select
               label="Cliente"
               required
+              disabled={isApproved}
               value={clientId}
               onChange={(e) => setClientId(e.target.value)}
             >
@@ -193,9 +191,8 @@ export function ConfirmQuoteModal({
               min={0.01}
               step="0.01"
               required
-              disabled={quote.status === 'Ganho'}
-              value={quote.status === 'Ganho' ? String(quote.totalValue) : totalValueStr}
-              onChange={(e) => setTotalValueStr(e.target.value)}
+              readOnly
+              value={quote.totalValue}
               className="tabular-nums"
             />
             <Input
@@ -203,8 +200,9 @@ export function ConfirmQuoteModal({
               type="number"
               min={0}
               max={100}
-              step="0.5"
+              step="0.01"
               required
+              disabled={isApproved && quote.downPaymentPct != null}
               value={downPctStr}
               onChange={(e) => setDownPctStr(e.target.value)}
               className="tabular-nums"
@@ -216,6 +214,7 @@ export function ConfirmQuoteModal({
               max={36}
               step={1}
               required
+              disabled={isApproved && quote.installmentsCount != null}
               value={installmentsStr}
               onChange={(e) => setInstallmentsStr(e.target.value)}
               className="tabular-nums"
@@ -268,8 +267,8 @@ export function ConfirmQuoteModal({
               Ao confirmar, em uma única transação atômica, o sistema:
             </strong>
             <span>1. Cria a Obra/Contrato ({contractKind}) com status “Contratada” e congela o orçamento como “Ganho”;</span>
-            <span>2. Gera {previewParcelas.length || numericInstallments} parcela(s) (entrada + saldo) em /parcelas (lançamento no Financeiro ao receber), iniciando em {startDate ? formatDateBR(startDate) : '—'};</span>
-            <span>3. Gera o contrato em PDF e abre o checklist obrigatório (Contrato assinado, ART/RRT, Matrícula CNO e RT);</span>
+            <span>2. Gera {previewParcelas.length} parcela(s) (entrada + saldo) em /parcelas (lançamento no Financeiro ao receber), iniciando em {startDate ? formatDateBR(startDate) : '—'};</span>
+            <span>3. Gera o contrato em PDF e abre o checklist obrigatório (Contrato assinado, ART/RRT, Matrícula CNO);</span>
             <span>4. Envia a obra ao Planejamento como “Aguardando modelo de cronograma”;</span>
             <span>5. Grava o registro completo na trilha de auditoria. Se qualquer passo falhar, nada é gravado.</span>
           </div>

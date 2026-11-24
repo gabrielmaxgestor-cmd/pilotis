@@ -48,6 +48,7 @@ import type {
 } from '../types/pilotis';
 
 const formatDateBR = (val: string | null | undefined) => domainFormatDateBR(val, '—');
+import { ConfirmQuoteModal } from './clients/ConfirmQuoteModal';
 import { ContractModal } from './clients/ContractModal';
 import { QuoteEditorModal } from './clients/QuoteEditorModal';
 import { parseContractAddenda, parseVersionHistory } from './clients/quoteHelpers';
@@ -109,6 +110,8 @@ export function ClientsQuotesView({
   const isQuoteModalOpen = quoteModalOpen || Boolean(externalNewQuoteOpen);
 
   // Contract Modal
+  const [confirmingQuoteId, setConfirmingQuoteId] = useState<string | null>(null);
+  const confirmingQuote = data.quotes.find((quote) => quote.id === confirmingQuoteId) ?? null;
   const [contractModalQuoteId, setContractModalQuoteId] = useState<string | null>(null);
 
   // Move stage in Funnel modal
@@ -718,6 +721,11 @@ export function ClientsQuotesView({
           >
             {q.status === 'Ganho' ? 'Detalhes' : 'Editar / Versão'}
           </Button>
+          {!q.projectId && q.status !== 'Perdido' && q.status !== 'Descartado' && (
+            <Button size="sm" variant="primary" onClick={() => setConfirmingQuoteId(q.id)}>
+              Confirmar orçamento
+            </Button>
+          )}
           {(q.status === 'Ganho' || q.projectId) && (
             <Button
               size="sm"
@@ -1311,6 +1319,11 @@ export function ClientsQuotesView({
                       </Button>
 
 
+                      {!activeQuote.projectId && activeQuote.status !== 'Perdido' && activeQuote.status !== 'Descartado' && (
+                        <Button variant="primary" onClick={() => setConfirmingQuoteId(activeQuote.id)}>
+                          Confirmar orçamento
+                        </Button>
+                      )}
                       {activeQuote.status !== 'Ganho' && (
                         <Button
                           variant={activeQuote.projectId ? 'primary' : 'secondary'}
@@ -1980,6 +1993,22 @@ export function ClientsQuotesView({
           });
         }}
         onRequestNewClient={openNewClientModal}
+      />
+
+      <ConfirmQuoteModal
+        open={confirmingQuote !== null}
+        onClose={() => setConfirmingQuoteId(null)}
+        quote={confirmingQuote}
+        uid={uid}
+        clients={data.clients}
+        onConfirmed={(quoteId, result) => {
+          setSelectedQuoteId(quoteId);
+          setContractModalQuoteId(quoteId);
+          showToast({
+            tone: 'success',
+            title: `Obra contratada com ${result.parcelasCount} parcela(s), PDF e checklist.`,
+          });
+        }}
       />
 
       {/* MODAL: CONTRATO (PDF + Status + Checklist + Aditivos) */}

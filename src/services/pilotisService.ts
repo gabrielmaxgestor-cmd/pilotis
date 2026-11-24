@@ -1,4 +1,5 @@
 import {
+  Bytes,
   collection,
   doc,
   getDoc,
@@ -24,7 +25,6 @@ import type {
   Quote,
 } from '../types/pilotis';
 import {
-  addDaysISO,
   addMonthsISO,
   clampStr,
   formatBRL,
@@ -35,6 +35,7 @@ import {
   todayISO,
   validarDadosConfirmacaoOrcamento,
 } from '../domain';
+import { createContractPdf } from '../domain/contractPdf';
 
 const formatDateBR = (val: string | null | undefined) => domainFormatDateBR(val, '—');
 
@@ -490,7 +491,7 @@ export interface ConfirmQuoteParams {
   actor: ActorRole;
   quoteId: string;
   clientId?: string;
-  totalValue?: number;
+  totalValue: number;
   downPaymentPct: number;
   installmentsCount: number;
   startDate: string;
@@ -537,10 +538,17 @@ export async function confirmQuoteAndGenerateProject(
       }
 
       const resolvedClientId = (params.clientId ?? quoteData.clientId ?? '').trim();
-      const resolvedTotalValue =
-        quoteData.status === 'Ganho'
-          ? quoteData.totalValue
-          : (params.totalValue ?? quoteData.totalValue);
+      const resolvedTotalValue = quoteData.totalValue;
+      if (params.totalValue !== resolvedTotalValue) {
+        throw new ConfirmValidationError('O valor do orçamento mudou. Reabra a confirmação e revise os dados.');
+      }
+      if (quoteData.status === 'Ganho' && (
+        resolvedClientId !== quoteData.clientId ||
+        (quoteData.downPaymentPct != null && params.downPaymentPct !== quoteData.downPaymentPct) ||
+        (quoteData.installmentsCount != null && params.installmentsCount !== quoteData.installmentsCount)
+      )) {
+        throw new ConfirmValidationError('O cliente e as condições de pagamento aprovadas estão congelados.');
+      }
 
       const validation = validarDadosConfirmacaoOrcamento({
         clienteId: resolvedClientId,
@@ -568,8 +576,7 @@ export async function confirmQuoteAndGenerateProject(
 
       const resolvedClientName = clampStr(clientData.name || quoteData.clientName, 140);
       const startISO = validation.dataInicioISO;
-      const months = Math.max(1, quoteData.estimatedMonths || 12);
-      const endBaseline = addMonthsISO(startISO, months);
+      const endBaseline = quoteData.estimatedMonths > 0 ? addMonthsISO(startISO, quoteData.estimatedMonths) : '';
       const contractKind: ProjectContractKind =
         params.contractKind || (quoteData.type === 'Obra satélite' ? 'Satélite' : 'Principal');
 
@@ -578,7 +585,21 @@ export async function confirmQuoteAndGenerateProject(
         params.downPaymentPct,
         params.installmentsCount,
         startISO
-      );
+      ).filter((installment) => installment.valor > 0);
+      const settingsSnap = await tx.get(doc(db, 'companySettings', uid));
+      const contractPdf = Bytes.fromUint8Array(createContractPdf({
+        code: quoteData.code,
+        companyName: settingsSnap.data()?.companyName || 'Pilotis Soluções Construtivas',
+        clientName: resolvedClientName,
+        projectName: quoteData.title,
+        contractKind,
+        city: quoteData.city,
+        description: quoteData.description,
+        estimatedMonths: quoteData.estimatedMonths,
+        totalValue: resolvedTotalValue,
+        startDate: startISO,
+        installments: generatedParcelas,
+      }));
 
       // 1. Criar a obra (Obra/Contrato) com status "Contratada" e aguardando modelo no Planejamento
       const projectRef = doc(db, 'projects', projectId);
@@ -592,6 +613,7 @@ export async function confirmQuoteAndGenerateProject(
         contractKind,
         planningStatus: 'Aguardando modelo de cronograma',
         contractValue: resolvedTotalValue,
+        contractPdf,
         downPaymentPct: params.downPaymentPct,
         installmentsCount: params.installmentsCount,
         addendaTotalValue: quoteData.addendaTotalValue || 0,
@@ -632,9 +654,6 @@ export async function confirmQuoteAndGenerateProject(
         updatedBy: actor,
         updatedAt: serverTimestamp(),
       };
-      if (quoteData.status !== 'Ganho' && resolvedTotalValue !== quoteData.totalValue) {
-        quoteUpdate.totalValue = resolvedTotalValue;
-      }
       tx.update(quoteRef, quoteUpdate);
 
       // 3. Atualizar cliente para Ativo
@@ -672,12 +691,11 @@ export async function confirmQuoteAndGenerateProject(
         });
       }
 
-      // 5. Gerar checklist obrigatório de documentos (Contrato, ART/RRT, CNO e RT)
+      // 5. Gerar checklist de documentos da obra
       const requiredDocs = [
         'Contrato assinado',
         'ART/RRT',
         'Matrícula CNO',
-        'Documentos do responsável técnico',
       ];
       for (const docTitle of requiredDocs) {
         tx.set(doc(db, 'complianceItems', generateId('cmp')), {
@@ -688,7 +706,7 @@ export async function confirmQuoteAndGenerateProject(
           projectId,
           projectName: clampStr(quoteData.title, 160),
           competence: '',
-          dueDate: addDaysISO(startISO, 15),
+          dueDate: '',
           issuedDate: '',
           fileName: '',
           mandatory: true,
@@ -708,7 +726,7 @@ export async function confirmQuoteAndGenerateProject(
         action: 'Criação',
         entityType: 'quote->project',
         summary: clampStr(
-          `Orçamento ${quoteData.code} confirmado (${contractKind}): obra contratada, ${generatedParcelas.length} parcela(s) em /parcelas, checklist e envio ao Planejamento.`,
+          `Orçamento ${quoteData.code} confirmado (${contractKind}): obra contratada, ${generatedParcelas.length} parcela(s) em /parcelas, contrato em PDF, checklist e envio ao Planejamento.`,
           240
         ),
         beforeValue: clampStr(`Status: ${quoteData.status}`, 240),

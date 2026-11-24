@@ -1,3 +1,5 @@
+import type { Bytes } from 'firebase/firestore';
+
 export type ActorRole = 'Sócio' | 'Responsável administrativo';
 
 export type ModuleKey =
@@ -112,6 +114,7 @@ export interface Project extends AuditMeta {
   contractKind?: ProjectContractKind;
   planningStatus?: ProjectPlanningStatus;
   contractValue: number;
+  contractPdf?: Bytes;
   downPaymentPct?: number;
   installmentsCount?: number;
   addendaTotalValue?: number;
