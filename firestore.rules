@@ -121,7 +121,7 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'ownerUid', 'code', 'clientId', 'clientName', 'title', 'type', 'city', 'areaM2',
           'estimatedMonths', 'validityDays', 'description', 'origin', 'laborCost', 'subcontractCost',
-          'equipmentCost', 'bdiCost', 'taxCost', 'totalValue', 'downPaymentPct', 'installmentsCount',
+          'equipmentCost', 'bdiCost', 'taxCost', 'pricingMarginPct', 'totalValue', 'downPaymentPct', 'installmentsCount',
           'probabilityPct', 'status', 'discardReason', 'lossReason', 'version', 'versionHistory',
           'contractSignStatus', 'contractSignedAt', 'contractAddenda', 'addendaTotalValue',
           'projectId', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
@@ -145,6 +145,7 @@ service cloud.firestore {
         && (!('equipmentCost' in data) || isValidNonNegNum(data.equipmentCost))
         && (!('bdiCost' in data) || isValidNonNegNum(data.bdiCost))
         && (!('taxCost' in data) || isValidNonNegNum(data.taxCost))
+        && (!('pricingMarginPct' in data) || (isValidNonNegNum(data.pricingMarginPct) && data.pricingMarginPct <= 99.99))
         && (!('downPaymentPct' in data) || (isValidNonNegNum(data.downPaymentPct) && data.downPaymentPct <= 100))
         && (!('installmentsCount' in data) || (isValidNonNegNum(data.installmentsCount) && data.installmentsCount <= 36))
         && (!('probabilityPct' in data) || (isValidNonNegNum(data.probabilityPct) && data.probabilityPct <= 100))
@@ -518,6 +519,7 @@ service cloud.firestore {
             && (!('equipmentCost' in existing()) || incoming().equipmentCost == existing().equipmentCost)
             && (!('bdiCost' in existing()) || incoming().bdiCost == existing().bdiCost)
             && (!('taxCost' in existing()) || incoming().taxCost == existing().taxCost)
+            && incoming().get('pricingMarginPct', null) == existing().get('pricingMarginPct', null)
           )
         );
       allow delete: if isValidId(quoteId) && isSignedIn() && existing().ownerUid == request.auth.uid;

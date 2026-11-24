@@ -81,6 +81,7 @@ export interface Quote extends AuditMeta {
   equipmentCost: number;
   bdiCost: number;
   taxCost: number;
+  pricingMarginPct?: number;
   totalValue: number;
   downPaymentPct: number;
   installmentsCount: number;

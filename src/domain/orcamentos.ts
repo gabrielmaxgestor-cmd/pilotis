@@ -219,8 +219,8 @@ export function simularPagamentoOrcamento(
     input.nParcelas,
     input.dataInicio,
   );
-  const entryItem = input.entradaPct > 0 ? parcelas[0] : null;
-  const installmentItems = entryItem ? parcelas.slice(1) : parcelas;
+  const entryItem = parcelas.find((installment) => installment.numero === 0);
+  const installmentItems = parcelas.filter((installment) => installment.numero > 0);
   const valorEntrada = entryItem ? entryItem.valor : 0;
   const saldoParcelado = roundCents(input.valorTotal - valorEntrada);
   const primeiraParcela = installmentItems[0]?.valor ?? 0;
