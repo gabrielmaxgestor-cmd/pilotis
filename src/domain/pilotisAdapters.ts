@@ -44,6 +44,10 @@ import {
   type ExtratoLinhaEntrada,
   type ResumoDividasResult,
   type ResumoFinanceiroPeriodoResult,
+  deduplicarReceitasEParcelas,
+  isRealizedCashEntry,
+  installmentProgress,
+  signedCashAmount,
 } from './financeiro';
 import { monthKey, roundCents, todayISO } from './formatters';
 import {
@@ -106,6 +110,8 @@ export function toDomainTransactions(
     obraId: t.projectId,
     valor: t.amount,
     previsto: t.isForecast,
+    originalmentePrevisto: t.wasForecast,
+    statementKey: t.statementKey,
     status: t.status,
     notaFiscal: t.invoiceStatus || 'Não se aplica',
     formaPagamento: t.paymentMethod || '',
@@ -343,17 +349,14 @@ export function calcularSaldoInicialCaixa(
   dataBase = todayISO(),
 ): number | undefined {
   const baseMonth = monthKey(dataBase);
-  const priorRealizedTxs = transactions.filter(
-    (t) =>
-      !t.isForecast &&
-      t.entryKind !== 'loan' &&
-      (t.status === 'Recebido' || t.status === 'Pago') &&
-      monthKey(t.date) < baseMonth,
+  const { lancamentosUnicos } = deduplicarReceitasEParcelas(toDomainTransactions(transactions), []);
+  const priorRealizedTxs = lancamentosUnicos.filter(
+    (entry) => isRealizedCashEntry(entry) && monthKey(entry.data) < baseMonth,
   );
   if (priorRealizedTxs.length === 0) return undefined;
   return roundCents(
     priorRealizedTxs.reduce(
-      (sum, t) => (t.entryKind === 'income' ? sum + t.amount : sum - t.amount),
+      (sum, entry) => sum + signedCashAmount(entry),
       0,
     ),
   );
@@ -467,7 +470,9 @@ export function calcularPendenciasSegurancaEquipe(
 }
 
 export function calcularResumoDividas(debts: Debt[]): ResumoDividasResult {
-  return resumoDividas(toDomainDebts(debts));
+  const summary = resumoDividas(toDomainDebts(debts));
+  const hasUnknownCost = debts.some((debt) => debt.status !== 'Quitada' && debt.monthlyCost == null);
+  return hasUnknownCost ? { ...summary, custoMensal: null } : summary;
 }
 
 export function calcularCaminhoCriticoObra(
@@ -589,4 +594,8 @@ export function conciliarExtratoPilotis(
     toDomainInstallments(data.installments),
     data.projects.map((p) => ({ id: p.id, nome: p.name })),
   );
+}
+
+export function calculateInstallmentProgress(installments: Installment[], projectId: string) {
+  return installmentProgress(toDomainInstallments(installments), projectId);
 }

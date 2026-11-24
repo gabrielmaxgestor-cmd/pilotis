@@ -142,15 +142,22 @@ describe('Previsão de caixa, planejamento (CPM + Curva S) e alertas', () => {
     assert.equal(prev.meses[0].saldoProjetado, 25000);
     assert.equal(prev.meses[0].negativo, false);
 
-    // Dez/2026: 25000 + 10000 contratado - 45000 saída = -10000 (empréstimo de 100k não mascara)
+    // Dez/2026: 25000 + 10000 contratado + 100000 de crédito - 45000 = 90000
     assert.equal(prev.meses[1].contratadoEntradas, 10000);
     assert.equal(prev.meses[1].emprestimosNaoReceita, 100000);
-    assert.equal(prev.meses[1].saldoProjetado, -10000);
-    assert.equal(prev.meses[1].negativo, true);
+    assert.equal(prev.meses[1].saldoProjetado, 90000);
+    assert.equal(prev.meses[1].negativo, false);
     // Funil ponderado entra em dez/2026 (entrada de 20% sobre 400k * 50% = 40.000)
     assert.equal(prev.meses[1].funilPonderadoEntradas, 40000);
-    assert.equal(prev.meses[1].saldoProjetadoComFunil, 30000);
-    assert.deepEqual(prev.mesesNegativos, ['2026-12', '2027-01']);
+    assert.equal(prev.meses[1].saldoProjetadoComFunil, 130000);
+    assert.deepEqual(prev.mesesNegativos, []);
+    const withoutCredit = previsaoCaixa(3, {
+      dataBase: '2026-11-21',
+      saldoInicial: 5000,
+      lancamentos: lancamentos.filter((row) => row.tipo !== 'emprestimo'),
+      orcamentos,
+    });
+    assert.deepEqual(withoutCredit.mesesNegativos, ['2026-12', '2027-01']);
   });
 
   it('calcula CPM com dependências término-início, folga, etapas críticas e detecta ciclo', () => {

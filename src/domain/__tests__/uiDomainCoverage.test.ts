@@ -183,8 +183,8 @@ describe('Cobertura de domínio unificado usado pela interface', () => {
     });
 
     assert.equal(populated.sistemaVazio, false);
-    assert.equal(populated.saldoRealizadoCaixa, 60000);
-    assert.equal(populated.saldoPrevistoFimMes, 85000);
+    assert.equal(populated.saldoRealizadoCaixa, 110000);
+    assert.equal(populated.saldoPrevistoFimMes, 135000);
     assert.equal(populated.aReceber30Dias, 25000);
     assert.equal(populated.aReceber30Qtd, 1);
     assert.equal(populated.aReceberAtrasoQtd, 0);

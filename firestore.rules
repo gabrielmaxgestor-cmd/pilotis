@@ -280,7 +280,7 @@ service cloud.firestore {
       ])
         && data.keys().hasOnly([
           'ownerUid', 'date', 'dueDate', 'description', 'entryKind', 'category', 'projectId', 'projectName',
-          'amount', 'isForecast', 'status', 'invoiceStatus', 'paymentMethod', 'receiptRef', 'installmentLabel',
+          'amount', 'isForecast', 'wasForecast', 'statementKey', 'status', 'invoiceStatus', 'paymentMethod', 'receiptRef', 'receiptFile', 'installmentLabel',
           'installmentId', 'quoteId', 'debtId', 'source', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
         ])
         && hasAuditFields(data)
@@ -298,6 +298,17 @@ service cloud.firestore {
         && (!('invoiceStatus' in data) || data.invoiceStatus in ['Emitida', 'A emitir', 'Não emitida', 'Não se aplica'])
         && (!('paymentMethod' in data) || isValidStr(data.paymentMethod, 60))
         && (!('receiptRef' in data) || isValidStr(data.receiptRef, 160))
+        && (!('wasForecast' in data) || data.wasForecast is bool)
+        && (!('statementKey' in data) || isValidNonEmptyStr(data.statementKey, 512))
+        && (!('receiptFile' in data) || (
+          data.receiptFile is map
+          && data.receiptFile.keys().hasOnly(['name', 'mimeType', 'content'])
+          && isValidNonEmptyStr(data.receiptFile.name, 160)
+          && data.receiptFile.mimeType in ['application/pdf', 'image/png', 'image/jpeg']
+          && data.receiptFile.content is bytes
+          && data.receiptFile.content.size() > 0
+          && data.receiptFile.content.size() <= 716800
+        ))
         && (!('installmentLabel' in data) || isValidStr(data.installmentLabel, 40))
         && (!('installmentId' in data) || isValidStr(data.installmentId, 128))
         && (!('quoteId' in data) || isValidStr(data.quoteId, 128))

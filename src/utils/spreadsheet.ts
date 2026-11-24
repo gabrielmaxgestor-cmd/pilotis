@@ -2,6 +2,7 @@ import type { CellObject, Sheet, SheetData } from 'write-excel-file/browser';
 import type { PilotisDataState, TransactionKind } from '../types/pilotis';
 import {
   classificarLancamento,
+  isLoanKeywordPresent,
   formatDateBR as domainFormatDateBR,
   formatTimestampBR,
   normalizeBRDateToISO,
@@ -291,7 +292,9 @@ export function buildImportPreviewRows(
     const classified = classificarLancamento({
       descricao: rawDesc || 'Lançamento da planilha',
       categoria: rawCat || 'Outros',
-      tipoInformado: taggedAsRevenue ? 'receita' : 'despesa',
+      tipoInformado: !isNegative && isLoanKeywordPresent(hintJoined)
+        ? 'emprestimo'
+        : taggedAsRevenue ? 'receita' : 'despesa',
       valor: absAmount,
       previsto: false,
     });

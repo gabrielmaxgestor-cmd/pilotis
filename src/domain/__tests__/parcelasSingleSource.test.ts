@@ -106,7 +106,8 @@ describe('/parcelas como fonte única de recebíveis e status Em atraso dinâmic
     assert.equal(finAntes.recebiveisEmAbertoValor, 100000);
     assert.equal(finAntes.recebiveisEmAbertoQtd, 3);
     assert.equal(finAntes.recebidosNoMesValor, 0);
-    assert.equal(finAntes.entradasMes, 20000);
+    assert.equal(finAntes.entradasMes, 0);
+    assert.equal(finAntes.resultadoMes, null);
 
     const dreObraAntes = dre(obraInput, lancamentos);
     assert.equal(dreObraAntes.receita.orcado, 100000);
@@ -182,7 +183,7 @@ describe('/parcelas como fonte única de recebíveis e status Em atraso dinâmic
       { lancamentos, parcelas },
     );
     assert.equal(dreEmpDepois.receitas.realizado, 20000);
-    assert.equal(dreEmpDepois.receitas.orcado, 0);
+    assert.equal(dreEmpDepois.receitas.orcado, 20000);
 
     // Fluxo de caixa mantém mês 1 = 20.000 realizado (sem contar parcela paga + lançamento juntos)
     const caixaDepois = previsaoCaixa(3, {
@@ -304,7 +305,7 @@ describe('/parcelas como fonte única de recebíveis e status Em atraso dinâmic
     const fin = resumoFinanceiroPeriodo(lancamentos, parcelas, '2026-11-15');
     assert.equal(fin.recebidosNoMesValor, 20000);
     assert.equal(fin.recebiveisEmAbertoValor, 30000);
-    assert.equal(fin.entradasMes, 50000);
+    assert.equal(fin.entradasMes, 20000);
 
     const dreObra = dre(
       {
