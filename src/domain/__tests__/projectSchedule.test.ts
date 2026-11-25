@@ -6,9 +6,13 @@ import {
   calcularDreObra,
   describeScheduleCycle,
   getProjectSchedule,
+  getRecordedScheduleProgress,
+  getScheduleBaselineStages,
+  scheduleDeliveryVariance,
+  validateReplanJustification,
   getWorkPackageBudget,
 } from '../index';
-import type { Project, ProjectStage } from '../../types/pilotis';
+import type { Project, ProjectStage, ScheduleBaseline, ScheduleProgress } from '../../types/pilotis';
 
 const audit = { ownerUid: 'test', createdBy: 'Sócio', updatedBy: 'Sócio' } as const;
 const project: Project = {
@@ -69,4 +73,50 @@ test('o índice usa o plano na data de referência e o progresso registrado', ()
   assert.equal(progress.progressoPlanejadoPct, 50);
   assert.equal(progress.progressoRealizadoPct, 75);
   assert.equal(progress.indicePrazo, 1.5);
+});
+
+test('o atraso crítico muda a entrega e a nova versão mantém a referência original', () => {
+  const original = [stage('1'), stage('2', { startWeek: 2, baselineStartWeek: 2, dependsOn: ['1'] })];
+  const changed = [{ ...original[0], durationWeeks: 3 }, original[1]];
+  const shifted = getProjectSchedule(project, changed, '2026-01-12');
+
+  assert.equal(shifted.forecastEndDate, '2026-02-09');
+  assert.equal(scheduleDeliveryVariance(shifted.forecastEndDate!, project.baselineEndDate), 7);
+  assert.deepEqual(getScheduleBaselineStages(changed), getScheduleBaselineStages(original));
+  assert.equal(getScheduleBaselineStages(changed, shifted)[1].startWeek, 3);
+  assert.equal(project.baselineEndDate, '2026-02-02');
+});
+
+test('o replanejamento exige justificativa preenchida', () => {
+  assert.throws(() => validateReplanJustification('   \n\t'), /Informe a justificativa/);
+  assert.throws(() => validateReplanJustification('x'.repeat(501)), /500/);
+  assert.equal(validateReplanJustification('  Aguardar os materiais.  '), 'Aguardar os materiais.');
+});
+
+test('a curva planejada continua usando o plano original quando novos pacotes são incluídos', () => {
+  const initial = [stage('1')];
+  const baseline: ScheduleBaseline = {
+    ...audit, id: 'b1', projectId: project.id, version: 1, justification: '',
+    endDate: '2026-01-19', recordedDate: '2026-01-05', stages: getScheduleBaselineStages(initial),
+  };
+  const revised = [...initial, stage('2', { startWeek: 2, baselineStartWeek: 2 })];
+  assert.equal(calcularCurvaSObra(revised, 2, baseline).progressoPlanejadoPct, 100);
+  assert.equal(calcularCurvaSObra(revised, 2).progressoPlanejadoPct, 50);
+});
+
+test('a curva realizada conserva o último registro de cada dia e o progresso corrente', () => {
+  const sample = (date: string, scheduleRevision: number, progressPct: number): ScheduleProgress => ({
+    ...audit, id: String(scheduleRevision), projectId: project.id, date, scheduleRevision, progressPct,
+  });
+  const samples = [
+    sample('2026-01-12', 3, 30),
+    sample('2026-01-12', 2, 20),
+    sample('2026-01-26', 4, 45),
+    sample('2026-02-02', 5, 95),
+    { ...sample('2026-01-19', 8, 95), projectId: 'another' },
+  ];
+  assert.deepEqual(getRecordedScheduleProgress(project, samples, '2026-01-26', 50), [
+    { date: '2026-01-12', week: 1, progressPct: 30 },
+    { date: '2026-01-26', week: 3, progressPct: 50 },
+  ]);
 });

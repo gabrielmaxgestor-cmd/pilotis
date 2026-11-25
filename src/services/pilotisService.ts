@@ -32,14 +32,20 @@ import type {
   ProjectStage,
   ProjectType,
   Quote,
+  ScheduleBaseline,
 } from '../types/pilotis';
 import {
+  addDaysISO,
   addMonthsISO,
   allocateScheduleBudget,
+  calcularCurvaSObra,
   calculateTeamPayroll,
   describeScheduleCycle,
   diffDaysISO,
   getProjectSchedule,
+  getScheduleBaselineStages,
+  planningTodayISO,
+  validateReplanJustification,
   roundCents,
   weekStartingOn,
   clampStr,
@@ -188,6 +194,8 @@ export function subscribePilotisCollections(
     { colName: 'projects', stateKey: 'projects' },
     { colName: 'parcelas', stateKey: 'installments' },
     { colName: 'stages', stateKey: 'stages' },
+    { colName: 'baselines', stateKey: 'baselines' },
+    { colName: 'scheduleProgress', stateKey: 'scheduleProgress' },
     { colName: 'dailyLogs', stateKey: 'dailyLogs' },
     { colName: 'transactions', stateKey: 'transactions' },
     { colName: 'debts', stateKey: 'debts' },
@@ -858,6 +866,25 @@ function buildScheduleStages(
   };
 }
 
+function scheduleBaselineRef(projectId: string, version: number) {
+  return doc(db, 'baselines', `${projectId}_v${version}`);
+}
+
+function scheduleBaselineData(
+  projectId: string,
+  stages: ScheduleBaseline['stages'],
+  endDate: string,
+  uid: string,
+  actor: ActorRole,
+  version = 1,
+  justification = '',
+): Omit<ScheduleBaseline, 'id'> {
+  return {
+    ...auditFields(uid, actor), projectId, version, recordedDate: planningTodayISO(),
+    endDate, justification, stages,
+  };
+}
+
 export async function applyScheduleTemplateToProject(params: {
   uid: string;
   actor: ActorRole;
@@ -891,14 +918,87 @@ export async function applyScheduleTemplateToProject(params: {
       status: 'Em execução',
       planningStatus: 'Cronograma criado',
       scheduleRevision: (current.scheduleRevision ?? 0) + 1,
+      scheduleBaselineVersion: 1,
       scheduleStageIds: stages.map((stage) => stage.id),
       updatedBy: actor,
       updatedAt: serverTimestamp(),
     });
+    tx.set(scheduleBaselineRef(project.id, 1), scheduleBaselineData(project.id, getScheduleBaselineStages(stages), endDate, uid, actor));
     tx.set(doc(db, 'auditLogs', generateId('aud')), {
       ownerUid: uid, registeredBy: actor, action: 'Atualização', entityType: 'projects',
       summary: clampStr(`Modelo "${templateType}" aplicado à obra ${current.name} (${stages.length} etapas).`, 240),
       createdAt: serverTimestamp(),
+    });
+  });
+}
+
+async function readProjectStages(tx: Transaction, project: Project, knownStages: ProjectStage[]) {
+  const ids = project.scheduleStageIds ?? knownStages.map((stage) => stage.id);
+  const snapshots = await Promise.all(ids.map((id) => tx.get(doc(db, 'stages', id))));
+  const stages = snapshots.filter((snapshot) => snapshot.exists()).map((snapshot) => (
+    { ...snapshot.data(), id: snapshot.id } as ProjectStage
+  ));
+  if (stages.some((stage) => stage.projectId !== project.id)) throw new Error('Há etapas vinculadas a outra obra.');
+  return stages;
+}
+
+export async function replanProjectSchedule(params: {
+  uid: string;
+  actor: ActorRole;
+  project: Project;
+  knownStages: ProjectStage[];
+  justification: string;
+}): Promise<void> {
+  const { uid, actor, project, knownStages } = params;
+  const justification = validateReplanJustification(params.justification);
+  const projectRef = doc(db, 'projects', project.id);
+
+  await runTransaction(db, async (tx) => {
+    const snapshot = await tx.get(projectRef);
+    const current = { ...snapshot.data(), id: project.id } as Project;
+    if (!snapshot.exists() || current.ownerUid !== uid) throw new Error('Obra indisponível.');
+    if ((current.scheduleRevision ?? 0) !== (project.scheduleRevision ?? 0)) {
+      throw new Error('O cronograma foi atualizado. Reabra o replanejamento para revisar as datas.');
+    }
+
+    const stages = await readProjectStages(tx, current, knownStages);
+    const previousVersion = current.scheduleBaselineVersion ?? 1;
+    const previousSnapshot = current.scheduleBaselineVersion ? await tx.get(scheduleBaselineRef(current.id, previousVersion)) : null;
+    const previousBaseline = previousSnapshot?.data() as Omit<ScheduleBaseline, 'id'> | undefined;
+    const schedule = getProjectSchedule(current, stages);
+    const cycle = describeScheduleCycle(stages, schedule.criticalPath);
+    if (cycle) throw new Error(cycle);
+    const endDate = schedule.forecastEndDate;
+    if (!endDate) throw new Error('Cadastre as etapas e a data de início antes de replanejar.');
+
+    if (previousVersion === 1 && !previousBaseline) {
+      const startDate = current.startDate;
+      const originalStages = getScheduleBaselineStages(stages);
+      const originalWeeks = Math.max(0, ...originalStages.map((stage) => stage.startWeek + stage.durationWeeks));
+      const originalEndDate = isValidISODate(current.baselineEndDate)
+        ? current.baselineEndDate
+        : addDaysISO(startDate, Math.ceil(originalWeeks * 7));
+      tx.set(scheduleBaselineRef(current.id, 1), scheduleBaselineData(current.id, originalStages, originalEndDate, uid, actor));
+    } else if (!previousBaseline) {
+      throw new Error('A versão anterior está indisponível. Reabra o cronograma para revisar o histórico.');
+    }
+
+    const version = previousVersion + 1;
+    tx.set(scheduleBaselineRef(current.id, version), scheduleBaselineData(
+      current.id, getScheduleBaselineStages(stages, schedule), endDate, uid, actor, version, justification,
+    ));
+    tx.update(projectRef, {
+      scheduleBaselineVersion: version,
+      scheduleRevision: (current.scheduleRevision ?? 0) + 1,
+      scheduleStageIds: stages.map((stage) => stage.id),
+      forecastEndDate: endDate,
+      updatedBy: actor, updatedAt: serverTimestamp(),
+    });
+    tx.set(doc(db, 'auditLogs', generateId('aud')), {
+      ownerUid: uid, registeredBy: actor, action: 'Atualização', entityType: 'projects',
+      summary: clampStr(`Cronograma replanejado · ${current.name} · versão ${version}`, 240),
+      beforeValue: formatDateBR(previousBaseline?.endDate ?? current.baselineEndDate),
+      afterValue: formatDateBR(endDate), createdAt: serverTimestamp(),
     });
   });
 }
@@ -929,12 +1029,7 @@ export async function saveProjectStage(params: {
     if ((current.scheduleRevision ?? 0) !== (project.scheduleRevision ?? 0)) {
       throw new Error('O cronograma foi atualizado. Feche e reabra a etapa para revisar a versão atual.');
     }
-    const ids = current.scheduleStageIds ?? knownStages.map((stage) => stage.id);
-    const snapshots = await Promise.all(ids.map((id) => tx.get(doc(db, 'stages', id))));
-    const stages = snapshots.filter((snapshot) => snapshot.exists()).map((snapshot) => (
-      { ...snapshot.data(), id: snapshot.id } as ProjectStage
-    ));
-    if (stages.some((stage) => stage.projectId !== project.id)) throw new Error('Há etapas vinculadas a outra obra.');
+    const stages = await readProjectStages(tx, current, knownStages);
     const previous = stages.find((stage) => stage.id === stageId);
     if (params.stageId && !previous) throw new Error('Etapa indisponível.');
     const others = stages.filter((stage) => stage.id !== stageId);
@@ -944,8 +1039,9 @@ export async function saveProjectStage(params: {
     if (payload.dependsOn.some((id) => !stages.some((stage) => stage.id === id))) {
       throw new Error('Uma etapa predecessora está indisponível. Revise as dependências.');
     }
+    const baselineBudgetedCost = previous?.baselineBudgetedCost ?? previous?.budgetedCost ?? payload.budgetedCost;
     const candidate = {
-      ...payload, id: stageId, ownerUid: uid,
+      ...payload, baselineBudgetedCost, id: stageId, ownerUid: uid,
       createdBy: previous?.createdBy ?? actor, updatedBy: actor,
     };
     const nextStages = [...others, candidate];
@@ -961,7 +1057,7 @@ export async function saveProjectStage(params: {
         ...payload,
         baselineStartWeek: previous.baselineStartWeek ?? previous.startWeek ?? payload.startWeek,
         baselineDurationWeeks: previous.baselineDurationWeeks ?? previous.durationWeeks ?? payload.durationWeeks,
-        baselineBudgetedCost: previous.baselineBudgetedCost ?? previous.budgetedCost ?? payload.budgetedCost,
+        baselineBudgetedCost,
         updatedBy: actor, updatedAt: serverTimestamp(),
       });
     } else {
@@ -971,9 +1067,19 @@ export async function saveProjectStage(params: {
         ...auditFields(uid, actor),
       });
     }
+    const scheduleRevision = (current.scheduleRevision ?? 0) + 1;
+    if (!previous || candidate.progressPct !== previous.progressPct) {
+      const progress = calcularCurvaSObra(nextStages, schedule.referenceWeek, undefined, false);
+      if (progress.possuiDados) {
+        tx.set(doc(db, 'scheduleProgress', `${project.id}_r${scheduleRevision}`), {
+          ...auditFields(uid, actor), projectId: project.id, scheduleRevision,
+          date: planningTodayISO(), progressPct: progress.progressoRealizadoPct,
+        });
+      }
+    }
     tx.update(projectRef, {
       forecastEndDate: schedule.forecastEndDate ?? current.forecastEndDate,
-      scheduleRevision: (current.scheduleRevision ?? 0) + 1,
+      scheduleRevision,
       scheduleStageIds: nextStages.map((stage) => stage.id),
       updatedBy: actor,
       updatedAt: serverTimestamp(),
@@ -1304,11 +1410,12 @@ export async function createProjectFromTemplate(
   const batch = writeBatch(db);
   batch.set(doc(db, 'projects', id), {
     ...record, baselineEndDate: endDate, forecastEndDate: endDate,
-    scheduleRevision: 1, scheduleStageIds: stages.map((stage) => stage.id),
+    scheduleRevision: 1, scheduleBaselineVersion: 1, scheduleStageIds: stages.map((stage) => stage.id),
   });
   for (const { id, ...stage } of stages) {
     batch.set(doc(db, 'stages', id), { ...stage, ...auditFields(uid, actor) });
   }
+  batch.set(scheduleBaselineRef(projectId, 1), scheduleBaselineData(projectId, getScheduleBaselineStages(stages), endDate, uid, actor));
   batch.set(doc(db, 'auditLogs', generateId('aud')), {
     ownerUid: uid, registeredBy: actor, action: 'Criação', entityType: 'projects',
     summary: clampStr(`Obra (${contractKind}) criada a partir do modelo ${params.type}: ${params.name}`, 240),

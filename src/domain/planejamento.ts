@@ -225,6 +225,8 @@ export function curvaS(
   >,
   baseline: BaselineRecord | BaselineEtapaItem[] | null | undefined,
   semanaReferencia?: number,
+  includePoints = true,
+  restrictPlanToBaseline = false,
 ): CurvaSResult {
   const etapasAtivas = etapas.filter((e) => !e.marco || e.custoOrcado > 0 || e.duracaoSemanas > 0);
   if (etapasAtivas.length === 0) {
@@ -267,6 +269,16 @@ export function curvaS(
     };
   });
 
+  const plannedStages = restrictPlanToBaseline ? baselineItems
+    .filter((stage) => stage.duracaoBaselineSemanas > 0 || stage.custoOrcadoBaseline > 0)
+    .map((stage) => ({
+      baseStart: stage.semanaInicioBaseline,
+      baseDur: stage.duracaoBaselineSemanas,
+      weight: stage.custoOrcadoBaseline || stage.duracaoBaselineSemanas || 1,
+    })) : normalized;
+  const plannedWeight = plannedStages.reduce((sum, stage) => sum + stage.weight, 0);
+  for (const stage of plannedStages) maxWeek = Math.max(maxWeek, stage.baseStart + stage.baseDur);
+
   const maxWeekInt = Math.max(1, Math.ceil(maxWeek));
   const refWeek =
     semanaReferencia !== undefined
@@ -275,7 +287,7 @@ export function curvaS(
 
   const computePlannedAtWeek = (week: number): number => {
     let accWeight = 0;
-    for (const st of normalized) {
+    for (const st of plannedStages) {
       let ratio = 0;
       if (st.baseDur === 0) {
         ratio = week >= st.baseStart ? 1 : 0;
@@ -288,7 +300,7 @@ export function curvaS(
       }
       accWeight += st.weight * ratio;
     }
-    return totalWeight > 0 ? roundCents((accWeight / totalWeight) * 100) : 0;
+    return plannedWeight > 0 ? roundCents((accWeight / plannedWeight) * 100) : 0;
   };
 
   const computeRealizedAtWeek = (week: number): number => {
@@ -309,7 +321,7 @@ export function curvaS(
   };
 
   const pontos: PontoCurvaS[] = [];
-  for (let w = 0; w <= maxWeekInt; w++) {
+  for (let w = 0; includePoints && w <= maxWeekInt; w++) {
     pontos.push({
       semana: w,
       planejadoPct: computePlannedAtWeek(w),

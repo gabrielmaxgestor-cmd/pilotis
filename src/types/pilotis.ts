@@ -114,6 +114,7 @@ export interface Project extends AuditMeta {
   contractKind?: ProjectContractKind;
   planningStatus?: ProjectPlanningStatus;
   scheduleRevision?: number;
+  scheduleBaselineVersion?: number;
   scheduleStageIds?: string[];
   contractValue: number;
   contractPdf?: Bytes;
@@ -163,6 +164,31 @@ export interface ProjectStage extends AuditMeta {
   delayCategory: string;
   delayJustification: string;
   checklistCompleted: string[];
+}
+
+export interface ScheduleBaselineStage {
+  stageId: string;
+  startWeek: number;
+  durationWeeks: number;
+  budgetedCost: number;
+}
+
+export interface ScheduleBaseline extends AuditMeta {
+  id: string;
+  projectId: string;
+  version: number;
+  recordedDate: string;
+  endDate: string;
+  justification: string;
+  stages: ScheduleBaselineStage[];
+}
+
+export interface ScheduleProgress extends AuditMeta {
+  id: string;
+  projectId: string;
+  scheduleRevision: number;
+  date: string;
+  progressPct: number;
 }
 
 export type WeatherType = 'Sol' | 'Chuva fraca' | 'Chuva forte';
@@ -390,6 +416,8 @@ export interface PilotisDataState {
   projects: Project[];
   installments: Installment[];
   stages: ProjectStage[];
+  baselines?: ScheduleBaseline[];
+  scheduleProgress?: ScheduleProgress[];
   dailyLogs: DailyLog[];
   transactions: FinancialTransaction[];
   debts: Debt[];

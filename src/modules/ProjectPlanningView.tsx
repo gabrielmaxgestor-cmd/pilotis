@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { ProjectScheduleView, ScheduleProgressChart } from './ProjectScheduleView';
 import {
   AlertNote,
   EmptySection,
@@ -31,7 +32,9 @@ import {
   calcularCurvaSObra,
   describeScheduleCycle,
   getProjectSchedule,
+  getRecordedScheduleProgress,
   getWorkPackageBudget,
+  planningTodayISO,
   roundCents,
   calcularDreObra,
   calculateTeamPayroll,
@@ -219,22 +222,24 @@ export function ProjectPlanningView({
       activeProject.status === 'Contratada' && activeProject.planningStatus !== 'Cronograma criado' && projectStages.length === 0
   );
 
+  const scheduleDate = planningTodayISO();
   const schedule = useMemo(
-    () => activeProject ? getProjectSchedule(activeProject, projectStages) : null,
-    [activeProject, projectStages],
+    () => activeProject ? getProjectSchedule(activeProject, projectStages, scheduleDate) : null,
+    [activeProject, projectStages, scheduleDate],
   );
+  const originalBaseline = data.baselines?.find((baseline) => baseline.projectId === activeProject?.id && baseline.version === 1);
   const criticalIds = new Set(schedule?.criticalPath.etapasCriticas ?? []);
   const projectProgress = activeProject ? calcularProgressoObra(activeProject.id, projectStages) : null;
-  const curvaSData = calcularCurvaSObra(projectStages, schedule?.referenceWeek);
+  const curvaSData = useMemo(() => calcularCurvaSObra(
+    projectStages, schedule?.referenceWeek, originalBaseline, tab === 'Visão geral',
+  ), [projectStages, schedule?.referenceWeek, originalBaseline, tab]);
+  const progressObservations = activeProject && tab === 'Visão geral' && curvaSData.possuiDados
+    ? getRecordedScheduleProgress(activeProject, data.scheduleProgress ?? [], scheduleDate, curvaSData.progressoRealizadoPct)
+    : [];
   const delayedStages = projectStages.filter((stage) => (
     (schedule?.details.get(stage.id)?.terminoMaisCedo ?? stage.startWeek + stage.durationWeeks)
     > stage.baselineStartWeek + stage.baselineDurationWeeks
   ));
-  const totalWeeks = Math.max(
-    1, schedule?.criticalPath.duracaoTotal ?? 0,
-    ...projectStages.map((s) => s.baselineStartWeek + s.baselineDurationWeeks),
-  );
-  const stagesById = new Map(projectStages.map((stage) => [stage.id, stage]));
   const scheduleCycle = schedule ? describeScheduleCycle(projectStages, schedule.criticalPath) : null;
   const filteredProjects = data.projects.filter((project) => projectFilter === 'Todas' || (
     projectFilter === 'Concluídas' ? project.status === 'Concluída' : project.status === projectFilter
@@ -684,7 +689,7 @@ export function ProjectPlanningView({
                 <KpiCard
                   label="Entrega prevista"
                   value={schedule?.forecastEndDate ? formatDateBR(schedule.forecastEndDate) : 'Sem dados'}
-                  subtext={`Linha de base · ${projectStages.length && activeProject.baselineEndDate ? formatDateBR(activeProject.baselineEndDate) : 'Sem dados'}`}
+                  subtext={`Linha de base · ${projectStages.length && (originalBaseline?.endDate || activeProject.baselineEndDate) ? formatDateBR(originalBaseline?.endDate || activeProject.baselineEndDate) : 'Sem dados'}`}
                 />
               </div>
 
@@ -712,6 +717,12 @@ export function ProjectPlanningView({
                           <ProgressBar pct={ph.progressoMedioPct} />
                         </div>
                       ))}
+                    </div>
+                  )}
+                  {curvaSData.possuiDados && (
+                    <div className="grid min-w-0 gap-2 border-t border-[#E4E1DA] pt-4">
+                      <h3 className="text-sm font-semibold">Progresso acumulado</h3>
+                      <ScheduleProgressChart curve={curvaSData} observations={progressObservations} />
                     </div>
                   )}
                 </section>
@@ -843,121 +854,17 @@ export function ProjectPlanningView({
             </section>
           )}
 
-          {tab === 'Cronograma' && (
-            <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h2 className="text-base font-semibold text-[#14181F]">
-                  Cronograma macro · {activeProject.name}
-                </h2>
-                <div className="flex flex-wrap gap-3 text-xs text-[#5B6472]">
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="w-3 h-2 rounded bg-[#1F3A5F]" /> Etapa
-                  </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="w-3 h-2 rounded bg-[#9A6212]" /> Caminho crítico
-                  </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="w-3 h-1.5 rounded bg-[#B9B4A8]" /> Linha de base
-                  </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="w-3 h-2 rounded border-2 border-[#B42318]" /> Atrasada
-                  </span>
-                </div>
-              </div>
-
-              {!projectStages.length && <p className="text-sm text-[#5B6472]">Sem dados no cronograma.</p>}
-              {scheduleCycle && <p role="alert" className="text-sm text-[#B42318]">{scheduleCycle}</p>}
-              {!!projectStages.length && <ul className="grid gap-2 md:hidden">
-                {projectStages.map((stage) => {
-                  const detail = schedule?.details.get(stage.id);
-                  const dependencies = (stage.dependsOn ?? []).map((id) => stagesById.get(id)?.wbsCode ?? id);
-                  return (
-                    <li key={stage.id}>
-                      <button type="button" onClick={() => openEditStage(stage)} className="grid w-full gap-2 rounded-lg border border-[#E4E1DA] p-3 text-left text-sm focus-visible:ring-2 focus-visible:ring-[#1F3A5F]">
-                        <strong>{stage.wbsCode} · {stage.name}</strong>
-                        <span>{stage.responsible || 'Sem responsável'} · {stage.status}</span>
-                        {detail && <span>Semana {detail.inicioMaisCedo} a {detail.terminoMaisCedo} · {detail.critica ? 'Crítica · ' : ''}Folga {detail.folga} sem.</span>}
-                        <span>Linha de base · semana {stage.baselineStartWeek} a {stage.baselineStartWeek + stage.baselineDurationWeeks}</span>
-                        {delayedStages.includes(stage) && <span className="text-[#B42318]">Atrasada em relação à linha de base</span>}
-                        {dependencies.length > 0 && <span>Predecessoras · {dependencies.join(', ')}</span>}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>}
-              {!!projectStages.length && <div className="hidden rounded-xl border border-[#E4E1DA] md:block">
-                <div>
-                  <div className="grid grid-cols-[280px_1fr] bg-[#F0EEE9] border-b border-[#E4E1DA] text-xs font-semibold text-[#5B6472]">
-                    <div className="py-2.5 px-3">Etapa · responsável</div>
-                    <div className="grid gap-1 py-2.5 px-3">
-                      <span>Linha do tempo · {totalWeeks} sem.</span>
-                      <div className="flex justify-between tabular-nums">
-                        {[...new Set([0, 0.25, 0.5, 0.75, 1].map((ratio) => Math.round(totalWeeks * ratio)))].map((week) => <span key={week}>{week}</span>)}
-                      </div>
-                    </div>
-                  </div>
-                  {projectStages.map((st) => {
-                    const isCrit = criticalIds.has(st.id);
-                    const detail = schedule?.details.get(st.id);
-                    const isLate = delayedStages.includes(st);
-                    const leftPct = ((detail?.inicioMaisCedo ?? st.startWeek) / totalWeeks) * 100;
-                    const widthPct = (st.durationWeeks / totalWeeks) * 100;
-                    const baseLeftPct = (st.baselineStartWeek / totalWeeks) * 100;
-                    const baseWidthPct = (st.baselineDurationWeeks / totalWeeks) * 100;
-                    const dependencies = (st.dependsOn ?? []).map((id) => stagesById.get(id)?.wbsCode ?? id);
-
-                    return (
-                      <button
-                        key={st.id}
-                        type="button"
-                        onClick={() => openEditStage(st)}
-                        className="grid w-full grid-cols-[280px_1fr] items-center border-b border-[#E4E1DA] text-left hover:bg-[#F6F5F2] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#1F3A5F]"
-                      >
-                        <span className="grid gap-1 border-r border-[#E4E1DA] px-3 py-2.5 text-xs">
-                          <strong className="text-[#14181F]">{st.wbsCode} · {st.name}</strong>
-                          <span className="text-[#5B6472]">{st.responsible || 'Sem responsável'} · {st.status}</span>
-                          {detail && <span>Semana {detail.inicioMaisCedo} a {detail.terminoMaisCedo} · Folga {detail.folga} sem.</span>}
-                          {dependencies.length > 0 && <span>Predecessoras · {dependencies.join(', ')}</span>}
-                          {(isCrit || isLate) && <span className="flex flex-wrap gap-2">
-                            {isCrit && <StatusBadge label="Crítica" tone="crit" />}
-                            {isLate && <StatusBadge label="Atrasada" tone="bad" />}
-                          </span>}
-                        </span>
-                        <span className="relative mx-3 flex h-10 items-center" aria-hidden="true">
-                          {/* Baseline dashed track */}
-                          <span
-                            className="absolute bottom-1.5 h-1.5 rounded bg-[#D5D1C8]"
-                            style={{ left: `${baseLeftPct}%`, width: `${baseWidthPct}%` }}
-                            title="Linha de base"
-                          />
-                          {/* Current bar */}
-                          {st.isMilestone ? (
-                            <span
-                              className="absolute w-3.5 h-3.5 rotate-45 bg-[#9A6212]"
-                              style={{ left: `calc(${leftPct}% - 0.375rem)` }}
-                              title={`Marco: ${st.name}`}
-                            />
-                          ) : (
-                            <span
-                              className={`absolute top-2 h-4 rounded overflow-hidden ${
-                                isCrit ? 'bg-[#9A6212]' : 'bg-[#1F3A5F]'
-                              } ${isLate ? 'ring-2 ring-[#B42318]' : ''}`}
-                              style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                              title={`${st.name}: ${st.progressPct}%`}
-                            >
-                              <span
-                                className="h-full bg-black/25"
-                                style={{ width: `${st.progressPct}%` }}
-                              />
-                            </span>
-                          )}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>}
-            </section>
+          {tab === 'Cronograma' && schedule && (
+            <ProjectScheduleView
+              key={activeProject.id}
+              uid={uid}
+              project={activeProject}
+              stages={projectStages}
+              schedule={schedule}
+              baselines={data.baselines ?? []}
+              cycle={scheduleCycle}
+              onEdit={openEditStage}
+            />
           )}
 
           {tab === 'Kanban' && (

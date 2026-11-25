@@ -9,6 +9,9 @@ import type {
   Project,
   ProjectStage,
   Quote,
+  ScheduleBaseline,
+  ScheduleBaselineStage,
+  ScheduleProgress,
   TransactionKind,
   WarrantyCall,
 } from '../types/pilotis';
@@ -501,6 +504,8 @@ export function calcularCaminhoCriticoObra(
 export function calcularCurvaSObra(
   stages: ProjectStage[],
   semanaReferencia?: number,
+  baseline?: ScheduleBaseline,
+  includePoints = true,
 ): CurvaSResult {
   const schedule = calcularCaminhoCriticoObra(stages);
   const starts = new Map(schedule.detalhes.map((item) => [item.etapaId, item.inicioMaisCedo]));
@@ -508,8 +513,15 @@ export function calcularCurvaSObra(
     toDomainStages(stages).map((stage) => ({
       ...stage, semanaInicio: starts.get(stage.id) ?? stage.semanaInicio,
     })),
-    toDomainBaselineFromStages(stages),
+    baseline ? baseline.stages.map((stage) => ({
+      etapaId: stage.stageId,
+      semanaInicioBaseline: stage.startWeek,
+      duracaoBaselineSemanas: stage.durationWeeks,
+      custoOrcadoBaseline: stage.budgetedCost,
+    })) : toDomainBaselineFromStages(stages),
     semanaReferencia,
+    includePoints,
+    Boolean(baseline),
   );
 }
 
@@ -639,7 +651,15 @@ export function describeScheduleCycle(stages: ProjectStage[], schedule = calcula
   return `Dependência circular: ${cycle.join(' → ')}. Remova uma das ligações para salvar.`;
 }
 
-export function getProjectSchedule(project: Project, stages: ProjectStage[], referenceDate = todayISO()) {
+const planningDateFormatter = new Intl.DateTimeFormat('sv-SE', {
+  timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+
+export function planningTodayISO(): string {
+  return planningDateFormatter.format(new Date());
+}
+
+export function getProjectSchedule(project: Project, stages: ProjectStage[], referenceDate = planningTodayISO()) {
   const criticalPath = calcularCaminhoCriticoObra(stages);
   const details = new Map(criticalPath.detalhes.map((detail) => [detail.etapaId, detail]));
   const ordered = [...stages].sort((a, b) =>
@@ -658,5 +678,52 @@ export function getProjectSchedule(project: Project, stages: ProjectStage[], ref
     stage,
     date: elapsedDays === null ? null : addDaysISO(project.startDate, Math.ceil(details.get(stage.id)!.terminoMaisCedo * 7)),
   })).sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''));
-  return { criticalPath, details, nextStage, milestones, forecastEndDate, referenceWeek: Math.max(0, (elapsedDays ?? 0) / 7) };
+  const todayWeek = elapsedDays === null ? null : elapsedDays / 7;
+  return { criticalPath, details, nextStage, milestones, forecastEndDate, todayWeek, referenceWeek: Math.max(0, todayWeek ?? 0) };
+}
+
+export function getScheduleBaselineStages(
+  stages: ProjectStage[],
+  schedule?: ReturnType<typeof getProjectSchedule>,
+): ScheduleBaselineStage[] {
+  return stages.map((stage) => {
+    const detail = schedule?.details.get(stage.id);
+    return {
+      stageId: stage.id,
+      startWeek: detail?.inicioMaisCedo ?? stage.baselineStartWeek ?? stage.startWeek,
+      durationWeeks: detail?.duracaoSemanas ?? stage.baselineDurationWeeks ?? stage.durationWeeks,
+      budgetedCost: (schedule ? stage.budgetedCost : (stage.baselineBudgetedCost ?? stage.budgetedCost)) ?? 0,
+    };
+  });
+}
+
+export function validateReplanJustification(value: string): string {
+  const justification = value.trim();
+  if (!justification) throw new Error('Informe a justificativa para registrar o replanejamento.');
+  if (justification.length > 500) throw new Error('A justificativa pode ter até 500 caracteres.');
+  return justification;
+}
+
+export function scheduleDeliveryVariance(endDate: string, baselineEndDate: string): number | null {
+  return diffDaysISO(endDate, baselineEndDate);
+}
+
+export function getRecordedScheduleProgress(
+  project: Project,
+  records: ScheduleProgress[],
+  referenceDate: string,
+  progressToday: number,
+) {
+  const byDate = new Map<string, ScheduleProgress>();
+  for (const record of records) {
+    if (record.projectId !== project.id || record.date >= referenceDate) continue;
+    if ((byDate.get(record.date)?.scheduleRevision ?? -1) < record.scheduleRevision) byDate.set(record.date, record);
+  }
+  return [
+    ...[...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)),
+    { date: referenceDate, progressPct: progressToday },
+  ].flatMap(({ date, progressPct }) => {
+    const days = diffDaysISO(date, project.startDate);
+    return days === null || days < 0 ? [] : [{ week: days / 7, progressPct, date }];
+  });
 }

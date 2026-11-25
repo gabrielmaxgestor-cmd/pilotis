@@ -71,6 +71,8 @@ const INITIAL_DATA_STATE: PilotisDataState = {
   projects: [],
   installments: [],
   stages: [],
+  baselines: [],
+  scheduleProgress: [],
   dailyLogs: [],
   transactions: [],
   debts: [],
