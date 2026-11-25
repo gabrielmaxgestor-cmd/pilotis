@@ -175,6 +175,7 @@ function AuthenticatedShell({
   const [data, setData] = useState<PilotisDataState>(INITIAL_DATA_STATE);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
   const [financialInitialTab, setFinancialInitialTab] = useState<string | undefined>(undefined);
+  const [teamInitialTab, setTeamInitialTab] = useState<string | undefined>(undefined);
   const [complianceInitialTab, setComplianceInitialTab] = useState<string | undefined>(undefined);
   const [settingsInitialTab, setSettingsInitialTab] = useState<string | undefined>(undefined);
   const [externalNewTxOpen, setExternalNewTxOpen] = useState(false);
@@ -217,6 +218,8 @@ function AuthenticatedShell({
 
     if (nextRoute === 'financial') {
       setFinancialInitialTab(subTab);
+    } else if (nextRoute === 'team') {
+      setTeamInitialTab(subTab);
     } else if (nextRoute === 'compliance') {
       setComplianceInitialTab(subTab);
     } else if (nextRoute === 'settings') {
@@ -283,7 +286,7 @@ function AuthenticatedShell({
             <OperationalAiView
               data={data}
               companyEmail={companyEmail}
-              onNavigate={(mod) => navigateTo(mod)}
+              onNavigate={handleModuleNavigate}
             />
           )}
 
@@ -326,7 +329,7 @@ function AuthenticatedShell({
           )}
 
           {route === 'team' && (
-            <TeamView uid={uid} data={data} companyEmail={companyEmail} />
+            <TeamView uid={uid} data={data} companyEmail={companyEmail} initialTab={teamInitialTab} />
           )}
 
           {route === 'pops' && (

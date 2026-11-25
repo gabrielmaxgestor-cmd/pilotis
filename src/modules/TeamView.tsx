@@ -41,6 +41,7 @@ import {
   isPublishedPop,
   getOnboardingAlert,
   plannedWeeks,
+  planningTodayISO,
   resolveTeamWeek,
   clampStr,
   formatBRL,
@@ -68,12 +69,14 @@ export function TeamView({
   uid,
   data,
   companyEmail,
+  initialTab,
 }: {
   uid: string;
   data: PilotisDataState;
   companyEmail?: string | null;
+  initialTab?: string;
 }) {
-  const [tab, setTab] = useState('Cadastro');
+  const [tab, setTab] = useState(initialTab && TEAM_TABS.includes(initialTab) ? initialTab : 'Cadastro');
   const [filterType, setFilterType] = useState('Todos');
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('');
 
@@ -108,7 +111,7 @@ export function TeamView({
   const [empActor, setEmpActor] = useState<ActorRole>('Sócio');
 
   // Allocation form
-  const todayStr = todayISO();
+  const todayStr = planningTodayISO();
   const weeks = useMemo(() => plannedWeeks(todayStr), [todayStr]);
   const [allocEmpId, setAllocEmpId] = useState('');
   const [allocProjectId, setAllocProjectId] = useState('');

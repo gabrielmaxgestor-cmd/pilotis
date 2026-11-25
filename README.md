@@ -12,7 +12,7 @@ Sistema web de gestão financeira, comercial, planejamento de obras, equipe, POP
 
 O acesso ao sistema é exclusivo de **um único usuário em nome da empresa**, com e-mail verificado no Firebase Authentication.
 
-Por segurança, o e-mail autorizado precisa estar **idêntico** em dois pontos:
+Por segurança, o e-mail autorizado precisa estar **idêntico** nos três pontos:
 
 1. **Frontend (`src/config/companyAuth.ts` / variável `VITE_COMPANY_EMAIL`):**
    - Arquivo: `src/config/companyAuth.ts` (`COMPANY_EMAIL`, que lê `import.meta.env.VITE_COMPANY_EMAIL` com fallback `'empresa@pilotis.com.br'`).
@@ -31,6 +31,19 @@ Sempre que alterar `firestore.rules`, valide e publique as regras antes de usar 
 - Use `.env.example` como referência dos nomes de variáveis aceitos (`GEMINI_API_KEY`, `GEMINI_MODEL`, `VITE_COMPANY_EMAIL`, `COMPANY_EMAIL`).
 - O modelo do Gemini usado pelo endpoint `/api/ai/chat` é lido de `GEMINI_MODEL` (padrão `gemini-4-hydrogen`).
 
+
+## IA Operacional
+
+O frontend envia a pergunta e o ID token Firebase a um endpoint do Express. O backend consulta o Firestore indicado em
+`firebase-applet-config.json`, calcula os indicadores na camada de domínio e usa o Gemini para selecionar as referências
+pertinentes. A resposta é montada com os valores e as fontes dessas referências. As conversas são gravadas em
+`conversasIA/{uid}/mensagens`. O resumo semanal é gerado sob demanda na IA Operacional.
+
+No AI Studio, configure `GEMINI_API_KEY` no painel **Secrets** e publique o aplicativo completo com seu servidor Node.
+No Cloud Run, a identidade do serviço precisa de acesso de leitura e gravação ao mesmo banco Firestore do aplicativo.
+O backend usa as credenciais padrão dessa identidade. Localmente, use ADC com acesso ao projeto de teste
+(por exemplo, depois de autenticar via `gcloud auth application-default login`).
+`GEMINI_MODEL` permite substituir o modelo padrão pelo ID compatível habilitado no projeto.
 
 ## Documentação e protótipos de referência
 

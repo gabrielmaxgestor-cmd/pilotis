@@ -39,6 +39,7 @@ import {
   resolverStatusParcela,
   simulateCommercialCash,
   todayISO,
+  planningTodayISO,
   validarLancamentoFinanceiro,
   type ExtratoLinhaConciliada,
   type StatusConciliacaoExtrato,
@@ -127,7 +128,7 @@ export function FinancialView({
   externalNewTxOpen?: boolean;
   onCloseExternalNewTx?: () => void;
 }) {
-  const [tab, setTab] = useState(initialTab || 'Visão geral');
+  const [tab, setTab] = useState(initialTab && FIN_TABS.includes(initialTab) ? initialTab : 'Visão geral');
 
   useEffect(() => {
     if (initialTab && FIN_TABS.includes(initialTab)) {
@@ -135,12 +136,19 @@ export function FinancialView({
     }
   }, [initialTab]);
 
+  useEffect(() => {
+    if (initialTab !== 'Simulador' || tab !== 'Visão geral') return;
+    const simulator = document.getElementById('financial-commercial-simulator');
+    simulator?.scrollIntoView({ block: 'start' });
+    simulator?.focus({ preventScroll: true });
+  }, [initialTab, tab]);
+
   const [receivableFilter, setReceivableFilter] = useState('A vencer');
   const [payableFilter, setPayableFilter] = useState('A vencer');
   const [selectedDreProjectId, setSelectedDreProjectId] = useState<string>('');
 
   // DRE da empresa (período)
-  const todayStr = todayISO();
+  const todayStr = planningTodayISO();
   const [drePeriodStart, setDrePeriodStart] = useState(`${monthKey(todayStr)}-01`);
   const [drePeriodEnd, setDrePeriodEnd] = useState(addDaysISO(addMonthsISO(`${monthKey(todayStr)}-01`, 1), -1));
 
@@ -731,7 +739,7 @@ export function FinancialView({
               )}
             </section>
 
-            <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-3">
+            <section id="financial-commercial-simulator" tabIndex={-1} aria-label="Simulador de condições comerciais" className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-3">
               <h2 className="text-base font-semibold text-[#14181F]">
                 Simulador de condições comerciais
               </h2>

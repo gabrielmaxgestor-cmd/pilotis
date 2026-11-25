@@ -1,384 +1,223 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Send } from 'lucide-react';
-import {
-  AlertNote,
-  PageHeader,
-  SegmentedControl,
-  StatusBadge,
-} from '../components/ui/PilotisUI';
-import {
-  calcularAlertasSistema,
-  calcularDreObra,
-  calcularIndicadoresDashboard,
-  calcularPrevisaoCaixa,
-  calcularProntidaoLicitacao,
-  calcularResumoDividas,
-  calcularResumoFolhaEquipe,
-  classifyAiQuestionTopics,
-  deduplicarReceitasEParcelas,
-  sanitizeAiContextSnapshot,
-  toDomainInstallments,
-  toDomainTransactions,
-} from '../domain';
+import { AlertNote, PageHeader, RegisteredBySelect, SegmentedControl, StatusBadge } from '../components/ui/PilotisUI';
+import { CONSULTANT_ACTIONS, readWeeklyInsights, WEEKLY_QUESTION, type AiMode, type AiShortcut, type AiTurn } from '../domain/aiContext';
+import { formatDateBR, planningTodayISO } from '../domain';
 import { auth } from '../lib/firebase';
-import type { ModuleKey, PilotisDataState } from '../types/pilotis';
-
-interface ChatMessage {
-  id: string;
-  sender: 'user' | 'ai';
-  mode?: 'Analista' | 'Consultor';
-  text: string;
-  isWeeklySummary?: boolean;
-}
+import type { ActorRole, ModuleKey, PilotisDataState } from '../types/pilotis';
 
 const SUGGESTED_QUESTIONS = [
   'Quanto entra e sai nos próximos 5 meses?',
   'Quais certidões vencem este mês?',
-  'Qual o custo real e margem de cada obra?',
-  'Quem está sem obra alocada atualmente?',
+  'Qual o custo real e a margem de cada obra?',
+  'Quem está sem obra alocada nesta semana?',
+  'Quanto foi recebido sem nota fiscal neste mês?',
 ];
 
-export function OperationalAiView({
-  data,
-  onNavigate,
-  companyEmail,
-}: {
-  data: PilotisDataState;
-  onNavigate: (mod: ModuleKey) => void;
-  companyEmail?: string | null;
+const shortcutTargets: Record<AiShortcut, [ModuleKey, string]> = {
+  funnel: ['clients', 'Funil'],
+  simulator: ['financial', 'Simulador'],
+  allocation: ['team', 'Alocação'],
+};
+
+const panel = 'min-w-0 rounded-xl border border-[#E4E1DA] bg-white p-4 sm:p-5';
+const button = 'rounded-lg border border-[#E4E1DA] bg-white px-3 py-2 text-sm font-semibold text-[#1F3A5F] hover:bg-[#F0EEE9] focus-visible:ring-2 focus-visible:ring-[#1F3A5F] disabled:opacity-50';
+const primary = 'inline-flex items-center gap-2 rounded-lg bg-[#1F3A5F] px-4 py-2 text-sm font-semibold text-white focus-visible:ring-2 focus-visible:ring-[#1F3A5F] disabled:opacity-50';
+
+async function chatRequest(method: 'GET' | 'POST', signal?: AbortSignal, body?: object) {
+  const user = auth.currentUser;
+  if (!user) throw new Error('Faça login novamente para consultar a IA Operacional.');
+  const response = await fetch('/api/ai/chat', {
+    method, signal, cache: 'no-store', headers: {
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+      Authorization: 'Bearer ' + await user.getIdToken(),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  const payload = await response.json().catch(() => ({})) as { turn?: AiTurn; turns?: AiTurn[]; error?: string };
+  if (!response.ok) throw new Error(payload.error || 'Não foi possível acessar a IA Operacional.');
+  return payload;
+}
+
+type Navigate = (mod: ModuleKey, subTab?: string) => void;
+
+function Answer({ turn, onNavigate }: { turn: AiTurn; onNavigate: Navigate }) {
+  const { answer } = turn;
+  const uniqueSources = [...new Map(answer.facts.map(({ source }) => [JSON.stringify(source), source])).values()];
+  return (
+    <article className="grid gap-3 rounded-xl border border-[#E4E1DA] bg-[#F6F5F2] p-3.5 sm:p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <strong className="text-sm">IA Operacional</strong>
+        <StatusBadge label={turn.weekly ? 'Resumo semanal' : turn.mode} tone={turn.mode === 'Consultor' ? 'warn' : 'info'} />
+        <span className="text-xs text-[#5B6472]">{formatDateBR(turn.createdAt.slice(0, 10))}</span>
+      </div>
+      <p className="text-sm">{answer.text}</p>
+      {answer.explanation && <p className="text-sm text-[#5B6472]">{answer.explanation}</p>}
+      {answer.consulted.length > 0 && <p className="text-xs text-[#5B6472]"><strong>Fontes consultadas</strong> · {answer.consulted.join(' / ')}</p>}
+      {answer.facts.length > 0 && <ol className="grid gap-2 text-sm">
+        {answer.facts.map(({ id, label, value, source }) => {
+          const sourceIndex = uniqueSources.findIndex((row) => JSON.stringify(row) === JSON.stringify(source)) + 1;
+          return <li key={id} className="break-words">
+            <strong>{label}{source.subject && ' · ' + source.subject}</strong><div>{value} <a href={'#source-' + turn.id + '-' + sourceIndex}
+              className="whitespace-nowrap text-xs font-semibold text-[#1F3A5F] underline" aria-label={'Ver fonte ' + sourceIndex}>[{sourceIndex}]</a></div>
+          </li>;
+        })}
+      </ol>}
+      {answer.suggestions.length > 0 && <section className="grid gap-2 border-t border-[#E4E1DA] pt-3">
+        <h3 className="text-sm font-semibold">Sugestões para avaliar</h3>
+        {answer.suggestions.map((id) => <div key={id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+          <p>{CONSULTANT_ACTIONS[id].text}</p>
+          <button type="button" className={button} onClick={() => onNavigate(...shortcutTargets[id])}>{CONSULTANT_ACTIONS[id].label}</button>
+        </div>)}
+      </section>}
+      {answer.guidance && <p className="rounded-lg bg-[#FFF4DE] p-2.5 text-sm text-[#70460B]">Valide decisões fiscais, tributárias, trabalhistas e jurídicas com o contador ou advogado.</p>}
+      {uniqueSources.length > 0 && <details className="border-t border-[#E4E1DA] pt-2 text-xs" open>
+        <summary className="cursor-pointer font-semibold text-[#1F3A5F]">Fontes consultadas</summary>
+        <ol className="mt-2 list-decimal space-y-2 pl-5 text-[#5B6472]">
+          {uniqueSources.map((source, index) => <li key={JSON.stringify(source)} id={'source-' + turn.id + '-' + (index + 1)} className="break-all">
+            <strong>{source.module}</strong>{source.subject && ' · ' + source.subject} · {source.period}
+            {source.records.length > 0 && <div>Registros de referência · {source.records.join(', ')}</div>}
+          </li>)}
+        </ol>
+      </details>}
+    </article>
+  );
+}
+
+export function OperationalAiView({ data, onNavigate, companyEmail }: {
+  data: PilotisDataState; onNavigate: Navigate; companyEmail?: string | null;
 }) {
-  const [mode, setMode] = useState<'Analista' | 'Consultor'>('Analista');
+  const [mode, setMode] = useState<AiMode>('Analista');
+  const [actor, setActor] = useState<ActorRole>('Sócio');
   const [input, setInput] = useState('');
+  const [turns, setTurns] = useState<AiTurn[]>([]);
+  const [selected, setSelected] = useState('');
   const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [pending, setPending] = useState('');
+  const lastRequest = useRef<{ key: string; id: string } | null>(null);
+  const busy = useRef(false);
+  const list = useRef<HTMLDivElement>(null);
+  const today = planningTodayISO();
+  const insights = readWeeklyInsights(data, today);
 
-  const alerts = calcularAlertasSistema(data);
+  useEffect(() => {
+    const controller = new AbortController();
+    void chatRequest('GET', controller.signal).then(({ turns: saved }) => {
+      if (controller.signal.aborted || !saved?.length) return;
+      setTurns(saved);
+      const latestConversation = saved.filter((turn) => !turn.weekly).at(-1) ?? saved.at(-1);
+      if (latestConversation) setSelected(latestConversation.conversationId);
+    }).catch((err) => {
+      if (!controller.signal.aborted) setError(err instanceof Error ? err.message : 'Histórico indisponível.');
+    }).finally(() => {
+      if (!controller.signal.aborted) setHistoryLoading(false);
+    });
+    return () => controller.abort();
+  }, []);
 
-  function buildContextSnapshot(questionText: string, isWeeklySummary: boolean) {
-    const topics = classifyAiQuestionTopics(questionText, isWeeklySummary);
-    const raw: Record<string, unknown> = {};
+  const active = turns.filter((turn) => turn.conversationId === selected);
+  const last = active.at(-1);
+  const latestSummary = turns.filter((turn) => turn.weekly).at(-1);
+  const threads = [...new Map(turns.map((turn) => [turn.conversationId, turn])).values()].reverse();
 
-    if (
-      topics.has('finance_summary') ||
-      topics.has('cashflow') ||
-      topics.has('projects') ||
-      topics.has('weekly_summary')
-    ) {
-      raw.resumoExecutivo = calcularIndicadoresDashboard(data);
-    }
+  useEffect(() => {
+    const viewport = list.current;
+    if (viewport) viewport.scrollTop = viewport.scrollHeight;
+  }, [selected, turns.length, loading]);
 
-    if (topics.has('cashflow') || topics.has('weekly_summary')) {
-      const forecast = calcularPrevisaoCaixa(data, 5);
-      raw.fluxoCaixaProjetado5Meses = forecast.possuiDados ? forecast.meses : [];
-    }
-
-    if (
-      topics.has('payroll_aggregate') ||
-      topics.has('team_allocation') ||
-      topics.has('weekly_summary')
-    ) {
-      raw.folhaEquipe = calcularResumoFolhaEquipe(data.employees, data.settings);
-    }
-
-    if (topics.has('debts') || topics.has('weekly_summary')) {
-      raw.dividasResumo = calcularResumoDividas(data.debts);
-    }
-
-    if (topics.has('projects') || topics.has('stages') || topics.has('weekly_summary')) {
-      raw.obras = data.projects.map((p) => ({
-        nome: p.name,
-        tipo: p.type,
-        status: p.status,
-        valorContrato: p.contractValue,
-        dre: calcularDreObra(p, data.transactions),
-      }));
-    }
-
-    if (topics.has('stages') || topics.has('weekly_summary')) {
-      raw.etapasEmAndamentoOuAtrasadas = data.stages
-        .filter((s) => s.status !== 'Concluída' || s.delayJustification)
-        .slice(0, 30)
-        .map((s) => ({
-          obraId: s.projectId,
-          codigo: s.wbsCode,
-          etapa: s.name,
-          status: s.status,
-          progressoPct: s.progressPct,
-          atrasoCategoria: s.delayCategory,
-          atrasoJustificativa: s.delayJustification,
-        }));
-    }
-
-    if (topics.has('quotes') || topics.has('weekly_summary')) {
-      raw.orcamentosAbertos = data.quotes
-        .filter((q) => q.status !== 'Descartado')
-        .slice(0, 20)
-        .map((q) => ({
-          codigo: q.code,
-          titulo: q.title,
-          tipo: q.type,
-          valor: q.totalValue,
-          probabilidadePct: q.probabilityPct,
-          status: q.status,
-        }));
-    }
-
-    if (topics.has('team_allocation')) {
-      raw.colaboradoresAlocacao = data.employees.map((e) => ({
-        nome: e.name,
-        funcao: e.role,
-        vinculo: e.employmentType,
-        obraAtual: e.currentProjectName || 'Sem alocação',
-      }));
-    }
-
-    if (topics.has('compliance') || topics.has('weekly_summary')) {
-      raw.conformidade = data.complianceItems.slice(0, 25).map((c) => ({
-        tipo: c.kind,
-        titulo: c.title,
-        vencimento: c.dueDate,
-        status: c.status,
-        obra: c.projectName,
-      }));
-    }
-
-    if (topics.has('compliance') || topics.has('quotes') || topics.has('weekly_summary')) {
-      raw.prontidaoLicitacoesPct = calcularProntidaoLicitacao(data.complianceItems);
-    }
-
-    if (topics.has('invoices') || topics.has('weekly_summary')) {
-      const { lancamentosUnicos, parcelasAbertas } = deduplicarReceitasEParcelas(
-        toDomainTransactions(data.transactions),
-        toDomainInstallments(data.installments),
-      );
-      const fromTxs = lancamentosUnicos
-        .filter((t) => t.tipo === 'receita' && t.notaFiscal === 'Não emitida')
-        .map((t) => ({
-          descricao: t.descricao,
-          valor: t.valor,
-          vencimento: t.vencimento || t.data,
-        }));
-      const fromParcelas = parcelasAbertas
-        .filter((p) => p.notaFiscal === 'Não emitida')
-        .map((p) => ({
-          descricao: `Parcela ${p.rotulo}`,
-          valor: p.valor,
-          vencimento: p.vencimento,
-        }));
-      raw.recebimentosSemNota = [...fromTxs, ...fromParcelas];
-    }
-
-    return sanitizeAiContextSnapshot(raw, questionText, isWeeklySummary);
-  }
-
-  async function askAi(questionText: string, isWeeklySummary = false) {
-    if (loading) return;
-    setErrorMsg(null);
-
-    if (!isWeeklySummary && !questionText.trim()) return;
-
-    const currentUser = auth.currentUser;
-    if (!currentUser) {
-      setErrorMsg('Sessão não autenticada. Faça login novamente para consultar a IA Operacional.');
-      return;
-    }
-
-    const userMsg: ChatMessage = {
-      id: `u_${Date.now()}`,
-      sender: 'user',
-      text: isWeeklySummary ? 'Gerar resumo semanal operacional' : questionText.trim(),
-    };
-    setMessages((prev) => [...prev, userMsg]);
-    if (!isWeeklySummary) setInput('');
-    setLoading(true);
-
+  async function askAi(text: string, weekly = false) {
+    if (busy.current || historyLoading) return;
+    const question = weekly ? WEEKLY_QUESTION : text.trim();
+    if (!question) return;
+    const previousTurnId = weekly || last?.weekly ? undefined : last?.id;
+    const key = JSON.stringify([question, mode, actor, weekly, previousTurnId]);
+    const requestId = lastRequest.current?.key === key ? lastRequest.current.id : crypto.randomUUID();
+    lastRequest.current = { key, id: requestId };
+    busy.current = true;
+    setError(''); setPending(question); setLoading(true);
     try {
-      const idToken = await currentUser.getIdToken();
-      const contextSnapshot = buildContextSnapshot(questionText.trim(), isWeeklySummary);
-
-      const resp = await fetch('/api/ai/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({
-          mode,
-          question: questionText.trim(),
-          isWeeklySummary,
-          contextSnapshot,
-        }),
-      });
-      const payload = (await resp.json()) as { answer?: string; error?: string };
-      if (!resp.ok || !payload.answer) {
-        throw new Error(payload.error || 'Não foi possível obter resposta da IA.');
-      }
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `a_${Date.now()}`,
-          sender: 'ai',
-          mode,
-          text: payload.answer!,
-          isWeeklySummary,
-        },
-      ]);
+      const response = await chatRequest('POST', undefined, { question, mode, registeredBy: actor, isWeeklySummary: weekly, previousTurnId, requestId });
+      const turn = response.turn;
+      if (!turn) throw new Error('O servidor não retornou a conversa salva.');
+      setTurns((rows) => rows.some((row) => row.id === turn.id) ? rows : [...rows, turn]);
+      setSelected(turn.conversationId);
+      if (!weekly) setInput('');
+      lastRequest.current = null;
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Erro ao consultar IA Operacional.');
+      setError(err instanceof Error ? err.message : 'Erro ao consultar IA Operacional.');
+      if (!weekly) setInput(question);
     } finally {
-      setLoading(false);
+      busy.current = false;
+      setLoading(false); setPending('');
     }
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      <PageHeader
-        title="IA Operacional"
-        subtitle="Respostas baseadas exclusivamente nos dados reais registrados no sistema"
-        companyEmail={companyEmail}
-        actions={
-          <div className="flex flex-wrap items-center gap-2">
-            <SegmentedControl
-              items={['Analista', 'Consultor']}
-              active={mode}
-              onChange={(m) => setMode(m as 'Analista' | 'Consultor')}
-            />
-            <button
-              type="button"
-              onClick={() => askAi('', true)}
-              disabled={loading}
-              className="px-4 py-2 rounded-lg border border-[#E4E1DA] bg-white text-sm font-semibold text-[#14181F] hover:bg-[#F0EEE9] disabled:opacity-50 whitespace-nowrap cursor-pointer"
-            >
-              Gerar resumo semanal
-            </button>
+    <div className="grid gap-5">
+      <PageHeader title="IA Operacional" subtitle="Consultas aos registros da Pilotis" companyEmail={companyEmail}
+        actions={<button type="button" onClick={() => void askAi('', true)} disabled={loading || historyLoading}
+          className={button}>Gerar resumo semanal</button>} />
+
+      <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <section className={panel + ' flex min-h-[510px] flex-col gap-4'}>
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <SegmentedControl items={['Analista', 'Consultor']} active={mode} onChange={(value) => setMode(value as AiMode)} />
+            <button type="button" className={button} disabled={loading || historyLoading}
+              onClick={() => { setSelected(''); setInput(''); setError(''); }}>Nova conversa</button>
           </div>
-        }
-      />
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
-        <section className="lg:col-span-2 bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4 min-h-[540px]">
-          <div className="flex-1 flex flex-col gap-4 overflow-y-auto max-h-[520px] pr-1">
-            {messages.length === 0 ? (
-              <div className="flex-1 flex flex-col items-center justify-center text-center py-12 px-4 gap-2">
-                <h2 className="text-base font-semibold text-[#14181F]">
-                  Pergunte sobre obras, caixa, equipe ou conformidade
-                </h2>
-                <p className="text-sm text-[#5B6472] max-w-md">
-                  No modo <strong className="text-[#14181F]">Analista</strong> a IA responde fatos exatos dos registros. No modo{' '}
-                  <strong className="text-[#14181F]">Consultor</strong> ela sugere caminhos práticos para avaliação.
-                </p>
-              </div>
-            ) : (
-              messages.map((msg) =>
-                msg.sender === 'user' ? (
-                  <div
-                    key={msg.id}
-                    className="self-end bg-[#1F3A5F] text-white rounded-xl px-4 py-3 text-sm max-w-lg"
-                  >
-                    {msg.text}
-                  </div>
-                ) : (
-                  <div
-                    key={msg.id}
-                    className="self-start bg-[#F0EEE9] border border-[#E4E1DA] rounded-xl px-4 py-3.5 text-sm text-[#14181F] max-w-2xl flex flex-col gap-2"
-                  >
-                    <div className="flex items-center gap-2">
-                      <strong className="text-xs font-bold text-[#14181F]">IA Operacional</strong>
-                      <StatusBadge
-                        label={msg.isWeeklySummary ? 'Resumo semanal' : msg.mode || 'Analista'}
-                        tone={msg.mode === 'Consultor' ? 'warn' : 'info'}
-                      />
-                    </div>
-                    <div className="whitespace-pre-wrap leading-relaxed text-[13.5px]">
-                      {msg.text}
-                    </div>
-                  </div>
-                )
-              )
-            )}
-            {loading && (
-              <div className="self-start bg-[#F0EEE9] border border-[#E4E1DA] rounded-xl px-4 py-3 text-sm text-[#5B6472]">
-                Consultando os registros atuais do sistema...
-              </div>
-            )}
+          {threads.length > 0 && <label className="grid gap-1 text-sm font-semibold">
+            Conversas recentes
+            <select className="min-w-0 rounded-lg border border-[#E4E1DA] bg-white px-3 py-2 font-normal focus-visible:ring-2 focus-visible:ring-[#1F3A5F]"
+              value={selected} disabled={loading} onChange={(event) => setSelected(event.target.value)}>
+              <option value="">Nova conversa</option>
+              {threads.map((turn) => <option key={turn.conversationId} value={turn.conversationId}>{turn.weekly ? 'Resumo semanal · ' + formatDateBR(turn.week) : turn.question.slice(0, 90)}</option>)}
+            </select>
+          </label>}
+          <div ref={list} className="grid max-h-[600px] min-h-40 flex-1 content-start gap-3 overflow-y-auto pr-1" aria-live="polite">
+            {!active.length && !loading && <p className="p-4 text-sm text-[#5B6472]">
+              {historyLoading ? 'Carregando conversas salvas…' : 'Pergunte sobre obras, finanças, equipe ou conformidade.'}
+            </p>}
+            {active.map((turn) => <div key={turn.id} className="grid min-w-0 gap-2">
+              <p className="max-w-[90%] justify-self-end break-words rounded-xl bg-[#1F3A5F] px-4 py-3 text-sm text-white">{turn.question}</p>
+              <Answer turn={turn} onNavigate={onNavigate} />
+            </div>)}
+            {loading && <><p className="max-w-[90%] justify-self-end break-words rounded-xl bg-[#1F3A5F] px-4 py-3 text-sm text-white">{pending}</p>
+              <p className="p-2 text-sm text-[#5B6472]" role="status">Consultando registros…</p></>}
           </div>
-
-          {errorMsg && (
-            <AlertNote tone="bad" title="Erro na consulta">
-              {errorMsg}
-            </AlertNote>
-          )}
-
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              askAi(input, false);
-            }}
-            className="flex items-center gap-2 pt-3 border-t border-[#E4E1DA]"
-          >
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Pergunte sobre obras, caixa, equipe, clientes..."
-              aria-label="Pergunta para a IA Operacional"
-              className="flex-1 rounded-lg border border-[#E4E1DA] bg-white px-3.5 py-2.5 text-sm text-[#14181F]"
-            />
-            <button
-              type="submit"
-              disabled={loading || !input.trim()}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[#1F3A5F] text-white text-sm font-semibold hover:bg-[#182E4C] disabled:opacity-50 cursor-pointer shrink-0"
-            >
-              <Send className="w-4 h-4" />
-              <span>Enviar</span>
-            </button>
+          {error && <AlertNote tone="bad" title="Consulta da IA">{error}</AlertNote>}
+          <form className="grid gap-2 border-t border-[#E4E1DA] pt-3" onSubmit={(event) => { event.preventDefault(); void askAi(input); }}>
+            <RegisteredBySelect id="ai-registered-by" value={actor} onChange={setActor} />
+            <div className="flex items-center gap-2">
+              <input value={input} onChange={(event) => setInput(event.target.value)} maxLength={1200} disabled={loading}
+                placeholder="Escreva sua pergunta" aria-label="Pergunta para a IA Operacional"
+                className="min-w-0 flex-1 rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-[#1F3A5F]" />
+              <button type="submit" disabled={historyLoading || loading || !input.trim()} className={primary}><Send className="h-4 w-4" aria-hidden="true" />Enviar</button>
+            </div>
           </form>
         </section>
 
-        <aside className="flex flex-col gap-4">
-          <div className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-3">
-            <h3 className="text-base font-semibold text-[#14181F]">Insights atuais</h3>
-            {alerts.length === 0 ? (
-              <p className="text-xs text-[#5B6472]">
-                Sem alertas ativos nos registros cadastrados até o momento.
-              </p>
-            ) : (
-              <div className="flex flex-col gap-2.5">
-                {alerts.slice(0, 4).map((al) => (
-                  <button
-                    key={al.id}
-                    type="button"
-                    onClick={() => onNavigate(al.modulo)}
-                    className="bg-[#F6F5F2] border border-[#E4E1DA] rounded-lg p-3 text-left flex flex-col gap-1.5 hover:bg-[#F0EEE9] cursor-pointer"
-                  >
-                    <StatusBadge label={al.nivel} />
-                    <span className="text-xs text-[#14181F] font-medium">{al.mensagem}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-2.5">
-            <h3 className="text-base font-semibold text-[#14181F]">Perguntas sugeridas</h3>
-            {SUGGESTED_QUESTIONS.map((q) => (
-              <button
-                key={q}
-                type="button"
-                disabled={loading}
-                onClick={() => askAi(q, false)}
-                className="text-left text-xs font-medium text-[#14181F] border border-[#E4E1DA] rounded-lg px-3 py-2.5 hover:bg-[#F6F5F2] disabled:opacity-50 cursor-pointer"
-              >
-                {q}
-              </button>
-            ))}
-          </div>
-
-          <AlertNote tone="soft" title="Como a IA responde">
-            Usa apenas registros reais do sistema, cita as fontes e informa quando não há dados. Nunca inventa valores sem lastro.
-          </AlertNote>
+        <aside className="grid gap-4">
+          {mode === 'Consultor' && <section className={panel + ' grid gap-2'}>
+            <h2 className="text-base font-semibold">Atalhos do Consultor</h2>
+            {(Object.keys(CONSULTANT_ACTIONS) as AiShortcut[]).map((id) => <button key={id} type="button" className={button + ' text-left'}
+              onClick={() => onNavigate(...shortcutTargets[id])}>{CONSULTANT_ACTIONS[id].label}</button>)}
+          </section>}
+          <section className={panel + ' grid gap-2'}>
+            <h2 className="text-base font-semibold">Insights da semana</h2>
+            {latestSummary && <button type="button" className={button + ' text-left'} disabled={loading}
+              onClick={() => setSelected(latestSummary.conversationId)}>Ver último resumo · {formatDateBR(latestSummary.createdAt.slice(0, 10))}</button>}
+            {insights.length === 0 ? <p className="text-sm text-[#5B6472]">Sem alertas da semana.</p>
+              : insights.map((alert) => <button key={alert.id} type="button" onClick={() => onNavigate(alert.modulo,
+                alert.modulo === 'compliance' ? (alert.categoria === 'certidao' ? 'Certidões' : 'Obrigações') : undefined)}
+                className={button + ' grid justify-items-start gap-1 text-left'}><StatusBadge label={alert.nivel} />{alert.mensagem}</button>)}
+          </section>
+          <section className={panel + ' grid gap-2'}>
+            <h2 className="text-base font-semibold">Perguntas sugeridas</h2>
+            {SUGGESTED_QUESTIONS.map((question) => <button key={question} type="button"
+              className={button + ' text-left'} disabled={loading || historyLoading} onClick={() => void askAi(question)}>{question}</button>)}
+          </section>
         </aside>
       </div>
     </div>

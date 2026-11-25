@@ -369,7 +369,7 @@ export function calcularSaldoInicialCaixa(
 
 export function calcularIndicadoresDashboard(
   data: PilotisDataState,
-  dataReferencia = todayISO(),
+  dataReferencia = planningTodayISO(),
 ): IndicadoresDashboardResult {
   return indicadoresDashboard({
     dataReferencia,
@@ -400,7 +400,7 @@ export function calcularResumoFinanceiroPeriodo(
 export function calcularPrevisaoCaixa(
   data: PilotisDataState,
   mesesCount = 5,
-  dataBase = todayISO(),
+  dataBase = planningTodayISO(),
 ): PrevisaoCaixaResult {
   return previsaoCaixa(mesesCount, {
     dataBase,
@@ -649,8 +649,8 @@ const planningDateFormatter = new Intl.DateTimeFormat('sv-SE', {
   timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit',
 });
 
-export function planningTodayISO(): string {
-  return planningDateFormatter.format(new Date());
+export function planningTodayISO(date = new Date()): string {
+  return planningDateFormatter.format(date);
 }
 
 export function getProjectSchedule(project: Project, stages: ProjectStage[], referenceDate = planningTodayISO()) {
