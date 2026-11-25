@@ -31,14 +31,14 @@ export function resolveTeamWeek(employee: Employee, week: string, data: TeamData
     (employee.employmentType === 'CLT' &&
       Boolean(employee.vacationStart && employee.vacationEnd &&
         employee.vacationStart <= addDaysISO(week, 6) && employee.vacationEnd >= week));
-  const conflict = new Set(allocations.map((item) => item.status + '/' + item.projectId)).size > 1;
+  const conflict = new Set(allocations.map((item) => item.status + '/' + item.projectId + '/' + (item.stageId ?? ''))).size > 1;
   const started = !employee.startDate || employee.startDate <= addDaysISO(week, 6);
   const label = conflict ? 'Conflito'
     : !started ? 'Ainda não iniciou'
     : vacation ? 'Férias'
     : project ? (project.contractKind === 'Satélite' || project.type === 'Obra satélite' ? 'Satélite · ' : '') + project.name
     : 'Sem obra';
-  return { allocation, project, label, vacation, conflict, idle: started && !conflict && !vacation && !project };
+  return { allocation, project, label, vacation, conflict, started, idle: started && !conflict && !vacation && !project };
 }
 
 export interface PayrollAllocation {

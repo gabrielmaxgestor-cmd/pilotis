@@ -111,6 +111,7 @@ export function TeamView({
   const weeks = useMemo(() => plannedWeeks(todayStr), [todayStr]);
   const [allocEmpId, setAllocEmpId] = useState('');
   const [allocProjectId, setAllocProjectId] = useState('');
+  const [allocStageId, setAllocStageId] = useState('');
   const [allocWeekStart, setAllocWeekStart] = useState(weeks[0] || todayISO());
   const [allocStatus, setAllocStatus] = useState<'Obra' | 'Férias'>('Obra');
   const [allocActor, setAllocActor] = useState<ActorRole>('Sócio');
@@ -317,6 +318,7 @@ export function TeamView({
       if (!emp) return;
       await saveWeeklyAllocation(uid, allocActor, emp, allocWeekStart, {
         projectId: targetProjId, projectName: targetProjName, status: allocStatus,
+        stageId: allocStatus === 'Obra' && proj ? allocStageId : '',
       }, data.allocations);
       setAllocModalOpen(false);
       setFeedback({
@@ -494,6 +496,8 @@ export function TeamView({
     const integrationDate = onboardingDeadline(selectedEmployee.onboardingStart, selectedEmployee.startDate);
     const epiDate = avaliarValidadeSst(selectedEmployee.epiExpiry, todayStr);
     const currentAssignment = resolveTeamWeek(selectedEmployee, weeks[0], data);
+    const currentStage = !currentAssignment.conflict && !currentAssignment.vacation && currentAssignment.started
+      ? data.stages.find((stage) => stage.id === currentAssignment.allocation?.stageId) : undefined;
 
     return (
       <div className="flex flex-col gap-6">
@@ -630,7 +634,7 @@ export function TeamView({
             <div className="flex justify-between text-[13px] py-1 border-b border-[#E4E1DA]">
               <span className="text-[#5B6472]">Alocação atual</span>
               <strong className="text-[#14181F]">
-                {currentAssignment.label}
+                {currentAssignment.label}{currentStage && <span className="block text-right text-xs font-normal">{currentStage.name}</span>}
               </strong>
             </div>
             <div className="flex justify-between text-[13px] py-1 border-b border-[#E4E1DA]">
@@ -992,6 +996,7 @@ export function TeamView({
                 type="button"
                 onClick={() => {
                   setAllocEmpId('');
+                  setAllocStageId('');
                   setAllocProjectId('');
                   setAllocWeekStart(weeks[0] || todayISO());
                   setAllocStatus('Obra');
@@ -1186,6 +1191,7 @@ export function TeamView({
                     type="button"
                     onClick={() => {
                       setAllocEmpId('');
+                      setAllocStageId('');
                       setAllocProjectId('');
                       setAllocWeekStart(weeks[0] || todayISO());
                       setAllocStatus('Obra');
@@ -1217,7 +1223,9 @@ export function TeamView({
                         {cells.map((cell, index) => {
                           const w = weeks[index];
                           const alloc = cell.allocation;
-                          const { label, vacation: isVac, idle: isNone } = cell;
+                          const { vacation: isVac, idle: isNone } = cell;
+                          const stage = data.stages.find((item) => item.id === alloc?.stageId);
+                          const label = stage && !cell.conflict && !isVac && cell.started ? stage.name + ' · ' + cell.label : cell.label;
                           return (
                             <button
                               key={`${emp.id}-${w}`}
@@ -1226,6 +1234,7 @@ export function TeamView({
                                 setAllocEmpId(emp.id);
                                 setAllocProjectId(alloc?.projectId || emp.currentProjectId || '');
                                 setAllocWeekStart(w);
+                                setAllocStageId(alloc?.stageId ?? '');
                                 setAllocStatus(alloc?.status || 'Obra');
                                 setAllocModalOpen(true);
                               }}
@@ -1537,7 +1546,7 @@ export function TeamView({
               id="alloc-emp"
               required
               value={allocEmpId}
-              onChange={(e) => setAllocEmpId(e.target.value)}
+              onChange={(e) => { setAllocEmpId(e.target.value); setAllocStageId(''); }}
               className="w-full rounded-lg border border-[#E4E1DA] bg-white px-3.5 py-2.5 text-sm"
             >
               <option value="">Selecione</option>
@@ -1554,7 +1563,7 @@ export function TeamView({
                 Semana iniciando em
               </label>
               <input type="date" required id="alloc-week" value={allocWeekStart}
-                onChange={(e) => setAllocWeekStart(e.target.value)}
+                onChange={(e) => { setAllocWeekStart(e.target.value); setAllocStageId(''); }}
                 className="w-full rounded-lg border border-[#E4E1DA] bg-white px-3.5 py-2.5 text-sm" />
               <span className="text-xs text-[#5B6472]">Informe a segunda-feira da semana.</span>
             </div>
@@ -1581,7 +1590,7 @@ export function TeamView({
               <select
                 id="alloc-proj"
                 value={allocProjectId}
-                onChange={(e) => setAllocProjectId(e.target.value)}
+                onChange={(e) => { setAllocProjectId(e.target.value); setAllocStageId(''); }}
                 className="w-full rounded-lg border border-[#E4E1DA] bg-white px-3.5 py-2.5 text-sm"
               >
                 <option value="Sem obra">Sem obra</option>
@@ -1594,6 +1603,17 @@ export function TeamView({
             </div>
           )}
           {feedback?.tone === 'bad' && <AlertNote tone="bad" title={feedback.title}>{feedback.text}</AlertNote>}
+          {allocStatus === 'Obra' && data.stages.some((stage) => stage.projectId === allocProjectId) && (
+            <label className="grid gap-1 text-sm font-semibold">Etapa da obra
+              <select value={allocStageId} onChange={(e) => setAllocStageId(e.target.value)}
+                className="w-full rounded-lg border border-[#E4E1DA] bg-white px-3.5 py-2.5 text-sm focus-visible:ring-2 focus-visible:ring-[#1F3A5F]">
+                <option value="">Sem etapa</option>
+                {data.stages.filter((stage) => stage.projectId === allocProjectId).map((stage) => (
+                  <option key={stage.id} value={stage.id}>{stage.wbsCode} · {stage.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
           <RegisteredBySelect value={allocActor} onChange={setAllocActor} id="alloc-actor" />
           <div className="flex justify-end gap-2 pt-2">
             <button

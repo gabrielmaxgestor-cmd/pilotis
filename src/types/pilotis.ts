@@ -114,6 +114,7 @@ export interface Project extends AuditMeta {
   contractKind?: ProjectContractKind;
   planningStatus?: ProjectPlanningStatus;
   scheduleRevision?: number;
+  workInProgressLimit?: number;
   scheduleBaselineVersion?: number;
   scheduleStageIds?: string[];
   contractValue: number;
@@ -322,7 +323,22 @@ export interface Allocation extends AuditMeta {
   projectId: string;
   projectName: string;
   weekStart: string;
+  stageId?: string;
   status: 'Obra' | 'Férias';
+}
+
+export type ProjectRiskCategory = 'Chuva' | 'Material do cliente' | 'Equipe' | 'Retrabalho' | 'Projeto' | 'Dependência' | 'Outros';
+export type ProjectRiskImpact = 'Baixo' | 'Médio' | 'Alto';
+export type ProjectRiskStatus = 'Aberto' | 'Monitorado' | 'Resolvido';
+
+export interface ProjectRisk extends AuditMeta {
+  id: string;
+  projectId: string;
+  stageId: string;
+  category: ProjectRiskCategory;
+  description: string;
+  impact: ProjectRiskImpact;
+  status: ProjectRiskStatus;
 }
 
 export type PopStatus = 'Vigente' | 'Em revisão';
@@ -416,6 +432,7 @@ export interface PilotisDataState {
   projects: Project[];
   installments: Installment[];
   stages: ProjectStage[];
+  projectRisks?: ProjectRisk[];
   baselines?: ScheduleBaseline[];
   scheduleProgress?: ScheduleProgress[];
   dailyLogs: DailyLog[];

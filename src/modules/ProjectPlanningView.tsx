@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ProjectScheduleView, ScheduleProgressChart } from './ProjectScheduleView';
+import { ProjectKanban, ProjectResources, ProjectRisks } from './ProjectOperationsView';
 import {
   AlertNote,
   EmptySection,
@@ -30,18 +31,17 @@ import type {
 } from '../types/pilotis';
 import {
   calcularCurvaSObra,
+  DELAY_CATEGORIES,
   describeScheduleCycle,
+  normalizeDelayCategory,
+  plannedWeeks,
+  resolveTeamWeek,
   getProjectSchedule,
   getRecordedScheduleProgress,
   getWorkPackageBudget,
   planningTodayISO,
   roundCents,
   calcularDreObra,
-  calculateTeamPayroll,
-  formatMonthLabelBR,
-  monthKey,
-  resolveTeamWeek,
-  weekStartingOn,
   calcularProgressoObra,
   calcularResumoFasesEap,
   clampStr,
@@ -63,15 +63,6 @@ const PLAN_TABS = [
   'Diário de obra',
   'Encerramento',
 ];
-
-const KANBAN_COLS: Array<{ status: StageStatus; subtitle: string }> = [
-  { status: 'A fazer', subtitle: 'Pronta para iniciar' },
-  { status: 'Em andamento', subtitle: 'Limite WIP: 4' },
-  { status: 'Aguardando material', subtitle: 'Material do cliente' },
-  { status: 'Em conferência', subtitle: 'Checklist do POP' },
-  { status: 'Concluída', subtitle: 'Entregue e conferida' },
-];
-
 
 const TEMPLATE_OPTIONS: { type: ProjectType; description: string }[] = [
   { type: 'Casa residencial', description: 'Estrutura, instalações e entrega · 52 semanas' },
@@ -124,7 +115,6 @@ export function ProjectPlanningView({
 }) {
   const [tab, setTab] = useState('Visão geral');
   const [projectFilter, setProjectFilter] = useState('Todas');
-  const [kanbanPhaseFilter, setKanbanPhaseFilter] = useState('Todas as fases');
 
   // New Project from Template Modal
   const [newProjModal, setNewProjModal] = useState(false);
@@ -296,7 +286,7 @@ export function ProjectPlanningView({
     setStDeps(st.dependsOn || []);
     setStStatus(st.status);
     setStMatDate(st.materialExpectedDate || '');
-    setStDelayCat(st.delayCategory || '');
+    setStDelayCat(normalizeDelayCategory(st.delayCategory || ''));
     setStDelayJust(st.delayJustification || '');
     setStChecklistDone(st.checklistCompleted || []);
     setStError(null);
@@ -316,38 +306,6 @@ export function ProjectPlanningView({
     const durNum = Number(stDurWeeks) || 0;
     const baseStart = editingStage ? editingStage.baselineStartWeek : startNum;
     const baseDur = editingStage ? editingStage.baselineDurationWeeks : durNum;
-    const isDelayed = startNum + durNum > baseStart + baseDur;
-
-    if (isDelayed && (!stDelayCat.trim() || !stDelayJust.trim())) {
-      setStError('Etapas deslocadas além da linha de base exigem categoria e justificativa do atraso.');
-      return;
-    }
-
-    // Check POP acceptance checklist if marking Concluída
-    const linkedPop = data.pops.find((p) => p.id === stPopId);
-    if (
-      stStatus === 'Concluída' &&
-      linkedPop &&
-      linkedPop.acceptanceCriteria.length > 0 &&
-      stChecklistDone.length < linkedPop.acceptanceCriteria.length
-    ) {
-      setStError('Complete todos os critérios de aceite do POP vinculado antes de concluir a etapa.');
-      return;
-    }
-
-    // Check dependency gate if moving to Em andamento
-    if (stStatus === 'Em andamento' && stDeps.length > 0) {
-      const pendingDep = stDeps
-        .map((id) => projectStages.find((s) => s.id === id))
-        .find((s) => s && s.status !== 'Concluída');
-      if (pendingDep) {
-        setStError(
-          `Não é possível iniciar: a etapa anterior "${pendingDep.name}" ainda não foi concluída.`
-        );
-        return;
-      }
-    }
-
     setStSaving(true);
     setStError(null);
     try {
@@ -504,7 +462,7 @@ export function ProjectPlanningView({
                       {progress !== null && <ProgressBar pct={progress} />}
                       <span className="flex justify-between gap-2 text-sm"><span>Margem real</span><strong>{formatPercentBR(dre.receita.realizado > 0 ? dre.margemRealizadaPct : null)}</strong></span>
                       <span className="text-sm"><strong>Próxima etapa</strong> · {next ? `${next.wbsCode} ${next.name}` : stages.length ? 'Etapas concluídas' : 'Sem dados'}</span>
-                      <button type="button" aria-label={`Abrir planejamento de ${project.name}`} onClick={() => { onSelectProject(project.id); setTab('Visão geral'); setKanbanPhaseFilter('Todas as fases'); }}
+                      <button type="button" aria-label={`Abrir planejamento de ${project.name}`} onClick={() => { onSelectProject(project.id); setTab('Visão geral'); }}
                         className="justify-self-start rounded text-sm font-semibold text-[#1F3A5F] hover:underline focus-visible:ring-2 focus-visible:ring-[#1F3A5F]">
                         Abrir planejamento →
                       </button>
@@ -867,164 +825,14 @@ export function ProjectPlanningView({
             />
           )}
 
-          {tab === 'Kanban' && (
-            <div className="flex flex-col gap-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <SegmentedControl
-                  items={['Todas as fases', ...phasesList.map((p) => p.fase)]}
-                  active={kanbanPhaseFilter}
-                  onChange={setKanbanPhaseFilter}
-                />
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-                {KANBAN_COLS.map((col) => {
-                  const cards = projectStages.filter(
-                    (s) =>
-                      s.status === col.status &&
-                      (kanbanPhaseFilter === 'Todas as fases' || s.phase === kanbanPhaseFilter)
-                  );
-                  return (
-                    <div
-                      key={col.status}
-                      className="bg-[#F0EEE9] rounded-xl p-3 flex flex-col gap-2.5 min-h-[240px]"
-                    >
-                      <div className="flex items-center justify-between px-1">
-                        <strong className="text-xs font-bold text-[#14181F]">{col.status}</strong>
-                        <span className="text-[11px] text-[#5B6472]">
-                          {col.status === 'Em andamento' ? `${cards.length} de 4` : cards.length}
-                        </span>
-                      </div>
-
-                      {cards.map((st) => {
-                        const isCrit = criticalIds.has(st.id);
-                        return (
-                          <button
-                            key={st.id}
-                            type="button"
-                            onClick={() => openEditStage(st)}
-                            className="text-left bg-white border border-[#E4E1DA] rounded-xl p-3 flex flex-col gap-2 hover:border-[#1F3A5F] cursor-pointer"
-                          >
-                            <strong className="text-[13px] text-[#14181F] leading-snug">
-                              {st.name}
-                            </strong>
-                            <div className="flex flex-wrap gap-1">
-                              <StatusBadge label={st.phase.split('·')[0].trim()} tone="info" />
-                              {isCrit && <StatusBadge label="Crítica" tone="crit" />}
-                              {st.delayJustification && (
-                                <StatusBadge label={st.delayCategory || 'Atrasada'} tone="bad" />
-                              )}
-                            </div>
-                            <ProgressBar pct={st.progressPct} />
-                            <span className="text-[11px] text-[#5B6472]">
-                              {st.responsible || 'Sem responsável'} · {st.progressPct}%
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  );
-                })}
-              </div>
-
-              <AlertNote tone="soft" title="Regras do quadro">
-                Mover uma etapa para “Concluída” exige o checklist de qualidade do POP completo. Mover para “Em andamento” é bloqueado se a etapa anterior da dependência ainda não terminou.
-              </AlertNote>
-            </div>
+          {tab === 'Kanban' && schedule && (
+            <ProjectKanban key={activeProject.id} uid={uid} project={activeProject} stages={projectStages} data={data} schedule={schedule} onEdit={openEditStage} />
           )}
-
-          {tab === 'Recursos' && (() => {
-            const today = todayISO();
-            const month = monthKey(today);
-            const payroll = calculateTeamPayroll(data, month);
-            const people = data.employees.filter((employee) => {
-              const cell = resolveTeamWeek(employee, weekStartingOn(today), data);
-              return cell.project?.id === activeProject.id && !cell.vacation && !cell.conflict;
-            });
-            const cost = payroll.centers.find((center) => center.id === activeProject.id)?.amount;
-            return (
-              <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
-                <h2 className="text-base font-semibold">Equipe alocada nesta obra</h2>
-                <p className="text-sm">
-                  {payroll.configured ? 'Custo de equipe previsto' : 'Custo de equipe conhecido'} · {formatMonthLabelBR(month)} · <strong>{formatBRL(cost)}</strong>
-                </p>
-                {people.length ? (
-                  <ul className="grid gap-2 sm:grid-cols-2">
-                    {people.map((employee) => (
-                      <li key={employee.id} className="rounded-lg border border-[#E4E1DA] p-3 text-sm">
-                        <strong>{employee.name}</strong> · {employee.role} · {employee.employmentType}
-                      </li>
-                    ))}
-                  </ul>
-                ) : <p className="text-sm text-[#5B6472]">Sem colaboradores disponíveis nesta obra na semana atual.</p>}
-              </section>
-            );
-          })()}
-
-          {tab === 'Riscos' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <section className="lg:col-span-2 bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
-                <h2 className="text-base font-semibold text-[#14181F]">Atrasos registrados</h2>
-                {delayedStages.length === 0 ? (
-                  <p className="text-sm text-[#5B6472]">
-                    Nenhum atraso registrado frente à linha de base original.
-                  </p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full border-collapse">
-                      <thead>
-                        <tr className="bg-[#F0EEE9] text-left text-xs font-semibold text-[#5B6472]">
-                          <th className="py-2.5 px-3 rounded-l-lg">Etapa</th>
-                          <th className="py-2.5 px-3">Categoria</th>
-                          <th className="py-2.5 px-3">Justificativa</th>
-                          <th className="py-2.5 px-3 rounded-r-lg">Situação</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {delayedStages.map((s) => (
-                          <tr key={s.id} className="border-b border-[#E4E1DA] text-[13px]">
-                            <td className="py-3 px-3 font-medium">{s.name}</td>
-                            <td className="py-3 px-3">{s.delayCategory || '—'}</td>
-                            <td className="py-3 px-3 text-[#5B6472]">{s.delayJustification}</td>
-                            <td className="py-3 px-3">
-                              <StatusBadge label={s.status} />
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </section>
-
-              <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-3">
-                <h2 className="text-base font-semibold text-[#14181F]">Linha de base x previsão</h2>
-                <div className="flex justify-between text-sm">
-                  <span className="text-[#5B6472]">Início</span>
-                  <strong>{formatDateBR(activeProject.startDate)}</strong>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-[#5B6472]">Entrega na linha de base</span>
-                  <strong>{formatDateBR(activeProject.baselineEndDate)}</strong>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-[#5B6472]">Entrega prevista atual</span>
-                  <strong>{formatDateBR(activeProject.forecastEndDate)}</strong>
-                </div>
-                {curvaSData.possuiDados && (
-                  <div className="flex justify-between text-sm items-center">
-                    <span className="text-[#5B6472]">Curva S (realizado / base)</span>
-                    <strong>
-                      {formatPercentBR(curvaSData.progressoRealizadoPct)} /{' '}
-                      {formatPercentBR(curvaSData.progressoPlanejadoPct)}
-                    </strong>
-                  </div>
-                )}
-                <AlertNote tone="info" title="Linha de base preservada">
-                  O plano original nunca é apagado. Ao replanejar prazos, o sistema exige justificativa.
-                </AlertNote>
-              </section>
-            </div>
+          {tab === 'Recursos' && (
+            <ProjectResources key={activeProject.id} uid={uid} project={activeProject} stages={projectStages} data={data} />
+          )}
+          {tab === 'Riscos' && schedule && (
+            <ProjectRisks key={activeProject.id} uid={uid} project={activeProject} stages={projectStages} data={data} schedule={schedule} onEdit={openEditStage} onSchedule={() => setTab('Cronograma')} />
           )}
 
           {tab === 'Diário de obra' && (
@@ -1447,7 +1255,7 @@ export function ProjectPlanningView({
               >
                 <option value="A fazer">A fazer</option>
                 <option value="Em andamento">Em andamento</option>
-                <option value="Aguardando material">Aguardando material</option>
+                <option value="Aguardando material">Aguardando</option>
                 <option value="Em conferência">Em conferência</option>
                 <option value="Concluída">Concluída</option>
               </select>
@@ -1457,7 +1265,7 @@ export function ProjectPlanningView({
               <select
                 id="stage-pop"
                 value={stPopId}
-                onChange={(e) => setStPopId(e.target.value)}
+                onChange={(e) => { setStPopId(e.target.value); setStChecklistDone([]); }}
                 className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm bg-white"
               >
                 <option value="">Sem POP vinculado</option>
@@ -1539,25 +1347,21 @@ export function ProjectPlanningView({
           {/* Delay justification */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold">Categoria do atraso (se houver)</label>
+              <label htmlFor="stage-delay-category" className="text-xs font-semibold">Categoria do atraso</label>
               <select
-                value={stDelayCat}
+                id="stage-delay-category" value={stDelayCat}
                 onChange={(e) => setStDelayCat(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm bg-white"
               >
                 <option value="">Sem atraso</option>
-                <option value="Chuva">Chuva</option>
-                <option value="Material do cliente">Material do cliente</option>
-                <option value="Fornecedor">Fornecedor</option>
-                <option value="Equipe">Equipe</option>
-                <option value="Outro">Outro</option>
+                {DELAY_CATEGORIES.map((category) => <option key={category}>{category}</option>)}
               </select>
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold">Justificativa do atraso</label>
+              <label htmlFor="stage-delay-reason" className="text-xs font-semibold">Justificativa do atraso</label>
               <input
                 type="text"
-                value={stDelayJust}
+                id="stage-delay-reason" maxLength={500} value={stDelayJust}
                 onChange={(e) => setStDelayJust(e.target.value)}
                 placeholder="Descreva o motivo do desvio"
                 className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm"
@@ -1565,6 +1369,22 @@ export function ProjectPlanningView({
             </div>
           </div>
 
+          {(stStatus === 'Aguardando material' || stDelayCat === 'Material do cliente' || stMatDate) && (
+            <label className="grid gap-1 text-xs font-semibold">Chegada prevista do material do cliente
+              <input type="date" value={stMatDate} onChange={(event) => setStMatDate(event.target.value)}
+                className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm font-normal" />
+            </label>
+          )}
+          {editingStage && (() => {
+            const week = plannedWeeks(scheduleDate)[0];
+            const people = data.employees.filter((employee) => {
+              const cell = resolveTeamWeek(employee, week, data);
+              return cell.allocation?.stageId === editingStage.id && !cell.vacation && !cell.conflict && cell.started;
+            });
+            return <p className="text-xs text-[#5B6472]"><strong>Colaboradores na semana · </strong>
+              {people.length ? people.map((employee) => employee.name).join(', ') : 'Sem atribuições'}
+            </p>;
+          })()}
           <RegisteredBySelect value={stActor} onChange={setStActor} id="stage-actor" />
           {stError && (
             <AlertNote tone="bad" title="Atenção">

@@ -33,6 +33,7 @@ import type {
   ProjectType,
   Quote,
   ScheduleBaseline,
+  StageStatus,
 } from '../types/pilotis';
 import {
   addDaysISO,
@@ -45,6 +46,12 @@ import {
   getProjectSchedule,
   getScheduleBaselineStages,
   planningTodayISO,
+  normalizeDelayCategory,
+  DEFAULT_WORK_IN_PROGRESS_LIMIT,
+  resolveTeamWeek,
+  validateStageDelay,
+  validateStageWorkflow,
+  validateWorkInProgressLimit,
   validateReplanJustification,
   roundCents,
   weekStartingOn,
@@ -194,6 +201,7 @@ export function subscribePilotisCollections(
     { colName: 'projects', stateKey: 'projects' },
     { colName: 'parcelas', stateKey: 'installments' },
     { colName: 'stages', stateKey: 'stages' },
+    { colName: 'projectRisks', stateKey: 'projectRisks' },
     { colName: 'baselines', stateKey: 'baselines' },
     { colName: 'scheduleProgress', stateKey: 'scheduleProgress' },
     { colName: 'dailyLogs', stateKey: 'dailyLogs' },
@@ -1003,27 +1011,33 @@ export async function replanProjectSchedule(params: {
   });
 }
 
+export async function saveWorkInProgressLimit(uid: string, actor: ActorRole, projectId: string, limit: number) {
+  validateWorkInProgressLimit(limit);
+  const ref = doc(db, 'projects', projectId);
+  await runTransaction(db, async (tx) => {
+    const snapshot = await tx.get(ref);
+    const project = snapshot.data() as Project | undefined;
+    if (!project || project.ownerUid !== uid) throw new Error('Obra indisponível.');
+    tx.update(ref, { workInProgressLimit: limit, updatedBy: actor, updatedAt: serverTimestamp() });
+    tx.set(doc(db, 'auditLogs', generateId('aud')), {
+      ownerUid: uid, registeredBy: actor, action: 'Atualização', entityType: 'projects',
+      summary: clampStr(`Limite de etapas em andamento · ${project.name}`, 240),
+      beforeValue: String(project.workInProgressLimit ?? DEFAULT_WORK_IN_PROGRESS_LIMIT), afterValue: String(limit), createdAt: serverTimestamp(),
+    });
+  });
+}
+
 export async function saveProjectStage(params: {
   uid: string; actor: ActorRole; project: Project; knownStages: ProjectStage[];
-  stageId?: string; payload: StagePayload;
-}): Promise<void> {
-  const { uid, actor, project, knownStages, payload } = params;
+} & ({ stageId?: string; payload: StagePayload } | { stageId: string; moveTo: StageStatus })): Promise<void> {
+  const { uid, actor, project, knownStages } = params;
   const stageId = params.stageId ?? generateId('stg');
   const projectRef = doc(db, 'projects', project.id);
   const stageRef = doc(db, 'stages', stageId);
-  if (!payload.wbsCode || !payload.phase || !payload.name) {
-    throw new Error('Preencha o código, a fase e o nome do pacote de trabalho.');
-  }
-  if (!params.stageId && !payload.deliverable) throw new Error('Informe a entrega do pacote de trabalho.');
-  if (![payload.startWeek, payload.durationWeeks].every((value) => Number.isInteger(value) && value >= 0)) {
-    throw new Error('Informe semanas de início e de duração inteiras e não negativas.');
-  }
-  if (payload.dependsOn.length > 10) throw new Error('Selecione até 10 etapas predecessoras.');
-
   await runTransaction(db, async (tx) => {
     const projectSnapshot = await tx.get(projectRef);
     const current = { ...projectSnapshot.data(), id: project.id } as Project;
-    if (!projectSnapshot.exists() || current.ownerUid !== uid || payload.projectId !== project.id) {
+    if (!projectSnapshot.exists() || current.ownerUid !== uid) {
       throw new Error('Obra indisponível.');
     }
     if ((current.scheduleRevision ?? 0) !== (project.scheduleRevision ?? 0)) {
@@ -1032,6 +1046,32 @@ export async function saveProjectStage(params: {
     const stages = await readProjectStages(tx, current, knownStages);
     const previous = stages.find((stage) => stage.id === stageId);
     if (params.stageId && !previous) throw new Error('Etapa indisponível.');
+    let payload: StagePayload;
+    if ('moveTo' in params) {
+      if (!previous) throw new Error('Etapa indisponível.');
+      const { id, ownerUid, createdAt, createdBy, updatedAt, updatedBy, ...fields } = previous;
+      payload = { ...fields, status: params.moveTo, dependsOn: fields.dependsOn ?? [], checklistCompleted: fields.checklistCompleted ?? [] };
+      if (previous.status === params.moveTo) return;
+    } else {
+      payload = params.payload;
+    }
+    const { status } = payload;
+    const forecastProgress = status === 'Concluída' ? 100
+      : previous?.status === 'Concluída' && payload.progressPct === previous.progressPct ? 0 : payload.progressPct;
+    payload = {
+      ...payload, progressPct: forecastProgress,
+      delayCategory: normalizeDelayCategory(payload.delayCategory ?? ''),
+      delayJustification: (payload.delayJustification ?? '').trim(),
+    };
+    if (payload.projectId !== project.id) throw new Error('A etapa pertence a outra obra.');
+    if (!payload.wbsCode || !payload.phase || !payload.name) {
+      throw new Error('Preencha o código, a fase e o nome do pacote de trabalho.');
+    }
+    if (!params.stageId && !payload.deliverable) throw new Error('Informe a entrega do pacote de trabalho.');
+    if (![payload.startWeek, payload.durationWeeks].every((value) => Number.isInteger(value) && value >= 0)) {
+      throw new Error('Informe semanas de início e de duração inteiras e não negativas.');
+    }
+    if (payload.dependsOn.length > 10) throw new Error('Selecione até 10 etapas predecessoras.');
     const others = stages.filter((stage) => stage.id !== stageId);
     if (others.some((stage) => stage.wbsCode === payload.wbsCode)) {
       throw new Error('Esse código EAP já existe nesta obra. Informe um código diferente.');
@@ -1048,10 +1088,22 @@ export async function saveProjectStage(params: {
     const schedule = getProjectSchedule(current, nextStages);
     const cycle = describeScheduleCycle(nextStages, schedule.criticalPath);
     if (cycle) throw new Error(cycle);
-    if (candidate.status !== 'A fazer') {
-      const predecessor = stages.find((stage) => candidate.dependsOn.includes(stage.id) && stage.status !== 'Concluída');
-      if (predecessor) throw new Error(`Conclua a etapa predecessora “${predecessor.name}” antes de iniciar esta etapa.`);
-    }
+    const criteria = candidate.status === 'Concluída' && candidate.popId
+      ? (await tx.get(doc(db, 'pops', candidate.popId))).data() as Pop | undefined : undefined;
+    if (criteria && criteria.ownerUid !== uid) throw new Error('POP vinculado indisponível.');
+    validateStageWorkflow(candidate, previous, others, current, criteria);
+
+    const oldEnd = previous ? getProjectSchedule(current, stages).details.get(stageId)?.terminoMaisCedo : undefined;
+    const newEnd = schedule.details.get(stageId)?.terminoMaisCedo;
+    const baselineEnd = previous ? (previous.baselineStartWeek ?? previous.startWeek) + (previous.baselineDurationWeeks ?? previous.durationWeeks) : undefined;
+    const delayChanged = !previous || payload.delayCategory !== normalizeDelayCategory(previous.delayCategory ?? '') ||
+      payload.delayJustification !== (previous.delayJustification ?? '').trim();
+    const extended = oldEnd !== undefined && newEnd !== undefined && baselineEnd !== undefined &&
+      newEnd > oldEnd && newEnd > baselineEnd;
+    if (delayChanged || extended) validateStageDelay(candidate, extended || (
+      baselineEnd !== undefined && newEnd !== undefined && newEnd > baselineEnd && delayChanged
+    ));
+
     if (previous) {
       tx.update(stageRef, {
         ...payload,
@@ -1087,7 +1139,7 @@ export async function saveProjectStage(params: {
     tx.set(doc(db, 'auditLogs', generateId('aud')), {
       ownerUid: uid, registeredBy: actor, action: previous ? 'Atualização' : 'Criação',
       entityType: 'stages', summary: clampStr(`Etapa ${previous ? 'atualizada' : 'criada'}: ${payload.name}`, 240),
-      beforeValue: previous?.status ?? '', afterValue: payload.status,
+      beforeValue: previous?.status ?? '', afterValue: clampStr([payload.status, payload.delayCategory, payload.delayJustification].filter(Boolean).join(' · '), 240),
       createdAt: serverTimestamp(),
     });
   });
@@ -1584,30 +1636,52 @@ export async function submitTeamPayroll(
 
 export async function saveWeeklyAllocation(
   uid: string, actor: ActorRole, employee: Employee, week: string,
-  target: { status: Allocation['status']; projectId: string; projectName: string },
+  target: { status: Allocation['status']; projectId: string; projectName: string; stageId?: string },
   allocations: Allocation[],
+  preventConflictingAssignment = false,
 ) {
   if (!isValidISODate(week) || weekStartingOn(week) !== week) {
     throw new Error('Escolha a segunda-feira de início da semana.');
   }
-  const existing = allocations.filter((item) =>
-    item.ownerUid === uid && item.employeeId === employee.id && item.weekStart === week,
-  );
-  const [previous, ...duplicates] = existing;
-  const batch = writeBatch(db);
-  const ref = doc(db, 'allocations', previous?.id ?? 'alloc-' + employee.id + '-' + week);
-  const row = { ...target, employeeId: employee.id, employeeName: employee.name, weekStart: week };
-  if (previous) {
-    batch.update(ref, { ...row, updatedBy: actor, updatedAt: serverTimestamp() });
-  } else {
-    batch.set(ref, { ...row, ...auditFields(uid, actor) });
-  }
-  for (const duplicate of duplicates) batch.delete(doc(db, 'allocations', duplicate.id));
-  batch.set(doc(db, 'auditLogs', generateId('aud')), {
-    ownerUid: uid, registeredBy: actor, action: previous ? 'Atualização' : 'Criação', entityType: 'allocations',
-    summary: clampStr('Alocação de ' + employee.name + ' na semana de ' + formatDateBR(week), 240),
-    beforeValue: clampStr(existing.map((item) => item.projectName).join(' / '), 240),
-    afterValue: clampStr(target.projectName, 240), createdAt: serverTimestamp(),
+  const canonicalId = 'alloc-' + employee.id + '-' + week;
+  const legacyIds = allocations.filter((item) => item.id !== canonicalId &&
+    item.ownerUid === uid && item.employeeId === employee.id && item.weekStart === week).map((item) => item.id);
+  const ref = doc(db, 'allocations', canonicalId);
+  await runTransaction(db, async (tx) => {
+    const rows = await Promise.all([canonicalId, ...new Set(legacyIds)].map(async (id) => {
+      const snapshot = await tx.get(doc(db, 'allocations', id));
+      return snapshot.exists() ? { ...snapshot.data(), id } as Allocation : null;
+    }));
+    const existing = rows.filter((row): row is Allocation => row !== null);
+    const [previous, ...duplicates] = existing;
+    const stageId = target.status === 'Obra' ? target.stageId ?? '' : '';
+    let stage: ProjectStage | undefined;
+    if (stageId) {
+      const liveEmployee = (await tx.get(doc(db, 'employees', employee.id))).data() as Employee | undefined;
+      stage = (await tx.get(doc(db, 'stages', stageId))).data() as ProjectStage | undefined;
+      if (!liveEmployee || liveEmployee.ownerUid !== uid) throw new Error('Colaborador indisponível.');
+      if (!stage || stage.ownerUid !== uid || stage.projectId !== target.projectId) throw new Error('Escolha uma etapa desta obra.');
+      const availability = resolveTeamWeek(liveEmployee, week, { employees: [liveEmployee], allocations: [], projects: [] });
+      if (!availability.started || availability.vacation || (preventConflictingAssignment && existing.some((row) => row.status === 'Férias'))) {
+        throw new Error('O colaborador está indisponível nesta semana. Confira a alocação e as férias em Equipe.');
+      }
+      if (preventConflictingAssignment && existing.some((row) =>
+        (row.projectId !== target.projectId && row.projectId !== 'Sem obra') || (row.stageId && row.stageId !== stageId),
+      )) throw new Error('Conflito de alocação nesta semana. Resolva a atribuição existente na aba Equipe.');
+    }
+    const row = { ...target, stageId, employeeId: employee.id, employeeName: employee.name, weekStart: week };
+    if (previous?.id === canonicalId) {
+      tx.update(ref, { ...row, updatedBy: actor, updatedAt: serverTimestamp() });
+    } else {
+      tx.set(ref, { ...row, ...auditFields(uid, actor) });
+      if (previous) tx.delete(doc(db, 'allocations', previous.id));
+    }
+    for (const duplicate of duplicates) tx.delete(doc(db, 'allocations', duplicate.id));
+    tx.set(doc(db, 'auditLogs', generateId('aud')), {
+      ownerUid: uid, registeredBy: actor, action: previous ? 'Atualização' : 'Criação', entityType: 'allocations',
+      summary: clampStr('Alocação de ' + employee.name + ' na semana de ' + formatDateBR(week), 240),
+      beforeValue: clampStr(existing.map((item) => [item.projectName, item.stageId].filter(Boolean).join(' · ')).join(' / '), 240),
+      afterValue: clampStr([target.projectName, stage?.name].filter(Boolean).join(' · '), 240), createdAt: serverTimestamp(),
+    });
   });
-  await batch.commit();
 }
