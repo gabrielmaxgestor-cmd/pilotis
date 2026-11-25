@@ -32,6 +32,8 @@ export interface CompanySettings extends AuditMeta {
   accentColor: string;
   logoDataUrl?: string;
   pdfShowLogo: boolean;
+  popPdfHeader?: string;
+  popPdfFooter?: string;
   inssRate: number;
   fgtsRate: number;
   vacationRate: number;
@@ -166,6 +168,7 @@ export interface ProjectStage extends AuditMeta {
   delayCategory: string;
   delayJustification: string;
   checklistCompleted: string[];
+  popReview?: StagePopReview | null;
 }
 
 export interface ScheduleBaselineStage {
@@ -350,18 +353,54 @@ export interface ProjectRisk extends AuditMeta {
 
 export type PopStatus = 'Vigente' | 'Em revisão';
 
-export interface Pop extends AuditMeta {
+export interface PopAttachment {
   id: string;
+  name: string;
+  contentType: string;
+  size: number;
+  chunkCount: number;
+}
+
+export interface StagePopReview {
+  popId: string;
+  version: string;
+  acceptanceCriteria: string[];
+}
+
+export interface PopContent {
   title: string;
   serviceType: string;
-  version: string;
   linkedStagePhase: string;
   objective: string;
   materialsAndEpi: string;
   steps: string[];
   acceptanceCriteria: string[];
-  status: PopStatus;
   usedInOnboarding: boolean;
+  tools?: string;
+  protectiveEquipment?: string;
+  attachments?: PopAttachment[];
+}
+
+export interface Pop extends PopContent, AuditMeta {
+  id: string;
+  version: string;
+  status: PopStatus;
+  revision?: number;
+  publicationNumber?: number;
+  approvedBy?: ActorRole;
+  publishedOn?: string;
+  changeSummary?: string;
+  draft?: PopContent | null;
+}
+
+export interface PopVersion extends PopContent, AuditMeta {
+  id: string;
+  popId: string;
+  version: string;
+  publicationNumber: number;
+  approvedBy?: ActorRole;
+  publishedOn?: string;
+  changeSummary?: string;
 }
 
 export type ComplianceKind = 'Obrigação' | 'Certidão' | 'Documento de obra' | 'Licitação';
@@ -448,6 +487,7 @@ export interface PilotisDataState {
   employees: Employee[];
   allocations: Allocation[];
   pops: Pop[];
+  popVersions?: PopVersion[];
   complianceItems: ComplianceItem[];
   tenders: Tender[];
   warrantyCalls: WarrantyCall[];

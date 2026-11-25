@@ -71,7 +71,7 @@ service cloud.firestore {
       return data.keys().hasAll(['ownerUid', 'companyName', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
         && data.keys().hasOnly([
           'ownerUid', 'companyName', 'cnpj', 'fiscalAddress', 'city', 'email', 'phone',
-          'accentColor', 'logoDataUrl', 'pdfShowLogo', 'inssRate', 'fgtsRate', 'vacationRate',
+          'accentColor', 'logoDataUrl', 'pdfShowLogo', 'popPdfHeader', 'popPdfFooter', 'inssRate', 'fgtsRate', 'vacationRate',
           'thirteenthRate', 'targetMarginPct', 'taxParamsEffectiveDate', 'taxParamsSource',
           'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
         ])
@@ -85,6 +85,8 @@ service cloud.firestore {
         && (!('accentColor' in data) || isValidStr(data.accentColor, 20))
         && (!('logoDataUrl' in data) || isValidStr(data.logoDataUrl, 200000))
         && (!('pdfShowLogo' in data) || data.pdfShowLogo is bool)
+        && (!('popPdfHeader' in data) || isValidStr(data.popPdfHeader, 120))
+        && (!('popPdfFooter' in data) || isValidStr(data.popPdfFooter, 120))
         && (!('inssRate' in data) || isValidNonNegNum(data.inssRate))
         && (!('fgtsRate' in data) || isValidNonNegNum(data.fgtsRate))
         && (!('vacationRate' in data) || isValidNonNegNum(data.vacationRate))
@@ -236,7 +238,7 @@ service cloud.firestore {
           'ownerUid', 'projectId', 'wbsCode', 'phase', 'deliverable', 'name', 'responsible', 'durationWeeks',
           'startWeek', 'baselineStartWeek', 'baselineDurationWeeks', 'baselineBudgetedCost', 'progressPct', 'budgetedCost',
           'popId', 'dependsOn', 'isMilestone', 'status', 'materialExpectedDate', 'delayCategory',
-          'delayJustification', 'checklistCompleted', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+          'delayJustification', 'checklistCompleted', 'popReview', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
         ])
         && hasAuditFields(data)
         && isValidId(data.projectId)
@@ -259,7 +261,14 @@ service cloud.firestore {
         && (!('materialExpectedDate' in data) || isValidStr(data.materialExpectedDate, 20))
         && (!('delayCategory' in data) || isValidStr(data.delayCategory, 60))
         && (!('delayJustification' in data) || isValidStr(data.delayJustification, 500))
-        && (!('checklistCompleted' in data) || isValidStringList(data.checklistCompleted, 20, 200));
+        && (!('checklistCompleted' in data) || isValidStringList(data.checklistCompleted, 20, 200))
+        && (data.get('popReview', null) == null || (
+          data.status == 'Concluída' && data.popReview is map
+          && data.popReview.keys().hasOnly(['popId', 'version', 'acceptanceCriteria'])
+          && data.popReview.popId == data.popId && isValidId(data.popReview.popId)
+          && isValidNonEmptyStr(data.popReview.version, 20)
+          && isValidStringList(data.popReview.acceptanceCriteria, 20, 200)
+        ));
     }
 
     function isValidDailyLog(data) {
@@ -410,26 +419,41 @@ service cloud.firestore {
         && (!('projectName' in data) || isValidStr(data.projectName, 160));
     }
 
-    function isValidPop(data) {
-      return data.keys().hasAll([
-        'ownerUid', 'title', 'serviceType', 'version', 'status', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
-      ])
-        && data.keys().hasOnly([
-          'ownerUid', 'title', 'serviceType', 'version', 'linkedStagePhase', 'objective',
-          'materialsAndEpi', 'steps', 'acceptanceCriteria', 'status', 'usedInOnboarding',
-          'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
-        ])
-        && hasAuditFields(data)
-        && isValidNonEmptyStr(data.title, 160)
+    function hasPopContent(data) {
+      return isValidNonEmptyStr(data.title, 160)
         && isValidNonEmptyStr(data.serviceType, 80)
-        && isValidNonEmptyStr(data.version, 20)
-        && data.status in ['Vigente', 'Em revisão']
         && (!('linkedStagePhase' in data) || isValidStr(data.linkedStagePhase, 80))
         && (!('objective' in data) || isValidStr(data.objective, 1000))
         && (!('materialsAndEpi' in data) || isValidStr(data.materialsAndEpi, 1000))
+        && (!('tools' in data) || isValidStr(data.tools, 1000))
+        && (!('protectiveEquipment' in data) || isValidStr(data.protectiveEquipment, 1000))
         && (!('steps' in data) || isValidStringList(data.steps, 20, 300))
         && (!('acceptanceCriteria' in data) || isValidStringList(data.acceptanceCriteria, 20, 200))
-        && (!('usedInOnboarding' in data) || data.usedInOnboarding is bool);
+        && (!('usedInOnboarding' in data) || data.usedInOnboarding is bool)
+        && (!('attachments' in data) || (data.attachments is list && data.attachments.size() <= 8));
+    }
+
+    function hasPopApproval(data) {
+      return (!('approvedBy' in data) || isValidActor(data.approvedBy))
+        && (!('publishedOn' in data) || isValidNonEmptyStr(data.publishedOn, 10))
+        && (!('changeSummary' in data) || isValidNonEmptyStr(data.changeSummary, 500));
+    }
+
+    function isValidPop(data) {
+      return data.keys().hasOnly([
+          'ownerUid', 'title', 'serviceType', 'version', 'linkedStagePhase', 'objective', 'materialsAndEpi',
+          'tools', 'protectiveEquipment', 'steps', 'acceptanceCriteria', 'status', 'usedInOnboarding', 'attachments',
+          'revision', 'publicationNumber', 'approvedBy', 'publishedOn', 'changeSummary', 'draft',
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+        ])
+        && hasAuditFields(data) && hasPopContent(data) && hasPopApproval(data)
+        && isValidNonEmptyStr(data.version, 20) && data.status in ['Vigente', 'Em revisão']
+        && (!('revision' in data) || (data.revision is int && data.revision > 0))
+        && (!('publicationNumber' in data) || (data.publicationNumber is int && data.publicationNumber >= 0))
+        && (data.get('draft', null) == null || (data.status == 'Em revisão' && data.draft is map
+          && data.draft.keys().hasOnly(['title', 'serviceType', 'linkedStagePhase', 'objective', 'materialsAndEpi',
+             'tools', 'protectiveEquipment', 'steps', 'acceptanceCriteria', 'usedInOnboarding', 'attachments'])
+          && hasPopContent(data.draft)));
     }
 
     function isValidComplianceItem(data) {
@@ -846,7 +870,34 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().createdBy == existing().createdBy
         && incoming().updatedAt == request.time;
-      allow delete: if isValidId(popId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow delete: if isValidId(popId) && isOwner(existing().ownerUid) && !('publicationNumber' in existing());
+    }
+
+
+    match /popVersions/{versionId} {
+      allow get, list: if isOwner(existing().ownerUid);
+      allow create: if isValidId(versionId) && isSignedIn() && hasAuditFields(incoming())
+        && incoming().keys().hasOnly(['ownerUid', 'popId', 'version', 'publicationNumber', 'title', 'serviceType',
+          'linkedStagePhase', 'objective', 'materialsAndEpi', 'tools', 'protectiveEquipment', 'steps', 'acceptanceCriteria',
+          'usedInOnboarding', 'attachments', 'approvedBy', 'publishedOn', 'changeSummary',
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+        && hasPopContent(incoming()) && hasPopApproval(incoming())
+        && isValidId(incoming().popId) && isValidNonEmptyStr(incoming().version, 20)
+        && incoming().publicationNumber is int && incoming().publicationNumber > 0
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && getAfter(/databases/$(database)/documents/pops/$(incoming().popId)).data.ownerUid == request.auth.uid;
+    }
+
+    match /popMediaChunks/{chunkId} {
+      allow get: if isValidId(chunkId) && isOwner(existing().ownerUid);
+      allow create: if isValidId(chunkId) && isSignedIn() && hasAuditFields(incoming())
+        && incoming().keys().hasOnly(['ownerUid', 'popId', 'attachmentId', 'index', 'content',
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+        && isValidId(incoming().popId) && isValidId(incoming().attachmentId)
+        && incoming().index is int && incoming().index >= 0 && incoming().index < 8
+        && incoming().content is bytes && incoming().content.size() > 0 && incoming().content.size() <= 655360
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && getAfter(/databases/$(database)/documents/pops/$(incoming().popId)).data.ownerUid == request.auth.uid;
     }
 
     match /complianceItems/{itemId} {

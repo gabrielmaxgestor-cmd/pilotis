@@ -21,3 +21,5 @@ export * from './projectOperations';
 export * from './fieldWork';
 
 export * from './projectClosure';
+
+export * from './pops';

@@ -37,6 +37,8 @@ import {
   plannedWeeks,
   resolveTeamWeek,
   getProjectSchedule,
+  isPublishedPop,
+  linkedPopChecklist,
   getRecordedScheduleProgress,
   getWorkPackageBudget,
   planningTodayISO,
@@ -1054,7 +1056,7 @@ export function ProjectPlanningView({
                 className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm bg-white"
               >
                 <option value="">Sem POP vinculado</option>
-                {data.pops.map((p) => (
+                {data.pops.filter((p) => isPublishedPop(p) || p.id === stPopId).map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.title} ({p.version})
                   </option>
@@ -1103,13 +1105,14 @@ export function ProjectPlanningView({
           {/* POP acceptance checklist */}
           {(() => {
             const pop = data.pops.find((p) => p.id === stPopId);
-            if (!pop || pop.acceptanceCriteria.length === 0) return null;
+            const review = linkedPopChecklist({ popId: stPopId, status: stStatus, popReview: editingStage?.popReview }, pop);
+            if (!review?.acceptanceCriteria.length) return null;
             return (
               <div className="border border-[#E4E1DA] rounded-xl p-3 flex flex-col gap-2">
                 <strong className="text-xs text-[#14181F]">
-                  Checklist de qualidade do POP ({pop.title})
+                  Checklist de qualidade do POP · {pop?.title || 'Procedimento vinculado'} · {review.version}
                 </strong>
-                {pop.acceptanceCriteria.map((crit) => {
+                {review.acceptanceCriteria.map((crit) => {
                   const done = stChecklistDone.includes(crit);
                   return (
                     <label key={crit} className="inline-flex items-center gap-2 text-xs cursor-pointer">

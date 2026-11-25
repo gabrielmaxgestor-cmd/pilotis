@@ -118,6 +118,8 @@ export function SettingsView({
   );
   const [logoDataUrl, setLogoDataUrl] = useState(data.settings?.logoDataUrl || '');
   const [pdfShowLogo, setPdfShowLogo] = useState(data.settings?.pdfShowLogo ?? true);
+  const [popPdfHeader, setPopPdfHeader] = useState(data.settings?.popPdfHeader ?? '');
+  const [popPdfFooter, setPopPdfFooter] = useState(data.settings?.popPdfFooter ?? '');
   const [companyActor, setCompanyActor] = useState<ActorRole>('Sócio');
 
   // Tax parameters & margin target form
@@ -153,6 +155,8 @@ export function SettingsView({
       setAccentColor(normalizeHexColor(data.settings.accentColor, '#9A6212'));
       setLogoDataUrl(data.settings.logoDataUrl || '');
       setPdfShowLogo(data.settings.pdfShowLogo ?? true);
+      setPopPdfHeader(data.settings.popPdfHeader ?? '');
+      setPopPdfFooter(data.settings.popPdfFooter ?? '');
 
       setInssRate(data.settings.inssRate ? String(data.settings.inssRate) : '');
       setFgtsRate(data.settings.fgtsRate ? String(data.settings.fgtsRate) : '');
@@ -288,6 +292,8 @@ export function SettingsView({
         accentColor: normalizeHexColor(accentColor, '#9A6212'),
         logoDataUrl: clampStr(logoDataUrl, 200000),
         pdfShowLogo,
+        popPdfHeader: clampStr(popPdfHeader, 120),
+        popPdfFooter: clampStr(popPdfFooter, 120),
       });
       setFeedback({
         tone: 'ok',
@@ -829,6 +835,17 @@ export function SettingsView({
                 className="w-4 h-4 rounded border-[#E4E1DA]"
               />
               Incluir logo ou emblema no cabeçalho de contratos, POPs e relatórios
+            </label>
+            <label className="grid gap-1 text-sm font-semibold">
+              Cabeçalho do PDF dos POPs
+              <input className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm font-normal focus-visible:ring-2 focus-visible:ring-[#1F3A5F]"
+                value={popPdfHeader} maxLength={120} onChange={(event) => setPopPdfHeader(event.target.value)}
+                placeholder="Procedimento Operacional Padrão" />
+            </label>
+            <label className="grid gap-1 text-sm font-semibold">
+              Rodapé do PDF dos POPs
+              <input className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm font-normal focus-visible:ring-2 focus-visible:ring-[#1F3A5F]"
+                value={popPdfFooter} maxLength={120} onChange={(event) => setPopPdfFooter(event.target.value)} />
             </label>
           </section>
         </form>

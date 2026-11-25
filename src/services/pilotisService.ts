@@ -52,6 +52,8 @@ import {
   describeScheduleCycle,
   diffDaysISO,
   getProjectSchedule,
+  isPublishedPop,
+  linkedPopChecklist,
   getClosureReview,
   getWarrantyWindow,
   isReleasedProject,
@@ -221,6 +223,7 @@ export function subscribePilotisCollections(
     { colName: 'employees', stateKey: 'employees' },
     { colName: 'allocations', stateKey: 'allocations' },
     { colName: 'pops', stateKey: 'pops' },
+    { colName: 'popVersions', stateKey: 'popVersions' },
     { colName: 'complianceItems', stateKey: 'complianceItems' },
     { colName: 'tenders', stateKey: 'tenders' },
     { colName: 'warrantyCalls', stateKey: 'warrantyCalls' },
@@ -399,6 +402,8 @@ export async function upsertCompanySettings(
         accentColor: clampStr(data.accentColor || '#9A6212', 20),
         logoDataUrl: clampStr(data.logoDataUrl || '', 200000),
         pdfShowLogo: data.pdfShowLogo ?? true,
+        popPdfHeader: clampStr(data.popPdfHeader || '', 120),
+        popPdfFooter: clampStr(data.popPdfFooter || '', 120),
         inssRate: data.inssRate ?? 0,
         fgtsRate: data.fgtsRate ?? 0,
         vacationRate: data.vacationRate ?? 0,
@@ -827,7 +832,7 @@ function buildScheduleStages(
     : Math.ceil((diffDaysISO(addMonthsISO(project.startDate, months), project.startDate) ?? 0) / 7);
   const scaleWeek = (week: number) => Math.round(week * durationWeeks / templateWeeks);
   const wbsToId = new Map(template.map((item) => [item.wbsCode, generateId('stg')]));
-  const currentPops = pops.filter((pop) => pop.status === 'Vigente');
+  const currentPops = pops.filter((pop) => poisPublishedPop(p) && (p.status === 'Vigente' || (p.publicationNumber ?? 0) > 0));
   const deliverables = new Map<string, Map<string, number>>();
 
   const stages: ProjectStage[] = template.map((item, index) => {
@@ -1117,10 +1122,20 @@ export async function saveProjectStage(params: {
     const schedule = getProjectSchedule(current, nextStages);
     const cycle = describeScheduleCycle(nextStages, schedule.criticalPath);
     if (cycle) throw new Error(cycle);
-    const criteria = candidate.status === 'Concluída' && candidate.popId
-      ? (await tx.get(doc(db, 'pops', candidate.popId))).data() as Pop | undefined : undefined;
-    if (criteria && criteria.ownerUid !== uid) throw new Error('POP vinculado indisponível.');
-    validateStageWorkflow(candidate, previous, others, current, criteria);
+    const changedPop = Boolean(candidate.popId && candidate.popId !== previous?.popId);
+    const retainedReview = candidate.status === 'Concluída' && previous?.status === 'Concluída' &&
+      previous.popReview?.popId === candidate.popId ? previous.popReview : undefined;
+    const readLivePop = candidate.popId && (changedPop || (candidate.status === 'Concluída' && !retainedReview));
+    const popSnapshot = readLivePop ? await tx.get(doc(db, 'pops', candidate.popId)) : null;
+    const livePop = popSnapshot?.exists() ? { ...popSnapshot.data(), id: candidate.popId } as Pop : undefined;
+    if (readLivePop && (!livePop || livePop.ownerUid !== uid || !isPublishedPop(livePop))) {
+      throw new Error('Vincule um POP publicado para conferir a etapa.');
+    }
+    const popReview = candidate.status === 'Concluída'
+      ? retainedReview ?? linkedPopChecklist({ ...candidate, popReview: null }, livePop) ?? null
+      : null;
+    validateStageWorkflow(candidate, previous, others, current, popReview ?? undefined);
+    if (popReview) payload.checklistCompleted = popReview.acceptanceCriteria.filter((item) => payload.checklistCompleted.includes(item));
 
     const oldEnd = previous ? getProjectSchedule(current, stages).details.get(stageId)?.terminoMaisCedo : undefined;
     const newEnd = schedule.details.get(stageId)?.terminoMaisCedo;
@@ -1135,7 +1150,7 @@ export async function saveProjectStage(params: {
 
     if (previous) {
       tx.update(stageRef, {
-        ...payload,
+        ...payload, popReview,
         baselineStartWeek: previous.baselineStartWeek ?? previous.startWeek ?? payload.startWeek,
         baselineDurationWeeks: previous.baselineDurationWeeks ?? previous.durationWeeks ?? payload.durationWeeks,
         baselineBudgetedCost,
@@ -1143,7 +1158,7 @@ export async function saveProjectStage(params: {
       });
     } else {
       tx.set(stageRef, {
-        ...payload, baselineBudgetedCost: payload.budgetedCost,
+        ...payload, popReview, baselineBudgetedCost: payload.budgetedCost,
         baselineStartWeek: schedule.details.get(stageId)!.inicioMaisCedo,
         ...auditFields(uid, actor),
       });
@@ -1798,7 +1813,7 @@ export async function closeProject(
       current.clientId ? tx.get(doc(db, 'clients', current.clientId)) : Promise.resolve(null),
     ]);
     if (currentStages.length !== stageRefs.length) throw new Error('Há etapas indisponíveis. Revise o cronograma antes de encerrar.');
-    const popIds = [...new Set(currentStages.map((stage) => stage.popId).filter(Boolean))];
+    const popIds = [...new Set(currentStages.filter((stage) => stage.popReview?.popId !== stage.popId).map((stage) => stage.popId).filter(Boolean))];
     const pops = await readClosureRows<Pop>(tx, popIds.map((id) => doc(db, 'pops', id)));
     const review = getClosureReview(current, {
       stages: currentStages, installments: currentInstallments, transactions: currentTransactions,

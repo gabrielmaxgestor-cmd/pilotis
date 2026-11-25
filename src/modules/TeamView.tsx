@@ -38,6 +38,7 @@ import {
   calculateTeamPayroll,
   formatMonthLabelBR,
   onboardingDeadline,
+  isPublishedPop,
   getOnboardingAlert,
   plannedWeeks,
   resolveTeamWeek,
@@ -1390,6 +1391,21 @@ export function TeamView({
 
           {tab === 'Segurança e capacitação' && (
             <div className="flex flex-col gap-4">
+              <section className="grid gap-3 rounded-xl border border-[#E4E1DA] bg-white p-4 sm:p-5">
+                <h2 className="text-base font-semibold text-[#14181F]">POPs do treinamento de integração</h2>
+                {data.pops.some((pop) => isPublishedPop(pop) && pop.usedInOnboarding) ? (
+                  <ul className="grid gap-2 sm:grid-cols-2">
+                    {data.pops.filter((pop) => isPublishedPop(pop) && pop.usedInOnboarding).map((pop) => (
+                      <li key={pop.id}>
+                        <a href={'/pops?pop=' + encodeURIComponent(pop.id)}
+                          className="block rounded-lg border border-[#E4E1DA] p-3 text-sm font-semibold text-[#1F3A5F] hover:underline focus-visible:ring-2 focus-visible:ring-[#1F3A5F]">
+                          {pop.title} · {pop.version}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                ) : <p className="text-sm text-[#5B6472]">Sem POPs publicados para a integração.</p>}
+              </section>
               <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h2 className="text-base font-semibold text-[#14181F]">Matriz de conformidade de segurança</h2>

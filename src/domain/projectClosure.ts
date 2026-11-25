@@ -1,4 +1,5 @@
 import { addMonthsISO, isValidISODate, roundCents } from './formatters';
+import { linkedPopChecklist } from './pops';
 import { calcularDreObra } from './pilotisAdapters';
 import type { ComplianceItem, FinancialTransaction, Installment, Pop, Project, ProjectStage, WarrantyCall } from '../types/pilotis';
 
@@ -21,7 +22,8 @@ export function getClosureReview(project: Project, data: ClosureData, date: stri
   const documents = data.complianceItems.filter((row) => row.projectId === project.id && row.kind === 'Documento de obra');
   const quality = stages.filter((stage) => stage.popId).filter((stage) => {
     const pop = data.pops.find((row) => row.id === stage.popId);
-    return !pop || (pop.acceptanceCriteria ?? []).some((item) => !(stage.checklistCompleted ?? []).includes(item));
+    const review = linkedPopChecklist(stage, pop);
+    return !review || review.acceptanceCriteria.some((item) => !(stage.checklistCompleted ?? []).includes(item));
   });
   const openStages = stages.filter((row) => row.status !== 'Concluída');
   const payable = installments.filter((row) => row.amount > 0);

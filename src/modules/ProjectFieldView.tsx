@@ -4,7 +4,7 @@ import {
 } from '../components/ui/PilotisUI';
 import {
   applyFieldStageUpdate, DAILY_PHOTO_LIMIT, FIELD_OFFLINE_NOTICE, formatDateBR,
-  getFieldStageFields, isValidISODate, planningTodayISO, validateStageWorkflow,
+  getFieldStageFields, isValidISODate, linkedPopChecklist, planningTodayISO, validateStageWorkflow,
   type FieldJob, type FieldStageFields, type FieldStageUpdate,
 } from '../domain';
 import { compressDailyLogPhoto, readDailyLogPhoto } from '../services/dailyLogPhotos';
@@ -298,6 +298,7 @@ export function FieldStages({ uid, project, stages, pops }: { uid: string; proje
     catch { paused.add(job.stageId); }
   }
   const pop = pops.find((item) => item.id === editing?.popId);
+  const review = editing ? linkedPopChecklist(editing, pop) : undefined;
 
   async function save(complete: boolean) {
     if (!editing) return;
@@ -319,7 +320,7 @@ export function FieldStages({ uid, project, stages, pops }: { uid: string; proje
     try {
       const update: FieldStageUpdate = { previous, next, popId: editing.popId ?? '', complete };
       const candidate = applyFieldStageUpdate(editing, update);
-      validateStageWorkflow(candidate, editing, [...displayStages.values()], project, pop);
+      validateStageWorkflow(candidate, editing, [...displayStages.values()], project, review);
       await queue.save({
         id: generateId('field'), kind: 'stage', uid, actor, queuedAt: Date.now(),
         projectId: project.id, stageId: editing.id, knownStageIds: stages.map((stage) => stage.id), update,
@@ -362,9 +363,9 @@ export function FieldStages({ uid, project, stages, pops }: { uid: string; proje
           <label className="grid gap-1 text-sm font-semibold">Data prometida do material do cliente
             <input type="date" className={input} value={material} onChange={(event) => setMaterial(event.target.value)} />
           </label>
-          {pop && (pop.acceptanceCriteria?.length ?? 0) > 0 && <fieldset className="grid gap-2 rounded-lg border border-[#E4E1DA] p-2">
-            <legend className="px-1 text-sm font-semibold">Checklist · {pop.title}</legend>
-            {(pop.acceptanceCriteria ?? []).map((item) => (
+          {!!review?.acceptanceCriteria.length && <fieldset className="grid gap-2 rounded-lg border border-[#E4E1DA] p-2">
+            <legend className="px-1 text-sm font-semibold">Checklist · {pop?.title || 'POP vinculado'} · {review.version}</legend>
+            {review.acceptanceCriteria.map((item) => (
               <label key={item} className="flex min-h-9 items-center gap-2 text-sm">
                 <input type="checkbox" checked={checklist.includes(item)} disabled={editing?.status === 'Concluída'}
                   onChange={(event) => setChecklist((current) => event.target.checked ? [...current, item] : current.filter((value) => value !== item))} />
@@ -372,7 +373,7 @@ export function FieldStages({ uid, project, stages, pops }: { uid: string; proje
               </label>
             ))}
           </fieldset>}
-          {editing?.popId && !pop && <p className="text-sm text-[#704509]">Checklist do POP indisponível no aparelho.</p>}
+          {editing?.popId && !review && <p className="text-sm text-[#704509]">Checklist do POP indisponível no aparelho.</p>}
           <RegisteredBySelect id="field-stage-actor" value={actor} onChange={setActor} />
           {error && <p role="alert" className="text-sm text-[#B42318]">{error}</p>}
           <div className="flex flex-wrap justify-end gap-2">
