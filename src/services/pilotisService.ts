@@ -3,6 +3,7 @@ import {
   collection,
   doc,
   getDoc,
+  getDocsFromServer,
   onSnapshot,
   query,
   runTransaction,
@@ -20,20 +21,25 @@ import type {
   Allocation,
   Employee,
   CompanySettings,
+  ComplianceItem,
+  DailyLog,
   Debt,
   EmployeeOccurrence,
   EmployeeOccurrenceKind,
   FinancialTransaction,
   Installment,
+  MarketingPhotoRef,
   PilotisDataState,
   Pop,
   Project,
   ProjectContractKind,
+  ProjectFollowUp,
   ProjectStage,
   ProjectType,
   Quote,
   ScheduleBaseline,
   StageStatus,
+  WarrantyCall,
 } from '../types/pilotis';
 import {
   applyFieldStageUpdate,
@@ -46,6 +52,9 @@ import {
   describeScheduleCycle,
   diffDaysISO,
   getProjectSchedule,
+  getClosureReview,
+  getWarrantyWindow,
+  isReleasedProject,
   getScheduleBaselineStages,
   planningTodayISO,
   normalizeDelayCategory,
@@ -215,6 +224,8 @@ export function subscribePilotisCollections(
     { colName: 'complianceItems', stateKey: 'complianceItems' },
     { colName: 'tenders', stateKey: 'tenders' },
     { colName: 'warrantyCalls', stateKey: 'warrantyCalls' },
+    { colName: 'projectClosures', stateKey: 'projectClosures' },
+    { colName: 'projectFollowUps', stateKey: 'projectFollowUps' },
     { colName: 'auditLogs', stateKey: 'auditLogs' },
   ];
 
@@ -967,6 +978,7 @@ export async function replanProjectSchedule(params: {
     const snapshot = await tx.get(projectRef);
     const current = { ...snapshot.data(), id: project.id } as Project;
     if (!snapshot.exists() || current.ownerUid !== uid) throw new Error('Obra indisponível.');
+    if (current.status === 'Concluída') throw new Error('O cronograma da obra encerrada está consolidado.');
     if ((current.scheduleRevision ?? 0) !== (project.scheduleRevision ?? 0)) {
       throw new Error('O cronograma foi atualizado. Reabra o replanejamento para revisar as datas.');
     }
@@ -1045,6 +1057,7 @@ export async function saveProjectStage(params: {
     if (!projectSnapshot.exists() || current.ownerUid !== uid) {
       throw new Error('Obra indisponível.');
     }
+    if (current.status === 'Concluída') throw new Error('As etapas desta obra já foram encerradas.');
     if (!receiptRef && (current.scheduleRevision ?? 0) !== (project.scheduleRevision ?? 0)) {
       throw new Error('O cronograma foi atualizado. Feche e reabra a etapa para revisar a versão atual.');
     }
@@ -1671,6 +1684,28 @@ export async function saveWeeklyAllocation(
     }));
     const existing = rows.filter((row): row is Allocation => row !== null);
     const [previous, ...duplicates] = existing;
+    const weekEnd = addDaysISO(week, 6);
+    const projectIds = [...new Set([target.projectId, employee.currentProjectId, ...existing.map((item) => item.projectId)]
+      .filter((id) => /^[a-zA-Z0-9_-]+$/.test(id)))];
+    const projects = await readClosureRows<Project>(tx, projectIds.map((id) => doc(db, 'projects', id)));
+    const locate = (id: string) => projects.find((project) => project.id === id);
+    const targetProject = locate(target.projectId);
+    if (targetProject && isReleasedProject(targetProject, weekEnd)) throw new Error('Esta obra está encerrada nesta semana.');
+    const activeRows = existing.filter((item) => {
+      const project = locate(item.projectId);
+      return item.status === 'Férias' || !project || !isReleasedProject(project, weekEnd);
+    });
+    const recordedBeforeClosure = existing.filter((item) => {
+      if (item.status !== 'Obra') return false;
+      const project = locate(item.projectId);
+      const closed = project?.closureDate || project?.warrantyStartDate;
+      return Boolean(project?.status === 'Concluída' && closed && closed > (item.effectiveFrom || week) && closed <= weekEnd);
+    });
+    const defaultProject = existing.length === 0 ? locate(employee.currentProjectId) : undefined;
+    const effectiveFrom = [previous?.effectiveFrom ?? week,
+      ...recordedBeforeClosure.map((item) => locate(item.projectId)?.closureDate || locate(item.projectId)?.warrantyStartDate || week),
+      defaultProject?.status === 'Concluída' ? (defaultProject.closureDate || defaultProject.warrantyStartDate) : '',
+    ].filter((date) => date && date <= weekEnd).sort().at(-1) ?? week;
     const stageId = target.status === 'Obra' ? target.stageId ?? '' : '';
     let stage: ProjectStage | undefined;
     if (stageId) {
@@ -1679,26 +1714,190 @@ export async function saveWeeklyAllocation(
       if (!liveEmployee || liveEmployee.ownerUid !== uid) throw new Error('Colaborador indisponível.');
       if (!stage || stage.ownerUid !== uid || stage.projectId !== target.projectId) throw new Error('Escolha uma etapa desta obra.');
       const availability = resolveTeamWeek(liveEmployee, week, { employees: [liveEmployee], allocations: [], projects: [] });
-      if (!availability.started || availability.vacation || (preventConflictingAssignment && existing.some((row) => row.status === 'Férias'))) {
+      if (!availability.started || availability.vacation || (preventConflictingAssignment && activeRows.some((row) => row.status === 'Férias'))) {
         throw new Error('O colaborador está indisponível nesta semana. Confira a alocação e as férias em Equipe.');
       }
-      if (preventConflictingAssignment && existing.some((row) =>
+      if (preventConflictingAssignment && activeRows.some((row) =>
         (row.projectId !== target.projectId && row.projectId !== 'Sem obra') || (row.stageId && row.stageId !== stageId),
       )) throw new Error('Conflito de alocação nesta semana. Resolva a atribuição existente na aba Equipe.');
     }
-    const row = { ...target, stageId, employeeId: employee.id, employeeName: employee.name, weekStart: week };
+    const historical = recordedBeforeClosure.find((item) => item.id === canonicalId);
+    if (historical) {
+      const { id, ownerUid, createdBy, createdAt, updatedAt, updatedBy, ...snapshot } = historical;
+      tx.set(doc(db, 'allocations', generateId('alloc_history')), { ...snapshot, ...auditFields(uid, actor) });
+    }
+    const row = { ...target, stageId, effectiveFrom, employeeId: employee.id, employeeName: employee.name, weekStart: week };
     if (previous?.id === canonicalId) {
       tx.update(ref, { ...row, updatedBy: actor, updatedAt: serverTimestamp() });
     } else {
       tx.set(ref, { ...row, ...auditFields(uid, actor) });
-      if (previous) tx.delete(doc(db, 'allocations', previous.id));
+      if (previous && !recordedBeforeClosure.includes(previous)) tx.delete(doc(db, 'allocations', previous.id));
     }
-    for (const duplicate of duplicates) tx.delete(doc(db, 'allocations', duplicate.id));
+    for (const duplicate of duplicates) {
+      if (!recordedBeforeClosure.includes(duplicate)) tx.delete(doc(db, 'allocations', duplicate.id));
+    }
     tx.set(doc(db, 'auditLogs', generateId('aud')), {
       ownerUid: uid, registeredBy: actor, action: previous ? 'Atualização' : 'Criação', entityType: 'allocations',
       summary: clampStr('Alocação de ' + employee.name + ' na semana de ' + formatDateBR(week), 240),
       beforeValue: clampStr(existing.map((item) => [item.projectName, item.stageId].filter(Boolean).join(' · ')).join(' / '), 240),
       afterValue: clampStr([target.projectName, stage?.name].filter(Boolean).join(' · '), 240), createdAt: serverTimestamp(),
+    });
+  });
+}
+
+function workDocuments(uid: string, projectId: string, name: string) {
+  return getDocsFromServer(query(collection(db, name), where('ownerUid', '==', uid), where('projectId', '==', projectId)));
+}
+
+async function readClosureRows<T>(tx: Transaction, refs: DocumentReference[]): Promise<T[]> {
+  const snapshots = await Promise.all(refs.map((ref) => tx.get(ref)));
+  return snapshots.filter((row) => row.exists()).map((row) => ({ ...row.data(), id: row.id } as T));
+}
+
+const newFollowUp = {
+  testimonialRequestedAt: '', referralRequestedAt: '', testimonial: '', referrals: '',
+  marketingPhotos: [], authorizationNote: '',
+};
+
+async function verifyMarketingPhotos(
+  tx: Transaction, uid: string, projectId: string, photos: MarketingPhotoRef[], authorizationNote: string,
+) {
+  if (photos.length > 100 || authorizationNote.trim().length > 500 || (photos.length && !authorizationNote.trim())) {
+    throw new Error('Registre a autorização para as fotos selecionadas (até 100).');
+  }
+  const logIds = [...new Set(photos.map((photo) => photo.logId))];
+  const logs = await readClosureRows<DailyLog>(tx, logIds.map((id) => doc(db, 'dailyLogs', id)));
+  if (photos.some((photo) => !logs.some((log) => log.id === photo.logId && log.ownerUid === uid &&
+      log.projectId === projectId && log.photoIds?.includes(photo.photoId)))) {
+    throw new Error('Uma das fotos selecionadas está indisponível nesta obra.');
+  }
+}
+
+export async function closeProject(
+  uid: string, actor: ActorRole, projectId: string,
+  marketingPhotos: MarketingPhotoRef[] = [], authorizationNote = '',
+) {
+  const [stages, installments, transactions, documents] = await Promise.all(
+    ['stages', 'parcelas', 'transactions', 'complianceItems'].map((name) => workDocuments(uid, projectId, name)),
+  );
+  const projectRef = doc(db, 'projects', projectId);
+  const date = planningTodayISO();
+  return runTransaction(db, async (tx) => {
+    const project = (await tx.get(projectRef)).data() as Omit<Project, 'id'> | undefined;
+    if (!project || project.ownerUid !== uid) throw new Error('Obra indisponível.');
+    const current = { ...project, id: projectId };
+    if (current.status !== 'Em execução') throw new Error('A obra precisa estar em execução para ser encerrada.');
+
+    const refs = (snapshots: typeof stages) => snapshots.docs.map((item) => item.ref);
+    const stageRefs = current.scheduleStageIds?.map((id) => doc(db, 'stages', id)) ?? refs(stages);
+    const [currentStages, currentInstallments, currentTransactions, currentDocuments, client] = await Promise.all([
+      readClosureRows<ProjectStage>(tx, stageRefs),
+      readClosureRows<Installment>(tx, refs(installments)),
+      readClosureRows<FinancialTransaction>(tx, refs(transactions)),
+      readClosureRows<ComplianceItem>(tx, refs(documents)),
+      current.clientId ? tx.get(doc(db, 'clients', current.clientId)) : Promise.resolve(null),
+    ]);
+    if (currentStages.length !== stageRefs.length) throw new Error('Há etapas indisponíveis. Revise o cronograma antes de encerrar.');
+    const popIds = [...new Set(currentStages.map((stage) => stage.popId).filter(Boolean))];
+    const pops = await readClosureRows<Pop>(tx, popIds.map((id) => doc(db, 'pops', id)));
+    const review = getClosureReview(current, {
+      stages: currentStages, installments: currentInstallments, transactions: currentTransactions,
+      complianceItems: currentDocuments, pops,
+    }, date);
+    if (!review.canClose) {
+      throw new Error('Conclua a conferência: ' + review.items.filter((item) => !item.cleared).map((item) => item.label).join(', ') + '.');
+    }
+
+    await verifyMarketingPhotos(tx, uid, projectId, marketingPhotos, authorizationNote);
+    tx.set(doc(db, 'projectClosures', projectId), { ...auditFields(uid, actor), projectId, date, dre: review.dre });
+    tx.set(doc(db, 'projectFollowUps', projectId), {
+      ...auditFields(uid, actor), projectId, ...newFollowUp, marketingPhotos, authorizationNote: authorizationNote.trim(),
+    });
+    tx.update(projectRef, {
+      status: 'Concluída', closureDate: date, warrantyStartDate: date,
+      updatedBy: actor, updatedAt: serverTimestamp(),
+    });
+    if (client?.exists() && client.data().ownerUid === uid) {
+      tx.update(client.ref, { status: 'Em garantia', updatedBy: actor, updatedAt: serverTimestamp() });
+    }
+    tx.set(doc(db, 'auditLogs', generateId('aud')), {
+      ownerUid: uid, registeredBy: actor, action: 'Atualização', entityType: 'projects',
+      summary: clampStr('Encerramento da obra ' + current.name, 240),
+      beforeValue: current.status, afterValue: 'Concluída · Garantia iniciada', createdAt: serverTimestamp(),
+    });
+    return review.dre;
+  });
+}
+
+type FollowUpPayload = Omit<ProjectFollowUp, keyof import('../types/pilotis').AuditMeta | 'id' | 'projectId'>;
+
+export async function saveProjectFollowUp(uid: string, actor: ActorRole, projectId: string, payload: FollowUpPayload) {
+  const { testimonial, referrals, authorizationNote, marketingPhotos, testimonialRequestedAt, referralRequestedAt } = payload;
+  if (testimonial.trim().length > 3000 || referrals.trim().length > 2000 || authorizationNote.trim().length > 500) {
+    throw new Error('Confira o tamanho dos textos antes de salvar.');
+  }
+  const today = planningTodayISO();
+  if (![testimonialRequestedAt, referralRequestedAt].every((date) => !date || (isValidISODate(date) && date <= today))) {
+    throw new Error('Informe datas válidas para os pedidos enviados.');
+  }
+  const ref = doc(db, 'projectFollowUps', projectId);
+  await runTransaction(db, async (tx) => {
+    const [projectSnapshot, previous] = await Promise.all([tx.get(doc(db, 'projects', projectId)), tx.get(ref)]);
+    const project = projectSnapshot.data() as Project | undefined;
+    if (!project || project.ownerUid !== uid || project.status !== 'Concluída') throw new Error('Selecione uma obra encerrada.');
+    await verifyMarketingPhotos(tx, uid, projectId, marketingPhotos, authorizationNote);
+    const client = project.clientId && (testimonial.trim() || testimonialRequestedAt)
+      ? await tx.get(doc(db, 'clients', project.clientId)) : null;
+    const row = {
+      ...payload, testimonial: testimonial.trim(), referrals: referrals.trim(),
+      authorizationNote: authorizationNote.trim(), projectId,
+    };
+    if (previous.exists()) tx.update(ref, { ...row, updatedBy: actor, updatedAt: serverTimestamp() });
+    else tx.set(ref, { ...row, ...auditFields(uid, actor) });
+    if (client?.exists() && client.data().ownerUid === uid) {
+      const currentStatus = String(client.data().testimonialStatus ?? '');
+      if (testimonial.trim() || !currentStatus.startsWith('Recebido')) {
+        tx.update(client.ref, { testimonialStatus: testimonial.trim() ? 'Recebido' : 'Solicitado',
+          updatedBy: actor, updatedAt: serverTimestamp() });
+      }
+    }
+    tx.set(doc(db, 'auditLogs', generateId('aud')), {
+      ownerUid: uid, registeredBy: actor, action: previous.exists() ? 'Atualização' : 'Criação', entityType: 'projectFollowUps',
+      summary: clampStr('Pós-obra atualizado · ' + project.name, 240), createdAt: serverTimestamp(),
+    });
+  });
+}
+
+type WarrantyPayload = Pick<WarrantyCall, 'description' | 'openedDate' | 'deadlineDate' | 'cost' | 'status'>;
+
+export async function saveWarrantyCall(uid: string, actor: ActorRole, projectId: string, payload: WarrantyPayload, callId?: string) {
+  const today = planningTodayISO();
+  if (!payload.description.trim() || !isValidISODate(payload.openedDate) || !isValidISODate(payload.deadlineDate) ||
+      payload.openedDate > today || payload.deadlineDate < payload.openedDate ||
+      !Number.isFinite(payload.cost) || payload.cost < 0) {
+    throw new Error('Confira a descrição, as datas e o custo do chamado.');
+  }
+  const ref = doc(db, 'warrantyCalls', callId ?? generateId('war'));
+  await runTransaction(db, async (tx) => {
+    const project = (await tx.get(doc(db, 'projects', projectId))).data() as Project | undefined;
+    const before = callId ? (await tx.get(ref)).data() as WarrantyCall | undefined : undefined;
+    if (!project || project.ownerUid !== uid) throw new Error('Obra indisponível.');
+    if (callId && (!before || before.ownerUid !== uid || before.projectId !== projectId)) {
+      throw new Error('Chamado indisponível.');
+    }
+    if ((!before || payload.openedDate !== before.openedDate) && !getWarrantyWindow(project, payload.openedDate)?.active) {
+      throw new Error('A abertura precisa estar dentro do período de garantia da obra.');
+    }
+    const row = {
+      ...payload, description: clampStr(payload.description.trim(), 400), cost: roundCents(payload.cost),
+      projectId, projectName: project.name,
+    };
+    if (before) tx.update(ref, { ...row, updatedBy: actor, updatedAt: serverTimestamp() });
+    else tx.set(ref, { ...row, ...auditFields(uid, actor) });
+    tx.set(doc(db, 'auditLogs', generateId('aud')), {
+      ownerUid: uid, registeredBy: actor, action: before ? 'Atualização' : 'Criação', entityType: 'warrantyCalls',
+      summary: clampStr('Chamado de garantia · ' + project.name, 240),
+      beforeValue: before?.status ?? '', afterValue: payload.status, createdAt: serverTimestamp(),
     });
   });
 }

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { PostConstructionView, ProjectClosureView } from './ProjectClosureView';
 import { FieldStages, ProjectDiary } from './ProjectFieldView';
 import { ProjectScheduleView, ScheduleProgressChart } from './ProjectScheduleView';
 import { ProjectKanban, ProjectResources, ProjectRisks } from './ProjectOperationsView';
@@ -19,7 +20,6 @@ import {
   createProjectFromTemplate,
   createRecord,
   saveProjectStage,
-  updateRecord,
 } from '../services/pilotisService';
 import type {
   ActorRole,
@@ -63,6 +63,7 @@ const PLAN_TABS = [
   'Diário de obra',
   'Etapas em campo',
   'Encerramento',
+  'Pós-obra',
 ];
 
 const TEMPLATE_OPTIONS: { type: ProjectType; description: string }[] = [
@@ -317,35 +318,6 @@ export function ProjectPlanningView({
     }
   }
 
-  async function handleCloseProject() {
-    if (!activeProject) return;
-    await updateRecord(
-      'projects',
-      activeProject.id,
-      uid,
-      'Sócio',
-      {
-        status: 'Concluída',
-        warrantyStartDate: todayISO(),
-      },
-      `Obra encerrada: ${activeProject.name}`,
-      'Em execução',
-      'Concluída'
-    );
-    if (activeProject.clientId) {
-      await updateRecord(
-        'clients',
-        activeProject.clientId,
-        uid,
-        'Sócio',
-        { status: 'Em garantia' },
-        `Cliente entrou em garantia: ${activeProject.clientName}`,
-        'Ativo',
-        'Em garantia'
-      );
-    }
-  }
-
   const totalEapBudget = getWorkPackageBudget(projectStages);
 
   return (
@@ -368,7 +340,7 @@ export function ProjectPlanningView({
             >
               Nova obra
             </button>
-            {activeProject && !awaitingScheduleTemplate && (
+            {activeProject && activeProject.status !== 'Concluída' && !awaitingScheduleTemplate && (
               <button
                 type="button"
                 onClick={openCreateStage}
@@ -795,61 +767,9 @@ export function ProjectPlanningView({
           )}
 
           {tab === 'Encerramento' && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {(() => {
-                const projectDre = calcularDreObra(activeProject, data.transactions, projectStages);
-                const doneStages = projectStages.filter((s) => s.status === 'Concluída').length;
-                return (
-                  <>
-                    <div className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-2 text-sm">
-                      <h3 className="font-semibold text-[#14181F]">Conferência antes de encerrar</h3>
-                      <div className="flex justify-between">
-                        <span className="text-[#5B6472]">Etapas concluídas</span>
-                        <strong>
-                          {doneStages} de {projectStages.length}
-                        </strong>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-[#5B6472]">Status atual</span>
-                        <StatusBadge label={activeProject.status} />
-                      </div>
-                    </div>
-                    <div className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-2 text-sm">
-                      <h3 className="font-semibold text-[#14181F]">Resultado consolidado</h3>
-                      <div className="flex justify-between">
-                        <span className="text-[#5B6472]">Receita</span>
-                        <strong className="tabular-nums">{formatBRL(projectDre.receita.orcado)}</strong>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-[#5B6472]">Custo real lançado</span>
-                        <strong className="tabular-nums">{formatBRL(projectDre.custosTotais.realizado)}</strong>
-                      </div>
-                      <div className="flex justify-between font-bold">
-                        <span>Margem real</span>
-                        <span className="tabular-nums">{formatPercentBR(projectDre.margemRealizadaPct)}</span>
-                      </div>
-                    </div>
-                    <div className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-3 text-sm">
-                      <h3 className="font-semibold text-[#14181F]">Ao encerrar, o sistema…</h3>
-                      <ul className="text-xs text-[#5B6472] flex flex-col gap-1.5">
-                        <li>✓ Inicia a garantia contratual de 1 ano</li>
-                        <li>✓ Atualiza o cliente para “Em garantia”</li>
-                        <li>✓ Consolida o DRE definitivo da obra</li>
-                      </ul>
-                      <button
-                        type="button"
-                        disabled={activeProject.status === 'Concluída'}
-                        onClick={handleCloseProject}
-                        className="w-full py-2.5 rounded-lg bg-[#1F3A5F] text-white text-sm font-semibold disabled:opacity-45 cursor-pointer"
-                      >
-                        {activeProject.status === 'Concluída' ? 'Obra encerrada' : 'Encerrar obra'}
-                      </button>
-                    </div>
-                  </>
-                );
-              })()}
-            </div>
+            <ProjectClosureView key={activeProject.id} uid={uid} project={activeProject} data={data} onAftercare={() => setTab('Pós-obra')} />
           )}
+          {tab === 'Pós-obra' && <PostConstructionView key={activeProject.id} uid={uid} data={data} projectId={activeProject.id} />}
         </>
       )}
 

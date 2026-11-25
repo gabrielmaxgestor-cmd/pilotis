@@ -133,6 +133,7 @@ export interface Project extends AuditMeta {
   status: ProjectStatus;
   contractSigned: boolean;
   warrantyStartDate: string;
+  closureDate?: string;
 }
 
 export type StageStatus =
@@ -328,6 +329,7 @@ export interface Allocation extends AuditMeta {
   projectId: string;
   projectName: string;
   weekStart: string;
+  effectiveFrom?: string;
   stageId?: string;
   status: 'Obra' | 'Férias';
 }
@@ -449,5 +451,30 @@ export interface PilotisDataState {
   complianceItems: ComplianceItem[];
   tenders: Tender[];
   warrantyCalls: WarrantyCall[];
+  projectClosures?: ProjectClosure[];
+  projectFollowUps?: ProjectFollowUp[];
   auditLogs: AuditLog[];
+}
+
+export interface ProjectClosure extends AuditMeta {
+  id: string;
+  projectId: string;
+  date: string;
+  dre: import('../domain/dre').DreObraResult;
+}
+
+export interface MarketingPhotoRef {
+  logId: string;
+  photoId: string;
+}
+
+export interface ProjectFollowUp extends AuditMeta {
+  id: string;
+  projectId: string;
+  testimonialRequestedAt: string;
+  referralRequestedAt: string;
+  testimonial: string;
+  referrals: string;
+  marketingPhotos: MarketingPhotoRef[];
+  authorizationNote: string;
 }

@@ -3,7 +3,7 @@ import { calcularEncargos } from './equipe';
 import { addDaysISO, addMonthsISO, diffDaysISO, isValidISODate } from './formatters';
 import type { TaxChargeParameters } from './types';
 
-type TeamProject = Pick<Project, 'id' | 'name' | 'contractKind' | 'type' | 'status'>;
+type TeamProject = Pick<Project, 'id' | 'name' | 'contractKind' | 'type' | 'status' | 'closureDate'> & Partial<Pick<Project, 'warrantyStartDate'>>;
 type TeamData = { employees: Employee[]; allocations: Allocation[]; projects: TeamProject[] };
 
 export function weekStartingOn(date: string): string {
@@ -22,11 +22,22 @@ function hasScheduledVacation(employee: Employee, date: string): boolean {
       employee.vacationStart <= date && date <= employee.vacationEnd);
 }
 
-export function resolveTeamWeek(employee: Employee, week: string, data: TeamData) {
-  const allocations = data.allocations.filter((item) => item.employeeId === employee.id && item.weekStart === week);
+export function isReleasedProject(project: TeamProject, date: string) {
+  if (project.status !== 'Concluída') return false;
+  const closed = project.closureDate || project.warrantyStartDate || '';
+  return !isValidISODate(closed) || closed <= date;
+}
+
+export function resolveTeamWeek(employee: Employee, week: string, data: TeamData, referenceDate = addDaysISO(week, 6)) {
+  const openForDate = (project: TeamProject) => !isReleasedProject(project, referenceDate);
+  const activeIds = new Set(data.projects.filter(openForDate).map((project) => project.id));
+  const knownIds = new Set(data.projects.map((project) => project.id));
+  const allocations = data.allocations.filter((item) => item.employeeId === employee.id && item.weekStart === week &&
+    (!item.effectiveFrom || item.effectiveFrom <= referenceDate) &&
+    (item.status === 'Férias' || !knownIds.has(item.projectId) || activeIds.has(item.projectId)));
   const allocation = allocations[0];
   const projectId = allocation ? allocation.projectId : employee.currentProjectId;
-  const project = data.projects.find((item) => item.id === projectId && (allocation || item.status !== 'Concluída'));
+  const project = data.projects.find((item) => item.id === projectId && activeIds.has(item.id));
   const vacation = allocation?.status === 'Férias' ||
     (employee.employmentType === 'CLT' &&
       Boolean(employee.vacationStart && employee.vacationEnd &&
@@ -72,6 +83,10 @@ export function planMonthlyPayroll(
   const lines: PayrollAllocation[] = [];
   const conflicts = new Set<string>();
   let configured = true;
+  const transitionWeeks = new Set([
+    ...data.projects.map((project) => project.closureDate || project.warrantyStartDate || ''),
+    ...data.allocations.map((allocation) => allocation.effectiveFrom || ''),
+  ].filter(isValidISODate).map(weekStartingOn));
   for (const employee of data.employees) {
     if (employee.baseSalary <= 0 || (employee.paymentFrequency === 'oneOff' && employee.paymentMonth !== month)) continue;
     const groups = new Map<string, { project?: TeamProject; vacation: boolean; days: number }>();
@@ -81,10 +96,11 @@ export function planMonthlyPayroll(
       const date = addDaysISO(first, day);
       if (employee.startDate && date < employee.startDate) continue;
       const week = weekStartingOn(date);
-      let cell = weeks.get(week);
+      const weekKey = transitionWeeks.has(week) ? date : week;
+      let cell = weeks.get(weekKey);
       if (!cell) {
-        cell = resolveTeamWeek(employee, week, data);
-        weeks.set(week, cell);
+        cell = resolveTeamWeek(employee, week, data, date);
+        weeks.set(weekKey, cell);
       }
       if (cell.conflict) conflicts.add(employee.name);
       const vacation = cell.allocation?.status === 'Férias' || hasScheduledVacation(employee, date);

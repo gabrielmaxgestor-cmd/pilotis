@@ -615,9 +615,10 @@ export function FinancialView({
   // DRE por obra & DRE da empresa via src/domain/dre.ts
   const activeDreProject =
     data.projects.find((p) => p.id === selectedDreProjectId) || data.projects[0] || null;
+  const consolidatedDre = data.projectClosures?.find((row) => row.projectId === activeDreProject?.id);
   const activeDre = useMemo(
-    () => (activeDreProject ? calcularDreObra(activeDreProject, data.transactions, data.stages) : null),
-    [activeDreProject, data.transactions, data.stages],
+    () => consolidatedDre?.dre ?? (activeDreProject ? calcularDreObra(activeDreProject, data.transactions, data.stages) : null),
+    [consolidatedDre, activeDreProject, data.transactions, data.stages],
   );
 
   const companyDre = useMemo(
@@ -1354,6 +1355,8 @@ export function FinancialView({
                   Exportar PDF
                 </button>
               </div>
+
+              {consolidatedDre && <p className="text-sm font-semibold text-[#1F3A5F]">DRE consolidado no encerramento em {formatDateBR(consolidatedDre.date)}</p>}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <KpiCard

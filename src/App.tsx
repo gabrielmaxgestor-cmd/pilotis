@@ -84,6 +84,8 @@ const INITIAL_DATA_STATE: PilotisDataState = {
   complianceItems: [],
   tenders: [],
   warrantyCalls: [],
+  projectClosures: [],
+  projectFollowUps: [],
   auditLogs: [],
 };
 

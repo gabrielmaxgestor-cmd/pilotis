@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { PostConstructionView } from './ProjectClosureView';
 import { DataList, type DataListColumn } from '../components/ui/DataList';
 import {
   Button,
@@ -43,8 +44,6 @@ import type {
   QuoteStatus,
   Tender,
   TenderStatus,
-  WarrantyCall,
-  WarrantyStatus,
 } from '../types/pilotis';
 
 const formatDateBR = (val: string | null | undefined) => domainFormatDateBR(val, '—');
@@ -57,6 +56,7 @@ const CLIENT_TABS = [
   'Funil',
   'Orçamentos',
   'Clientes',
+  'Pós-obra',
   'Licitações',
   'Rascunhos descartados',
 ];
@@ -169,18 +169,7 @@ export function ClientsQuotesView({
   const [tActor, setTActor] = useState<ActorRole>('Sócio');
   const [tSaving, setTSaving] = useState(false);
 
-  // Warranty Call Modal (Create) & Status Modal
-  const [warModalOpen, setWarModalOpen] = useState(false);
-  const [wProjectId, setWProjectId] = useState('');
-  const [wDesc, setWDesc] = useState('');
-  const [wDeadline, setWDeadline] = useState(todayISO());
-  const [wCost, setWCost] = useState('0');
-  const [wActor, setWActor] = useState<ActorRole>('Sócio');
-  const [wSaving, setWSaving] = useState(false);
-
-  const [advWarCall, setAdvWarCall] = useState<WarrantyCall | null>(null);
-  const [advWarStatus, setAdvWarStatus] = useState<WarrantyStatus>('Em atendimento');
-  const [advWarActor, setAdvWarActor] = useState<ActorRole>('Sócio');
+  const [postInitialProjectId, setPostInitialProjectId] = useState('');
 
   // Derived Funnel Metrics (Rule 4: always calculated, never typed)
   const openQuotes = useMemo(
@@ -1651,20 +1640,17 @@ export function ClientsQuotesView({
                 <Card
                   title="Garantia (1 ano pós-conclusão)"
                   actions={
-                    clientProjects.length > 0 ? (
+                    clientProjects.some((project) => project.status === 'Concluída') ? (
                       <Button
                         size="sm"
                         variant="secondary"
                         onClick={() => {
-                          setWProjectId(clientProjects[0].id);
-                          setWDesc('');
-                          setWCost('0');
-                          setWDeadline(todayISO());
-                          setWActor('Sócio');
-                          setWarModalOpen(true);
+                          const project = clientProjects.find((row) => row.status === 'Concluída');
+                          setPostInitialProjectId(project?.id ?? '');
+                          setTab('Pós-obra');
                         }}
                       >
-                        Abrir chamado
+                        Abrir pós-obra
                       </Button>
                     ) : undefined
                   }
@@ -1709,23 +1695,6 @@ export function ClientsQuotesView({
                             </div>
                             <div className="flex items-center gap-2">
                               <StatusBadge label={w.status} />
-                              {w.status !== 'Resolvido' && (
-                                <Button
-                                  size="sm"
-                                  variant="secondary"
-                                  onClick={() => {
-                                    setAdvWarCall(w);
-                                    setAdvWarStatus(
-                                      w.status === 'Aberto'
-                                        ? 'Em atendimento'
-                                        : 'Resolvido'
-                                    );
-                                    setAdvWarActor('Sócio');
-                                  }}
-                                >
-                                  Atualizar
-                                </Button>
-                              )}
                             </div>
                           </div>
                         ))}
@@ -1803,6 +1772,8 @@ export function ClientsQuotesView({
       )}
 
       {/* ABA 4: LICITAÇÕES */}
+      {tab === 'Pós-obra' && <PostConstructionView key={postInitialProjectId} uid={uid} data={data} initialProjectId={postInitialProjectId} />}
+
       {tab === 'Licitações' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <Card
@@ -2310,138 +2281,6 @@ export function ClientsQuotesView({
         </form>
       </Modal>
 
-      {/* MODAL: NOVO CHAMADO DE GARANTIA */}
-      <Modal
-        open={warModalOpen}
-        onClose={() => setWarModalOpen(false)}
-        title="Novo chamado de garantia"
-      >
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault();
-            const proj =
-              data.projects.find((p) => p.id === wProjectId) || data.projects[0];
-            if (!proj) return;
-            setWSaving(true);
-            try {
-              await createRecord(
-                'warrantyCalls',
-                uid,
-                wActor,
-                {
-                  projectId: proj.id,
-                  projectName: proj.name,
-                  description: clampStr(wDesc, 400),
-                  openedDate: todayISO(),
-                  deadlineDate: wDeadline,
-                  cost: Math.max(0, Number(wCost) || 0),
-                  status: 'Aberto',
-                },
-                `Chamado de garantia: ${proj.name}`
-              );
-              showToast({ tone: 'success', title: 'Chamado de garantia registrado.' });
-              setWDesc('');
-              setWarModalOpen(false);
-            } finally {
-              setWSaving(false);
-            }
-          }}
-          className="flex flex-col gap-4"
-        >
-          <Select
-            label="Obra"
-            value={wProjectId || data.projects[0]?.id || ''}
-            onChange={(e) => setWProjectId(e.target.value)}
-          >
-            {data.projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </Select>
-          <Textarea
-            label="Descrição do atendimento"
-            required
-            rows={3}
-            value={wDesc}
-            onChange={(e) => setWDesc(e.target.value)}
-          />
-          <div className="grid grid-cols-2 gap-3">
-            <Input
-              label="Prazo de atendimento"
-              type="date"
-              value={wDeadline}
-              onChange={(e) => setWDeadline(e.target.value)}
-            />
-            <Input
-              label="Custo estimado (R$)"
-              type="number"
-              min={0}
-              step="0.01"
-              value={wCost}
-              onChange={(e) => setWCost(e.target.value)}
-              className="tabular-nums"
-            />
-          </div>
-          <RegisteredBySelect value={wActor} onChange={setWActor} id="war-actor" />
-          <div className="flex justify-end gap-2.5">
-            <Button variant="secondary" onClick={() => setWarModalOpen(false)}>
-              Cancelar
-            </Button>
-            <Button type="submit" variant="primary" disabled={wSaving}>
-              {wSaving ? 'Salvando...' : 'Abrir chamado'}
-            </Button>
-          </div>
-        </form>
-      </Modal>
-
-      {/* MODAL: ATUALIZAR CHAMADO DE GARANTIA */}
-      <Modal
-        open={Boolean(advWarCall)}
-        onClose={() => setAdvWarCall(null)}
-        title="Atualizar chamado de garantia"
-      >
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault();
-            if (!advWarCall) return;
-            await updateRecord(
-              'warrantyCalls',
-              advWarCall.id,
-              uid,
-              advWarActor,
-              { status: advWarStatus },
-              `Garantia atualizada: ${advWarCall.projectName} (${advWarStatus})`
-            );
-            showToast({ tone: 'success', title: 'Chamado de garantia atualizado.' });
-            setAdvWarCall(null);
-          }}
-          className="flex flex-col gap-4"
-        >
-          <Select
-            label="Novo status"
-            value={advWarStatus}
-            onChange={(e) => setAdvWarStatus(e.target.value as WarrantyStatus)}
-          >
-            <option value="Aberto">Aberto</option>
-            <option value="Em atendimento">Em atendimento</option>
-            <option value="Resolvido">Resolvido</option>
-          </Select>
-          <RegisteredBySelect
-            value={advWarActor}
-            onChange={setAdvWarActor}
-            id="war-adv-actor"
-          />
-          <div className="flex justify-end gap-2.5">
-            <Button variant="secondary" onClick={() => setAdvWarCall(null)}>
-              Cancelar
-            </Button>
-            <Button type="submit" variant="primary">
-              Salvar status
-            </Button>
-          </div>
-        </form>
-      </Modal>
     </div>
   );
 }

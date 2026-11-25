@@ -169,7 +169,7 @@ service cloud.firestore {
           'contractValue', 'contractPdf', 'downPaymentPct', 'installmentsCount', 'addendaTotalValue',
           'budgetedLabor', 'budgetedSubcontract', 'budgetedEquipment', 'budgetedBdi', 'budgetedTax',
           'startDate', 'baselineEndDate', 'forecastEndDate', 'status', 'contractSigned',
-          'warrantyStartDate', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+          'warrantyStartDate', 'closureDate', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
         ])
         && hasAuditFields(data)
         && isValidNonEmptyStr(data.name, 160)
@@ -198,7 +198,8 @@ service cloud.firestore {
         && (!('baselineEndDate' in data) || isValidStr(data.baselineEndDate, 20))
         && (!('forecastEndDate' in data) || isValidStr(data.forecastEndDate, 20))
         && (!('contractSigned' in data) || data.contractSigned is bool)
-        && (!('warrantyStartDate' in data) || isValidStr(data.warrantyStartDate, 20));
+        && (!('warrantyStartDate' in data) || isValidStr(data.warrantyStartDate, 20))
+        && (!('closureDate' in data) || isValidNonEmptyStr(data.closureDate, 10));
     }
 
     function isValidInstallment(data) {
@@ -391,13 +392,14 @@ service cloud.firestore {
         'ownerUid', 'employeeId', 'projectId', 'weekStart', 'status', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
       ])
         && data.keys().hasOnly([
-          'ownerUid', 'employeeId', 'employeeName', 'projectId', 'projectName', 'weekStart', 'stageId', 'status',
+          'ownerUid', 'employeeId', 'employeeName', 'projectId', 'projectName', 'weekStart', 'stageId', 'effectiveFrom', 'status',
           'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
         ])
         && hasAuditFields(data)
         && isValidId(data.employeeId)
         && isValidNonEmptyStr(data.projectId, 128)
         && isValidNonEmptyStr(data.weekStart, 20)
+        && (!('effectiveFrom' in data) || isValidNonEmptyStr(data.effectiveFrom, 10))
         && data.status in ['Obra', 'Férias']
         && (data.get('stageId', '') == '' || (
           data.status == 'Obra' && isValidId(data.stageId)
@@ -589,7 +591,7 @@ service cloud.firestore {
     }
 
     match /projects/{projectId} {
-      allow get: if isValidId(projectId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow get: if isValidId(projectId) && isSignedIn() && (resource == null || existing().ownerUid == request.auth.uid);
       allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(projectId) && isSignedIn() && isValidProject(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time;
@@ -601,7 +603,15 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && incoming().get('contractPdf', null) == existing().get('contractPdf', null)
         && (existing().get('planningStatus', '') != 'Cronograma criado'
-          || incoming().get('baselineEndDate', null) == existing().get('baselineEndDate', null));
+          || incoming().get('baselineEndDate', null) == existing().get('baselineEndDate', null))
+        && (existing().status != 'Concluída' || (incoming().status == 'Concluída'
+          && incoming().get('closureDate', '') == existing().get('closureDate', '')
+          && incoming().get('warrantyStartDate', '') == existing().get('warrantyStartDate', '')))
+        && (incoming().status != 'Concluída' || existing().status == 'Concluída' || (
+          isValidNonEmptyStr(incoming().closureDate, 10) && incoming().closureDate == incoming().warrantyStartDate
+          && getAfter(/databases/$(database)/documents/projectClosures/$(projectId)).data.date == incoming().closureDate
+          && getAfter(/databases/$(database)/documents/projectFollowUps/$(projectId)).data.ownerUid == request.auth.uid
+        ));
       allow delete: if isValidId(projectId) && isSignedIn() && existing().ownerUid == request.auth.uid;
     }
 
@@ -867,13 +877,51 @@ service cloud.firestore {
       allow delete: if isValidId(tenderId) && isSignedIn() && existing().ownerUid == request.auth.uid;
     }
 
+    match /projectClosures/{projectId} {
+      allow get, list: if isOwner(existing().ownerUid);
+      allow create: if isValidId(projectId) && isSignedIn() && hasAuditFields(incoming())
+        && incoming().keys().hasOnly(['ownerUid', 'projectId', 'date', 'dre', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+        && incoming().projectId == projectId && isValidNonEmptyStr(incoming().date, 10)
+        && incoming().dre is map && incoming().dre.obraId == projectId
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && getAfter(/databases/$(database)/documents/projects/$(projectId)).data.ownerUid == request.auth.uid
+        && getAfter(/databases/$(database)/documents/projects/$(projectId)).data.status == 'Concluída'
+        && getAfter(/databases/$(database)/documents/projects/$(projectId)).data.closureDate == incoming().date;
+    }
+
+    function validFollowUp(data, projectId) {
+      return hasAuditFields(data) && data.projectId == projectId
+        && data.keys().hasOnly(['ownerUid', 'projectId', 'testimonialRequestedAt', 'referralRequestedAt',
+          'testimonial', 'referrals', 'marketingPhotos', 'authorizationNote', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+        && isValidStr(data.testimonialRequestedAt, 10) && isValidStr(data.referralRequestedAt, 10)
+        && isValidStr(data.testimonial, 3000) && isValidStr(data.referrals, 2000) && isValidStr(data.authorizationNote, 500)
+        && data.marketingPhotos is list && data.marketingPhotos.size() <= 100
+        && (data.marketingPhotos.size() == 0 || !data.authorizationNote.matches('^\\s*$'))
+        && getAfter(/databases/$(database)/documents/projects/$(projectId)).data.ownerUid == request.auth.uid
+        && getAfter(/databases/$(database)/documents/projects/$(projectId)).data.status == 'Concluída';
+    }
+
+    match /projectFollowUps/{projectId} {
+      allow get: if isValidId(projectId) && isSignedIn() && (resource == null || isOwner(existing().ownerUid));
+      allow list: if isOwner(existing().ownerUid);
+      allow create: if isValidId(projectId) && isSignedIn() && validFollowUp(incoming(), projectId)
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(projectId) && isOwner(existing().ownerUid) && validFollowUp(incoming(), projectId)
+        && incoming().createdAt == existing().createdAt && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time;
+    }
+
     match /warrantyCalls/{callId} {
       allow get: if isValidId(callId) && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(callId) && isSignedIn() && isValidWarrantyCall(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time
         && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
-        && get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.ownerUid == request.auth.uid;
+        && get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.ownerUid == request.auth.uid
+        && get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.status == 'Concluída'
+        && isValidNonEmptyStr(incoming().openedDate, 10)
+        && isValidNonEmptyStr(incoming().deadlineDate, 10)
+        && isValidNonEmptyStr(get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.warrantyStartDate, 10);
       allow update: if isValidId(callId) && isSignedIn() && isValidWarrantyCall(incoming())
         && existing().ownerUid == request.auth.uid
         && incoming().ownerUid == existing().ownerUid

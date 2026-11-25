@@ -19,3 +19,5 @@ export * from './teamPlanning';
 export * from './projectOperations';
 
 export * from './fieldWork';
+
+export * from './projectClosure';
