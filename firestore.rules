@@ -456,13 +456,13 @@ service cloud.firestore {
           && hasPopContent(data.draft)));
     }
 
-    function isValidComplianceItem(data) {
+    function isValidComplianceItem(data, itemId) {
       return data.keys().hasAll([
         'ownerUid', 'kind', 'title', 'status', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
       ])
         && data.keys().hasOnly([
           'ownerUid', 'kind', 'title', 'category', 'projectId', 'projectName', 'competence',
-          'dueDate', 'issuedDate', 'fileName', 'mandatory', 'status', 'notes',
+          'dueDate', 'issuedDate', 'fileName', 'attachmentId', 'mandatory', 'status', 'notes',
           'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
         ])
         && hasAuditFields(data)
@@ -476,6 +476,9 @@ service cloud.firestore {
         && (!('dueDate' in data) || isValidStr(data.dueDate, 20))
         && (!('issuedDate' in data) || isValidStr(data.issuedDate, 20))
         && (!('fileName' in data) || isValidStr(data.fileName, 160))
+        && (!('attachmentId' in data) || (isValidId(data.attachmentId)
+          && getAfter(/databases/$(database)/documents/complianceFiles/$(data.attachmentId)).data.ownerUid == request.auth.uid
+          && getAfter(/databases/$(database)/documents/complianceFiles/$(data.attachmentId)).data.itemId == itemId))
         && (!('mandatory' in data) || data.mandatory is bool)
         && (!('notes' in data) || isValidStr(data.notes, 500));
     }
@@ -903,15 +906,28 @@ service cloud.firestore {
     match /complianceItems/{itemId} {
       allow get: if isValidId(itemId) && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow create: if isValidId(itemId) && isSignedIn() && isValidComplianceItem(incoming())
+      allow create: if isValidId(itemId) && isSignedIn() && isValidComplianceItem(incoming(), itemId)
         && incoming().createdAt == request.time && incoming().updatedAt == request.time;
-      allow update: if isValidId(itemId) && isSignedIn() && isValidComplianceItem(incoming())
+      allow update: if isValidId(itemId) && isSignedIn() && isValidComplianceItem(incoming(), itemId)
         && existing().ownerUid == request.auth.uid
         && incoming().ownerUid == existing().ownerUid
         && incoming().createdAt == existing().createdAt
         && incoming().createdBy == existing().createdBy
         && incoming().updatedAt == request.time;
       allow delete: if isValidId(itemId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+    }
+
+    match /complianceFiles/{attachmentId} {
+      allow get: if isValidId(attachmentId) && isOwner(existing().ownerUid);
+      allow create: if isValidId(attachmentId) && isSignedIn() && hasAuditFields(incoming())
+        && incoming().keys().hasOnly(['ownerUid', 'itemId', 'name', 'mimeType', 'content',
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && isValidId(incoming().itemId) && isValidNonEmptyStr(incoming().name, 160)
+        && incoming().mimeType in ['application/pdf', 'image/png', 'image/jpeg']
+        && incoming().content is bytes && incoming().content.size() > 0 && incoming().content.size() <= 716800
+        && getAfter(/databases/$(database)/documents/complianceItems/$(incoming().itemId)).data.ownerUid == request.auth.uid
+        && getAfter(/databases/$(database)/documents/complianceItems/$(incoming().itemId)).data.attachmentId == attachmentId;
     }
 
     match /tenders/{tenderId} {

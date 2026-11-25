@@ -175,6 +175,7 @@ function AuthenticatedShell({
   const [data, setData] = useState<PilotisDataState>(INITIAL_DATA_STATE);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
   const [financialInitialTab, setFinancialInitialTab] = useState<string | undefined>(undefined);
+  const [complianceInitialTab, setComplianceInitialTab] = useState<string | undefined>(undefined);
   const [settingsInitialTab, setSettingsInitialTab] = useState<string | undefined>(undefined);
   const [externalNewTxOpen, setExternalNewTxOpen] = useState(false);
   const [externalNewQuoteOpen, setExternalNewQuoteOpen] = useState(false);
@@ -216,6 +217,8 @@ function AuthenticatedShell({
 
     if (nextRoute === 'financial') {
       setFinancialInitialTab(subTab);
+    } else if (nextRoute === 'compliance') {
+      setComplianceInitialTab(subTab);
     } else if (nextRoute === 'settings') {
       setSettingsInitialTab(subTab);
     }
@@ -331,7 +334,7 @@ function AuthenticatedShell({
           )}
 
           {route === 'compliance' && (
-            <ComplianceView uid={uid} data={data} companyEmail={companyEmail} />
+            <ComplianceView uid={uid} data={data} companyEmail={companyEmail} initialTab={complianceInitialTab} />
           )}
 
           {route === 'settings' && (

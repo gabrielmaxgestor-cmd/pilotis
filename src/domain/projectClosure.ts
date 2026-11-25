@@ -1,4 +1,6 @@
 import { addMonthsISO, isValidISODate, roundCents } from './formatters';
+import { resolveWorkDocumentCategory } from './complianceWorkflows';
+import { resolverStatusConformidade } from './conformidade';
 import { linkedPopChecklist } from './pops';
 import { calcularDreObra } from './pilotisAdapters';
 import type { ComplianceItem, FinancialTransaction, Installment, Pop, Project, ProjectStage, WarrantyCall } from '../types/pilotis';
@@ -13,7 +15,6 @@ type ClosureData = {
 
 const acceptableInvoice = (state: string | undefined) => state === 'Emitida' || state === 'Não se aplica';
 const canCountOn = (date: string, cutoff: string) => isValidISODate(date) && date <= cutoff;
-const normalize = (value: string) => value.normalize('NFD').replace(/\p{Diacritic}/gu, '').toUpperCase();
 
 export function getClosureReview(project: Project, data: ClosureData, date: string) {
   const stages = data.stages.filter((row) => row.projectId === project.id);
@@ -46,8 +47,9 @@ export function getClosureReview(project: Project, data: ClosureData, date: stri
   );
   const missingReceipts = dre.receita.realizado < roundCents(payable.filter((row) => !unpaid.includes(row))
     .reduce((total, row) => total + row.amount, 0));
-  const attached = (pattern: RegExp) => documents.some((row) =>
-    pattern.test(normalize(row.title)) && Boolean(row.fileName?.trim()) && ['Anexado', 'Válida', 'Em dia'].includes(row.status));
+  const attached = (category: 'ART/RRT' | 'CNO') => documents.some((row) =>
+    resolveWorkDocumentCategory(row) === category && Boolean(row.fileName?.trim()) &&
+    ['Anexado', 'Válida', 'Em dia'].includes(resolverStatusConformidade({ tipo: row.kind, status: row.status, vencimento: row.dueDate }, date)));
   const items = [
     { id: 'stages', label: 'Etapas concluídas', cleared: stages.length > 0 && !openStages.length,
       detail: stages.length ? (stages.length - openStages.length) + ' de ' + stages.length + ' concluídas' : 'Cadastre e conclua as etapas da obra.' },
@@ -59,8 +61,8 @@ export function getClosureReview(project: Project, data: ClosureData, date: stri
     { id: 'invoices', label: 'Notas fiscais', cleared: !invoiceEntries.length && !installmentInvoices.length,
       detail: invoiceEntries.length || installmentInvoices.length ? 'Há recebimentos ou despesas com nota pendente no Financeiro.'
         : actual.length || payable.length ? 'Notas emitidas ou marcadas como “Não se aplica”.' : 'Sem lançamentos fiscais para conferir.' },
-    { id: 'art', label: 'ART/RRT', cleared: attached(/\b(?:ART|RRT)\b/), detail: 'Documento da obra com arquivo registrado em Conformidade.' },
-    { id: 'cno', label: 'CNO', cleared: attached(/\bCNO\b/), detail: 'Matrícula da obra com arquivo registrado em Conformidade.' },
+    { id: 'art', label: 'ART/RRT', cleared: attached('ART/RRT'), detail: 'Documento da obra com arquivo registrado em Conformidade.' },
+    { id: 'cno', label: 'CNO', cleared: attached('CNO'), detail: 'Matrícula da obra com arquivo registrado em Conformidade.' },
   ];
   return { items, canClose: project.status === 'Em execução' && items.every((item) => item.cleared), dre };
 }

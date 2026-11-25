@@ -23,7 +23,7 @@ export function DashboardView({
   companyEmail?: string | null;
 }) {
   const metrics = calcularIndicadoresDashboard(data);
-  const empty = metrics.sistemaVazio;
+  const empty = metrics.sistemaVazio && data.complianceItems.length === 0;
   const forecast = calcularPrevisaoCaixa(data, 5);
   const projection = forecast.possuiDados ? forecast.meses : [];
   const alerts = calcularAlertasSistema(data);
@@ -329,7 +329,10 @@ export function DashboardView({
                 <button
                   key={al.id}
                   type="button"
-                  onClick={() => onNavigate(al.modulo)}
+                  onClick={() => onNavigate(
+                    al.modulo,
+                    al.modulo === 'compliance' ? (al.categoria === 'certidao' ? 'Certidões' : 'Obrigações') : undefined,
+                  )}
                   className="flex items-start gap-2.5 text-left p-2 -mx-2 rounded-lg hover:bg-[#F6F5F2] transition-colors cursor-pointer"
                 >
                   <StatusBadge label={al.nivel} />

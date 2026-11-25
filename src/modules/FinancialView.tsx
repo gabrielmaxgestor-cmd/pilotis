@@ -918,6 +918,11 @@ export function FinancialView({
                           {formatBRL(tx.amount)}
                         </strong>
                       </div>
+                      {tx.invoiceStatus && tx.invoiceStatus !== 'Não se aplica' && (
+                        <div className="flex items-center gap-2 text-xs text-[#5B6472]">
+                          Nota fiscal <StatusBadge label={tx.invoiceStatus} />
+                        </div>
+                      )}
                       {tx.receiptFile ? (
                         <button type="button" onClick={() => tx.receiptFile && downloadReceipt(tx.receiptFile)}
                           className="self-start text-sm text-[#1F3A5F] underline">Baixar {tx.receiptFile.name}</button>

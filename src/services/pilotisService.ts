@@ -22,6 +22,7 @@ import type {
   Employee,
   CompanySettings,
   ComplianceItem,
+  ComplianceFile,
   DailyLog,
   Debt,
   EmployeeOccurrence,
@@ -73,6 +74,9 @@ import {
   formatDateBR as domainFormatDateBR,
   gerarParcelas,
   isValidISODate,
+  isActualReceipt,
+  normalizeCompetence,
+  type InvoiceReceiptTarget,
   validarLancamentoFinanceiro,
   resolverStatusParcela,
   todayISO,
@@ -1396,66 +1400,115 @@ export async function settleFinancialTransaction(uid: string, actor: ActorRole, 
   });
 }
 
-export async function markInstallmentInvoiceIssued(
-  uid: string,
-  actor: ActorRole,
-  installment: Installment
-): Promise<void> {
-  const parcelaRef = doc(db, 'parcelas', installment.id);
+export async function markReceiptInvoiceIssued(uid: string, actor: ActorRole, target: InvoiceReceiptTarget): Promise<void> {
+  await runTransaction(db, async (tx) => {
+    const readTransaction = async (id: string) => {
+      const row = (await tx.get(doc(db, 'transactions', id))).data() as FinancialTransaction | undefined;
+      if (!row || row.ownerUid !== uid || !isActualReceipt(row)) throw new Error('O lançamento precisa ser um recebimento realizado.');
+      return row;
+    };
+    const readInstallment = async (id: string) => {
+      const row = (await tx.get(doc(db, 'parcelas', id))).data() as Installment | undefined;
+      if (!row || row.ownerUid !== uid || row.status !== 'Recebida') throw new Error('A parcela precisa estar recebida no Financeiro.');
+      return row;
+    };
 
-  try {
-    await runTransaction(db, async (tx) => {
-      const parcelaSnap = await tx.get(parcelaRef);
-      if (!parcelaSnap.exists()) {
-        throw new InstallmentValidationError('Parcela não encontrada no banco de dados.');
-      }
-      const instData = parcelaSnap.data() as Installment;
-      if (instData.ownerUid !== uid) {
-        throw new InstallmentValidationError('Parcela não pertence à empresa autenticada.');
-      }
-
-      const linkedTxId = (instData.transactionId || '').trim();
-      const linkedTxRef = linkedTxId ? doc(db, 'transactions', linkedTxId) : null;
-      const linkedTxSnap = linkedTxRef ? await tx.get(linkedTxRef) : null;
-
-      const patch: Record<string, unknown> = {
-        invoiceStatus: 'Emitida',
-        updatedBy: actor,
-        updatedAt: serverTimestamp(),
-      };
-      if (instData.status !== 'Recebida' && instData.status !== 'A vencer') {
-        patch.status = 'A vencer';
-      }
-      tx.update(parcelaRef, patch);
-
-      if (linkedTxSnap && linkedTxSnap.exists()) {
-        tx.update(linkedTxRef!, {
-          invoiceStatus: 'Emitida',
-          updatedBy: actor,
-          updatedAt: serverTimestamp(),
-        });
-      }
-
-      tx.set(doc(db, 'auditLogs', generateId('aud')), {
-        ownerUid: uid,
-        registeredBy: actor,
-        action: 'Atualização',
-        entityType: 'parcelas',
-        summary: clampStr(
-          `Nota fiscal emitida: ${instData.label} · ${instData.projectName}`,
-          240
-        ),
-        beforeValue: clampStr(`Nota fiscal: ${instData.invoiceStatus || 'A emitir'}`, 240),
-        afterValue: 'Nota fiscal: Emitida',
-        createdAt: serverTimestamp(),
-      });
-    });
-  } catch (err) {
-    if (err instanceof InstallmentValidationError) {
-      throw err;
+    let transactionId = target.transactionId ?? '';
+    let installmentId = target.installmentId ?? '';
+    let transaction = transactionId ? await readTransaction(transactionId) : undefined;
+    let installment = installmentId ? await readInstallment(installmentId) : undefined;
+    if (!installment && transaction?.installmentId) {
+      installmentId = transaction.installmentId;
+      installment = await readInstallment(installmentId);
     }
-    handleFirestoreError(err, OperationType.WRITE, `parcelas/${installment.id}`);
+    if (!transaction && installment?.transactionId) {
+      transactionId = installment.transactionId;
+      transaction = await readTransaction(transactionId);
+    }
+    if (!transaction && !installment) throw new Error('Selecione um recebimento válido.');
+    if (transaction && installment && (
+      transaction.projectId !== installment.projectId
+      || (transaction.installmentId && transaction.installmentId !== installmentId)
+      || (installment.transactionId && installment.transactionId !== transactionId)
+      || (transaction.installmentId !== installmentId && installment.transactionId !== transactionId)
+    )) throw new Error('Confira o vínculo entre a parcela e o lançamento no Financeiro.');
+
+    const previous = transaction?.invoiceStatus ?? installment?.invoiceStatus;
+    if (previous === 'Não se aplica') throw new Error('A nota está registrada como “Não se aplica” no Financeiro.');
+    const patch = { invoiceStatus: 'Emitida', updatedBy: actor, updatedAt: serverTimestamp() };
+    const changeTransaction = transaction && transaction.invoiceStatus !== 'Emitida';
+    const changeInstallment = installment && installment.invoiceStatus !== 'Emitida';
+    if (!changeTransaction && !changeInstallment) return;
+    if (changeTransaction) tx.update(doc(db, 'transactions', transactionId), patch);
+    if (changeInstallment) tx.update(doc(db, 'parcelas', installmentId), patch);
+    tx.set(doc(db, 'auditLogs', generateId('aud')), {
+      ownerUid: uid, registeredBy: actor, action: 'Atualização', entityType: installment ? 'parcelas' : 'transactions',
+      summary: clampStr('Nota fiscal emitida · ' + (transaction?.description || installment?.label || 'Recebimento'), 240),
+      beforeValue: previous || 'A emitir', afterValue: 'Emitida', createdAt: serverTimestamp(),
+    });
+  });
+}
+
+export function markInstallmentInvoiceIssued(uid: string, actor: ActorRole, installment: Installment) {
+  return markReceiptInvoiceIssued(uid, actor, { installmentId: installment.id });
+}
+
+type CompliancePayload = Omit<ComplianceItem, keyof import('../types/pilotis').AuditMeta | 'id' | 'attachmentId' | 'projectName'>;
+
+export async function saveComplianceItem(
+  uid: string, actor: ActorRole, payload: CompliancePayload, itemId?: string, file?: File,
+) {
+  const title = clampStr(payload.title, 160);
+  const competence = normalizeCompetence(payload.competence);
+  if (!title) throw new Error('Informe o nome do registro.');
+  if (payload.kind === 'Obrigação' && (!competence || !isValidISODate(payload.dueDate))) {
+    throw new Error('Informe a competência e o vencimento da obrigação.');
   }
+  if (payload.kind === 'Certidão' && (!isValidISODate(payload.issuedDate) || !isValidISODate(payload.dueDate))) {
+    throw new Error('Informe a emissão e a validade da certidão.');
+  }
+  if ((payload.dueDate && !isValidISODate(payload.dueDate)) || (payload.issuedDate && !isValidISODate(payload.issuedDate))
+    || (payload.kind !== 'Obrigação' && payload.issuedDate && payload.dueDate && payload.dueDate < payload.issuedDate)) {
+    throw new Error('Confira a emissão e a validade. A validade deve ser igual ou posterior à emissão.');
+  }
+  if (payload.kind === 'Documento de obra' && !payload.projectId) throw new Error('Selecione a obra do documento.');
+
+  const attachment = file ? await readReceiptFile(file) : undefined;
+  const id = itemId ?? generateId('cmp');
+  const attachmentId = attachment ? generateId('cmpfile') : '';
+  const ref = doc(db, 'complianceItems', id);
+  await runTransaction(db, async (tx) => {
+    const previous = itemId ? (await tx.get(ref)).data() as ComplianceItem | undefined : undefined;
+    if (itemId && (!previous || previous.ownerUid !== uid || previous.kind !== payload.kind)) {
+      throw new Error('Registro de conformidade indisponível.');
+    }
+    const project = payload.projectId ? (await tx.get(doc(db, 'projects', payload.projectId))).data() as Project | undefined : undefined;
+    if (payload.projectId && (!project || project.ownerUid !== uid)) throw new Error('Obra indisponível.');
+    const fileName = attachment?.name ?? (previous?.attachmentId ? previous.fileName : clampStr(payload.fileName, 160));
+    if (payload.status === 'Anexado' && !fileName) throw new Error('Anexe um arquivo ou informe a referência do documento.');
+    const row = {
+      ...payload, title, competence: competence || clampStr(payload.competence, 40),
+      category: clampStr(payload.category, 80), notes: clampStr(payload.notes, 500),
+      projectName: project?.name ?? '', fileName,
+      ...(attachmentId ? { attachmentId } : {}),
+    };
+
+    if (previous) tx.update(ref, { ...row, updatedBy: actor, updatedAt: serverTimestamp() });
+    else tx.set(ref, { ...row, ...auditFields(uid, actor) });
+    if (attachment) tx.set(doc(db, 'complianceFiles', attachmentId), { ...attachment, itemId: id, ...auditFields(uid, actor) });
+    tx.set(doc(db, 'auditLogs', generateId('aud')), {
+      ownerUid: uid, registeredBy: actor, action: previous ? 'Atualização' : 'Criação', entityType: 'complianceItems',
+      summary: clampStr('Conformidade · ' + title, 240),
+      beforeValue: previous?.status ?? '', afterValue: payload.status, createdAt: serverTimestamp(),
+    });
+  });
+}
+
+export async function readComplianceFile(item: Pick<ComplianceItem, 'id' | 'attachmentId'>): Promise<ComplianceFile> {
+  if (!item.attachmentId) throw new Error('Este registro possui somente uma referência de arquivo.');
+  const file = (await getDoc(doc(db, 'complianceFiles', item.attachmentId))).data() as ComplianceFile | undefined;
+  if (!file || file.itemId !== item.id) throw new Error('Anexo indisponível.');
+  return file;
 }
 
 export async function createProjectFromTemplate(

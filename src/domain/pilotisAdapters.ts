@@ -15,6 +15,7 @@ import type {
   TransactionKind,
   WarrantyCall,
 } from '../types/pilotis';
+import { getInvoiceReceipts, normalizeTenderCategory, pendingInvoiceReceipts, resolveCertificateCategory, sumPendingInvoices } from './complianceWorkflows';
 import { alertas, type AlertaDominio } from './alertas';
 import { previsaoCaixa, type PrevisaoCaixaResult } from './caixa';
 import {
@@ -284,7 +285,7 @@ export function toDomainComplianceItems(
   return items.map((c) => ({
     id: c.id,
     tipo: c.kind,
-    categoria: c.category,
+    categoria: c.kind === 'Licitação' ? normalizeTenderCategory(c.category) : c.category,
     status: c.status,
     vencimento: c.dueDate || undefined,
   }));
@@ -307,12 +308,8 @@ export function toDomainComplianceCollections(items: ComplianceItem[]): {
         competencia: c.competence,
         vencimento: c.dueDate,
         status:
-          c.status === 'Em dia' ||
-          c.status === 'Vence em breve' ||
-          c.status === 'Em atraso' ||
-          c.status === 'Pendente'
-            ? c.status
-            : 'Pendente',
+          c.status === 'Em dia' || c.status === 'Válida' || c.status === 'Anexado' ? 'Em dia'
+            : c.status === 'Vence em breve' || c.status === 'Em atraso' ? c.status : 'Pendente',
         arquivo: c.fileName || undefined,
       });
     } else if (c.kind === 'Certidão') {
@@ -320,7 +317,7 @@ export function toDomainComplianceCollections(items: ComplianceItem[]): {
         ...DOMAIN_AUDIT_FALLBACK,
         id: c.id,
         titulo: c.title,
-        esfera: 'Outro',
+        esfera: resolveCertificateCategory(c),
         dataEmissao: c.issuedDate || undefined,
         dataValidade: c.dueDate,
         status:
@@ -542,13 +539,13 @@ export function calcularResumoFasesEap(
 export function calcularProntidaoLicitacao(
   items: ComplianceItem[],
 ): number | null {
-  return prontidaoLicitacao(toDomainComplianceItems(items));
+  return prontidaoLicitacao(toDomainComplianceItems(items), planningTodayISO());
 }
 
 export function calcularProntidaoLicitacaoPorCategoria(
   items: ComplianceItem[],
 ): ProntidaoLicitacaoCategoria[] {
-  return prontidaoLicitacaoPorCategoria(toDomainComplianceItems(items));
+  return prontidaoLicitacaoPorCategoria(toDomainComplianceItems(items), planningTodayISO());
 }
 
 export function calcularResumoFunilOrcamentos(
@@ -560,20 +557,17 @@ export function calcularResumoFunilOrcamentos(
 export function calcularResumoConformidade(
   items: ComplianceItem[],
   transactions: FinancialTransaction[],
-  dataReferencia = todayISO(),
+  dataReferencia = planningTodayISO(),
   installments: Installment[] = [],
 ): ResumoConformidadeResult {
-  return resumoConformidade(
-    toDomainComplianceItems(items),
-    toDomainTransactions(transactions),
-    dataReferencia,
-    toDomainInstallments(installments),
-  );
+  const summary = resumoConformidade(toDomainComplianceItems(items), [], dataReferencia);
+  const receipts = getInvoiceReceipts(transactions, installments);
+  return { ...summary, receitaSemNotaPendente: receipts.length ? sumPendingInvoices(pendingInvoiceReceipts(receipts)) : null };
 }
 
 export function calcularAlertasSistema(
   data: PilotisDataState,
-  dataReferencia = todayISO(),
+  dataReferencia = planningTodayISO(),
 ): AlertaDominio[] {
   const { obrigacoes, certidoes } = toDomainComplianceCollections(
     data.complianceItems,

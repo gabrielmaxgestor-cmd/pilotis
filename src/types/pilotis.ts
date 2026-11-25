@@ -413,6 +413,13 @@ export type ComplianceStatus =
   | 'Pendente'
   | 'Parcial';
 
+export interface ComplianceFile extends AuditMeta {
+  itemId: string;
+  name: string;
+  mimeType: string;
+  content: Bytes;
+}
+
 export interface ComplianceItem extends AuditMeta {
   id: string;
   kind: ComplianceKind;
@@ -424,6 +431,7 @@ export interface ComplianceItem extends AuditMeta {
   dueDate: string;
   issuedDate: string;
   fileName: string;
+  attachmentId?: string;
   mandatory: boolean;
   status: ComplianceStatus;
   notes: string;

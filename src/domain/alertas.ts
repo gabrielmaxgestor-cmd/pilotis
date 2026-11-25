@@ -1,3 +1,4 @@
+import { CERTIFICATE_WARNING_DAYS, OBLIGATION_WARNING_DAYS } from './conformidade';
 import { previsaoCaixa } from './caixa';
 import { isParcelaEmAtraso } from './financeiro';
 import { diffDaysISO, formatDateBR } from './formatters';
@@ -43,8 +44,8 @@ export function alertas(
 ): AlertaDominio[] {
   const refDate = opcoes.dataReferencia;
   const mesesPrevisao = opcoes.mesesPrevisaoCaixa ?? 5;
-  const diasVencimento = opcoes.diasAvisoVencimento ?? 7;
-  const diasCertidao = opcoes.diasAvisoCertidao ?? 30;
+  const diasVencimento = opcoes.diasAvisoVencimento ?? OBLIGATION_WARNING_DAYS;
+  const diasCertidao = opcoes.diasAvisoCertidao ?? CERTIFICATE_WARNING_DAYS;
   const diasTreinamento = opcoes.diasAvisoTreinamento ?? 45;
 
   const resultado: AlertaDominio[] = [];
