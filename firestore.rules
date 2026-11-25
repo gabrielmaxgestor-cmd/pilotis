@@ -267,7 +267,7 @@ service cloud.firestore {
       ])
         && data.keys().hasOnly([
           'ownerUid', 'projectId', 'date', 'presentCount', 'weather', 'activities',
-          'occurrences', 'photoNotes', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+          'occurrences', 'photoNotes', 'presentTeam', 'photoIds', 'photoBackend', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
         ])
         && hasAuditFields(data)
         && isValidId(data.projectId)
@@ -276,7 +276,10 @@ service cloud.firestore {
         && isValidNonEmptyStr(data.activities, 1500)
         && (!('presentCount' in data) || isValidNonNegNum(data.presentCount))
         && (!('occurrences' in data) || isValidStr(data.occurrences, 1000))
-        && (!('photoNotes' in data) || isValidStringList(data.photoNotes, 10, 200));
+        && (!('photoNotes' in data) || isValidStringList(data.photoNotes, 10, 200))
+        && (!('presentTeam' in data) || isValidStr(data.presentTeam, 500))
+        && (!('photoIds' in data) || isValidStringList(data.photoIds, 6, 128))
+        && (!('photoBackend' in data) || data.photoBackend in ['firestore', 'storage']);
     }
 
     function isValidTransaction(data) {
@@ -712,7 +715,7 @@ service cloud.firestore {
     }
 
     match /dailyLogs/{logId} {
-      allow get: if isValidId(logId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow get: if isValidId(logId) && isSignedIn() && (resource == null || existing().ownerUid == request.auth.uid);
       allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(logId) && isSignedIn() && isValidDailyLog(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time
@@ -726,6 +729,29 @@ service cloud.firestore {
         && incoming().createdBy == existing().createdBy
         && incoming().updatedAt == request.time;
       allow delete: if isValidId(logId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+
+      match /photos/{photoId} {
+        allow get: if isValidId(photoId) && isOwner(existing().ownerUid)
+          && get(/databases/$(database)/documents/dailyLogs/$(logId)).data.ownerUid == request.auth.uid;
+        allow create: if isValidId(photoId) && isSignedIn()
+          && incoming().keys().hasOnly(['ownerUid', 'mimeType', 'content', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+          && hasAuditFields(incoming()) && incoming().createdAt == request.time && incoming().updatedAt == request.time
+          && incoming().mimeType == 'image/jpeg' && incoming().content is bytes
+          && incoming().content.size() > 0 && incoming().content.size() <= 393216
+          && getAfter(/databases/$(database)/documents/dailyLogs/$(logId)).data.ownerUid == request.auth.uid
+          && getAfter(/databases/$(database)/documents/dailyLogs/$(logId)).data.photoBackend == 'firestore'
+          && photoId in getAfter(/databases/$(database)/documents/dailyLogs/$(logId)).data.photoIds;
+      }
+    }
+
+    match /fieldSync/{operationId} {
+      allow get: if isValidId(operationId) && isSignedIn() && (resource == null || existing().ownerUid == request.auth.uid);
+      allow create: if isValidId(operationId) && isSignedIn()
+        && incoming().keys().hasOnly(['ownerUid', 'projectId', 'stageId', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+        && hasAuditFields(incoming()) && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && isValidId(incoming().projectId) && isValidId(incoming().stageId)
+        && getAfter(/databases/$(database)/documents/stages/$(incoming().stageId)).data.projectId == incoming().projectId
+        && getAfter(/databases/$(database)/documents/stages/$(incoming().stageId)).data.ownerUid == request.auth.uid;
     }
 
     match /transactions/{txId} {

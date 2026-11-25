@@ -36,6 +36,15 @@ Sempre que alterar `firestore.rules`, valide e publique as regras antes de usar 
 
 Os documentos de escopo, telas de referência e guia visual estão armazenados em `/docs`, fora de `/public`, para não serem publicados no bundle final de produção (`/dist`).
 
+
+## Diário de obra, modo offline e fotos
+
+Abra a versão de produção uma vez online e entre com a conta da empresa para carregar as obras, etapas e POPs no aparelho. Em HTTPS (ou localhost), o menu do navegador permite instalar o Pilotis. O service worker armazena a interface e a fila em IndexedDB guarda registros e fotos comprimidas até receber confirmação do Firebase. A sincronização ocorre ao reconectar com o app aberto ou ao reabri-lo.
+
+O modo padrão, `VITE_DAILY_LOG_PHOTO_BACKEND=firestore`, grava cada JPEG em `dailyLogs/{logId}/photos/{photoId}`. Publique as regras de `firestore.rules` no banco configurado em `firebase-applet-config.json`. Cada registro aceita até seis fotos de até 384 KiB após compressão.
+
+Para usar Firebase Storage, provisione o bucket no projeto, publique `storage.rules` com o mesmo e-mail da conta da empresa e configure o CORS para permitir `GET` na origem do app. Defina `VITE_DAILY_LOG_PHOTO_BACKEND=storage` e gere um novo build. Os registros anteriores continuam sendo lidos do backend gravado em cada registro.
+
 ## Comandos
 
 ```bash

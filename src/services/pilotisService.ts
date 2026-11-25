@@ -36,6 +36,8 @@ import type {
   StageStatus,
 } from '../types/pilotis';
 import {
+  applyFieldStageUpdate,
+  type FieldStageUpdate,
   addDaysISO,
   addMonthsISO,
   allocateScheduleBudget,
@@ -940,7 +942,7 @@ export async function applyScheduleTemplateToProject(params: {
   });
 }
 
-async function readProjectStages(tx: Transaction, project: Project, knownStages: ProjectStage[]) {
+async function readProjectStages(tx: Transaction, project: Project, knownStages: Pick<ProjectStage, 'id'>[]) {
   const ids = project.scheduleStageIds ?? knownStages.map((stage) => stage.id);
   const snapshots = await Promise.all(ids.map((id) => tx.get(doc(db, 'stages', id))));
   const stages = snapshots.filter((snapshot) => snapshot.exists()).map((snapshot) => (
@@ -1028,26 +1030,40 @@ export async function saveWorkInProgressLimit(uid: string, actor: ActorRole, pro
 }
 
 export async function saveProjectStage(params: {
-  uid: string; actor: ActorRole; project: Project; knownStages: ProjectStage[];
-} & ({ stageId?: string; payload: StagePayload } | { stageId: string; moveTo: StageStatus })): Promise<void> {
+  uid: string; actor: ActorRole; project: Pick<Project, 'id' | 'scheduleRevision'>; knownStages: Pick<ProjectStage, 'id'>[];
+} & ({ stageId?: string; payload: StagePayload } | { stageId: string; moveTo: StageStatus }
+  | { stageId: string; fieldUpdate: FieldStageUpdate; operationId: string })): Promise<void> {
   const { uid, actor, project, knownStages } = params;
   const stageId = params.stageId ?? generateId('stg');
   const projectRef = doc(db, 'projects', project.id);
   const stageRef = doc(db, 'stages', stageId);
+  const receiptRef = 'operationId' in params ? doc(db, 'fieldSync', params.operationId) : null;
   await runTransaction(db, async (tx) => {
+    if (receiptRef && (await tx.get(receiptRef)).exists()) return;
     const projectSnapshot = await tx.get(projectRef);
     const current = { ...projectSnapshot.data(), id: project.id } as Project;
     if (!projectSnapshot.exists() || current.ownerUid !== uid) {
       throw new Error('Obra indisponível.');
     }
-    if ((current.scheduleRevision ?? 0) !== (project.scheduleRevision ?? 0)) {
+    if (!receiptRef && (current.scheduleRevision ?? 0) !== (project.scheduleRevision ?? 0)) {
       throw new Error('O cronograma foi atualizado. Feche e reabra a etapa para revisar a versão atual.');
     }
     const stages = await readProjectStages(tx, current, knownStages);
     const previous = stages.find((stage) => stage.id === stageId);
     if (params.stageId && !previous) throw new Error('Etapa indisponível.');
     let payload: StagePayload;
-    if ('moveTo' in params) {
+    if ('fieldUpdate' in params) {
+      if (!previous) throw new Error('Etapa indisponível.');
+      const next = applyFieldStageUpdate(previous, params.fieldUpdate);
+      const { id, ownerUid, createdAt, createdBy, updatedAt, updatedBy, ...fields } = next;
+      payload = { ...fields, dependsOn: fields.dependsOn ?? [], checklistCompleted: fields.checklistCompleted ?? [] };
+      if (!Number.isFinite(payload.progressPct) || payload.progressPct < 0 || payload.progressPct > 100) {
+        throw new Error('Informe um progresso entre 0 e 100.');
+      }
+      if (payload.materialExpectedDate && !isValidISODate(payload.materialExpectedDate)) {
+        throw new Error('Informe uma data válida para o material do cliente.');
+      }
+    } else if ('moveTo' in params) {
       if (!previous) throw new Error('Etapa indisponível.');
       const { id, ownerUid, createdAt, createdBy, updatedAt, updatedBy, ...fields } = previous;
       payload = { ...fields, status: params.moveTo, dependsOn: fields.dependsOn ?? [], checklistCompleted: fields.checklistCompleted ?? [] };
@@ -1119,6 +1135,7 @@ export async function saveProjectStage(params: {
         ...auditFields(uid, actor),
       });
     }
+    if (receiptRef) tx.set(receiptRef, { ...auditFields(uid, actor), projectId: project.id, stageId });
     const scheduleRevision = (current.scheduleRevision ?? 0) + 1;
     if (!previous || candidate.progressPct !== previous.progressPct) {
       const progress = calcularCurvaSObra(nextStages, schedule.referenceWeek, undefined, false);

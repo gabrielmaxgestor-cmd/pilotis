@@ -1,0 +1,20 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isCompany(uid) {
+      return request.auth != null && request.auth.uid == uid
+        && request.auth.token.email_verified == true
+        && request.auth.token.email is string
+        && request.auth.token.email.lower() == 'empresa@pilotis.com.br';
+    }
+
+    match /dailyLogs/{uid}/{logId}/{imageName} {
+      allow read: if isCompany(uid);
+      allow write: if isCompany(uid) && request.resource != null
+        && logId.matches('^[a-zA-Z0-9_-]{1,128}$')
+        && imageName.matches('^[a-zA-Z0-9_-]{1,128}\\.jpg$')
+        && request.resource.contentType == 'image/jpeg'
+        && request.resource.size > 0 && request.resource.size <= 393216;
+    }
+  }
+}

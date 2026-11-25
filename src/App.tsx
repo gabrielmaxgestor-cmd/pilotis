@@ -10,6 +10,7 @@ import { Sidebar, type AppRouteKey } from './components/ui/Sidebar';
 import { ToastProvider } from './components/ui/Toast';
 import { useCurrentUser } from './hooks/useCurrentUser';
 import { testFirestoreConnection } from './lib/firebase';
+import { importLegacyDailyQueue, startFieldSync } from './services/fieldQueue';
 import { subscribePilotisCollections } from './services/pilotisService';
 import type { ModuleKey, PilotisDataState } from './types/pilotis';
 
@@ -196,6 +197,13 @@ function AuthenticatedShell({
       unsub();
     };
   }, [uid]);
+
+  useEffect(() => startFieldSync(uid), [uid]);
+
+  useEffect(() => {
+    if (data.projects.length === 0) return;
+    void importLegacyDailyQueue(uid, data.projects).catch((error) => console.warn('Diário armazenado no aparelho:', error));
+  }, [uid, data.projects]);
 
   function navigateTo(nextRoute: AppRouteKey, subTab?: string) {
     if (nextRoute === 'login') {

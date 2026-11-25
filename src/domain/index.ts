@@ -17,3 +17,5 @@ export * from './bankStatement';
 export * from './teamPlanning';
 
 export * from './projectOperations';
+
+export * from './fieldWork';

@@ -194,6 +194,8 @@ export interface ScheduleProgress extends AuditMeta {
 
 export type WeatherType = 'Sol' | 'Chuva fraca' | 'Chuva forte';
 
+export type DailyPhotoBackend = 'firestore' | 'storage';
+
 export interface DailyLog extends AuditMeta {
   id: string;
   projectId: string;
@@ -203,6 +205,9 @@ export interface DailyLog extends AuditMeta {
   activities: string;
   occurrences: string;
   photoNotes: string[];
+  presentTeam?: string;
+  photoIds?: string[];
+  photoBackend?: DailyPhotoBackend;
 }
 
 export type TransactionKind = 'income' | 'expense' | 'loan';

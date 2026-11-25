@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { FieldStages, ProjectDiary } from './ProjectFieldView';
 import { ProjectScheduleView, ScheduleProgressChart } from './ProjectScheduleView';
 import { ProjectKanban, ProjectResources, ProjectRisks } from './ProjectOperationsView';
 import {
@@ -27,7 +28,6 @@ import type {
   ProjectStage,
   ProjectType,
   StageStatus,
-  WeatherType,
 } from '../types/pilotis';
 import {
   calcularCurvaSObra,
@@ -61,6 +61,7 @@ const PLAN_TABS = [
   'Recursos',
   'Riscos',
   'Diário de obra',
+  'Etapas em campo',
   'Encerramento',
 ];
 
@@ -162,29 +163,6 @@ export function ProjectPlanningView({
   const [stError, setStError] = useState<string | null>(null);
   const [stSaving, setStSaving] = useState(false);
 
-  // Daily Log state (with offline queue support)
-  const [logDate, setLogDate] = useState(todayISO());
-  const [logCount, setLogCount] = useState('0');
-  const [logWeather, setLogWeather] = useState<WeatherType>('Sol');
-  const [logActivities, setLogActivities] = useState('');
-  const [logOccurrences, setLogOccurrences] = useState('');
-  const [logActor, setLogActor] = useState<ActorRole>('Sócio');
-  const [isOnline, setIsOnline] = useState(
-    typeof navigator !== 'undefined' ? navigator.onLine : true
-  );
-  const [offlineQueuedCount, setOfflineQueuedCount] = useState(0);
-
-  useEffect(() => {
-    const onOnline = () => setIsOnline(true);
-    const onOffline = () => setIsOnline(false);
-    window.addEventListener('online', onOnline);
-    window.addEventListener('offline', onOffline);
-    return () => {
-      window.removeEventListener('online', onOnline);
-      window.removeEventListener('offline', onOffline);
-    };
-  }, []);
-
   const activeProject =
     data.projects.find((p) => p.id === selectedProjectId) ?? null;
 
@@ -235,11 +213,6 @@ export function ProjectPlanningView({
     projectFilter === 'Concluídas' ? project.status === 'Concluída' : project.status === projectFilter
   ));
 
-  const projectLogs = activeProject
-    ? data.dailyLogs
-        .filter((l) => l.projectId === activeProject.id)
-        .sort((a, b) => b.date.localeCompare(a.date))
-    : [];
 
   // Phases breakdown for Visão geral via /src/domain
   const phasesList = useMemo(
@@ -342,35 +315,6 @@ export function ProjectPlanningView({
     } finally {
       setStSaving(false);
     }
-  }
-
-  async function handleSaveDailyLog(e: React.FormEvent) {
-    e.preventDefault();
-    if (!activeProject || !logActivities.trim()) return;
-    const payload = {
-      projectId: activeProject.id,
-      date: logDate,
-      presentCount: Number(logCount) || 0,
-      weather: logWeather,
-      activities: clampStr(logActivities, 1500),
-      occurrences: clampStr(logOccurrences, 1000),
-      photoNotes: [],
-    };
-
-    if (!isOnline) {
-      const queueKey = 'pilotis_offline_logs';
-      const existingQueue = JSON.parse(localStorage.getItem(queueKey) || '[]');
-      existingQueue.push({ ...payload, actor: logActor });
-      localStorage.setItem(queueKey, JSON.stringify(existingQueue));
-      setOfflineQueuedCount(existingQueue.length);
-      setLogActivities('');
-      setLogOccurrences('');
-      return;
-    }
-
-    await createRecord('dailyLogs', uid, logActor, payload, `Diário de obra · ${activeProject.name}`);
-    setLogActivities('');
-    setLogOccurrences('');
   }
 
   async function handleCloseProject() {
@@ -577,6 +521,14 @@ export function ProjectPlanningView({
             </section>
           )}
 
+          <div className="flex flex-wrap gap-2 md:hidden">
+            <button type="button" onClick={() => setTab('Diário de obra')} className="rounded-lg border border-[#E4E1DA] bg-white px-3 py-2 text-sm font-semibold text-[#1F3A5F] focus-visible:ring-2 focus-visible:ring-[#1F3A5F]">
+              Diário de obra
+            </button>
+            <button type="button" onClick={() => setTab('Etapas em campo')} className="rounded-lg border border-[#E4E1DA] bg-white px-3 py-2 text-sm font-semibold text-[#1F3A5F] focus-visible:ring-2 focus-visible:ring-[#1F3A5F]">
+              Etapas em campo
+            </button>
+          </div>
           <Tabs items={PLAN_TABS} active={tab} onChange={setTab} />
 
           {tab === 'Visão geral' && (
@@ -836,97 +788,10 @@ export function ProjectPlanningView({
           )}
 
           {tab === 'Diário de obra' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <section className="lg:col-span-2 bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
-                <h2 className="text-base font-semibold text-[#14181F]">Registros do diário</h2>
-                {!isOnline && (
-                  <AlertNote tone="info" title="Sem conexão no canteiro">
-                    Os novos registros serão salvos no aparelho e sincronizados depois ({offlineQueuedCount} na fila).
-                  </AlertNote>
-                )}
-                {projectLogs.length === 0 ? (
-                  <p className="text-sm text-[#5B6472]">Nenhum registro no diário desta obra.</p>
-                ) : (
-                  <div className="flex flex-col gap-3">
-                    {projectLogs.map((l) => (
-                      <div key={l.id} className="border border-[#E4E1DA] rounded-xl p-3.5 flex flex-col gap-1">
-                        <div className="flex items-center justify-between text-xs">
-                          <strong className="text-[#14181F]">{formatDateBR(l.date)}</strong>
-                          <span className="text-[#5B6472]">
-                            {l.weather} · {l.presentCount} pessoa(s)
-                          </span>
-                        </div>
-                        <p className="text-sm text-[#14181F]">{l.activities}</p>
-                        {l.occurrences && (
-                          <p className="text-xs text-[#8A5200]">Ocorrências: {l.occurrences}</p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </section>
-
-              <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-3">
-                <h2 className="text-base font-semibold text-[#14181F]">Novo registro do dia</h2>
-                <form onSubmit={handleSaveDailyLog} className="flex flex-col gap-3">
-                  <div className="grid grid-cols-2 gap-2.5">
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs font-semibold">Data</label>
-                      <input
-                        type="date"
-                        value={logDate}
-                        onChange={(e) => setLogDate(e.target.value)}
-                        className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm"
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs font-semibold">Equipe presente</label>
-                      <input
-                        type="number"
-                        min={0}
-                        value={logCount}
-                        onChange={(e) => setLogCount(e.target.value)}
-                        className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm tabular-nums"
-                      />
-                    </div>
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs font-semibold">Clima</label>
-                    <SegmentedControl
-                      items={['Sol', 'Chuva fraca', 'Chuva forte']}
-                      active={logWeather}
-                      onChange={(w) => setLogWeather(w as WeatherType)}
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs font-semibold">Atividades do dia</label>
-                    <textarea
-                      required
-                      rows={3}
-                      value={logActivities}
-                      onChange={(e) => setLogActivities(e.target.value)}
-                      className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs font-semibold">Ocorrências</label>
-                    <textarea
-                      rows={2}
-                      value={logOccurrences}
-                      onChange={(e) => setLogOccurrences(e.target.value)}
-                      className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm"
-                    />
-                  </div>
-                  <RegisteredBySelect value={logActor} onChange={setLogActor} id="log-actor" />
-                  <button
-                    type="submit"
-                    className="w-full py-2.5 rounded-lg bg-[#1F3A5F] text-white text-sm font-semibold cursor-pointer"
-                  >
-                    Salvar registro do dia
-                  </button>
-                </form>
-              </section>
-            </div>
+            <ProjectDiary key={activeProject.id} uid={uid} project={activeProject} logs={data.dailyLogs} />
+          )}
+          {tab === 'Etapas em campo' && (
+            <FieldStages key={activeProject.id} uid={uid} project={activeProject} stages={projectStages} pops={data.pops} />
           )}
 
           {tab === 'Encerramento' && (
