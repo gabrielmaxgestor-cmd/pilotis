@@ -9,6 +9,7 @@ export * from './planejamento';
 export * from './alertas';
 export * from './conformidade';
 export * from './indicadores';
+export * from './dashboard';
 export * from './pilotisAdapters';
 export * from './aiContext';
 

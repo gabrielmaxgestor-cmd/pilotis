@@ -82,6 +82,7 @@ export function ClientsQuotesView({
   uid,
   data,
   companyEmail,
+  initialTab,
   externalNewQuoteOpen,
   onCloseExternalNewQuote,
   onProjectCreated,
@@ -90,6 +91,7 @@ export function ClientsQuotesView({
   uid: string;
   data: PilotisDataState;
   companyEmail?: string | null;
+  initialTab?: string;
   externalNewQuoteOpen?: boolean;
   onCloseExternalNewQuote?: () => void;
   onProjectCreated?: (projectId: string) => void;
@@ -97,7 +99,7 @@ export function ClientsQuotesView({
 }) {
   const { showToast } = useToast();
 
-  const [tab, setTab] = useState('Funil');
+  const [tab, setTab] = useState(initialTab && CLIENT_TABS.includes(initialTab) ? initialTab : 'Funil');
   const [selectedQuoteId, setSelectedQuoteId] = useState<string>('');
   const [selectedClientId, setSelectedClientId] = useState<string>('');
   const [quoteListFilter, setQuoteListFilter] = useState('Todos');

@@ -173,8 +173,10 @@ function AuthenticatedShell({
   });
 
   const [data, setData] = useState<PilotisDataState>(INITIAL_DATA_STATE);
+  const [dashboardReady, setDashboardReady] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
   const [financialInitialTab, setFinancialInitialTab] = useState<string | undefined>(undefined);
+  const [clientsInitialTab, setClientsInitialTab] = useState<string | undefined>(undefined);
   const [teamInitialTab, setTeamInitialTab] = useState<string | undefined>(undefined);
   const [complianceInitialTab, setComplianceInitialTab] = useState<string | undefined>(undefined);
   const [settingsInitialTab, setSettingsInitialTab] = useState<string | undefined>(undefined);
@@ -195,8 +197,16 @@ function AuthenticatedShell({
 
   useEffect(() => {
     void testFirestoreConnection();
+    const dashboardPending = new Set([
+      'clients', 'quotes', 'projects', 'installments', 'stages', 'transactions',
+      'debts', 'employees', 'allocations', 'settings', 'complianceItems', 'warrantyCalls',
+    ]);
     const unsub = subscribePilotisCollections(uid, (partial) => {
       setData((prev) => ({ ...prev, ...partial }));
+      if (dashboardPending.size) {
+        Object.keys(partial).forEach((name) => dashboardPending.delete(name));
+        if (!dashboardPending.size) setDashboardReady(true);
+      }
     });
     return () => {
       unsub();
@@ -218,6 +228,8 @@ function AuthenticatedShell({
 
     if (nextRoute === 'financial') {
       setFinancialInitialTab(subTab);
+    } else if (nextRoute === 'clients') {
+      setClientsInitialTab(subTab);
     } else if (nextRoute === 'team') {
       setTeamInitialTab(subTab);
     } else if (nextRoute === 'compliance') {
@@ -266,11 +278,15 @@ function AuthenticatedShell({
             />
           )}
 
-          {route === 'dashboard' && (
+          {route === 'dashboard' && (!dashboardReady ? <ModuleLoadingFallback label="Carregando dados do Dashboard…" /> : (
             <DashboardView
               data={data}
               companyEmail={companyEmail}
               onNavigate={handleModuleNavigate}
+              onOpenProject={(projectId) => {
+                setSelectedProjectId(projectId);
+                navigateTo('planning');
+              }}
               onOpenNewTransaction={() => {
                 setExternalNewTxOpen(true);
                 navigateTo('financial', 'Visão geral');
@@ -280,7 +296,7 @@ function AuthenticatedShell({
                 navigateTo('clients');
               }}
             />
-          )}
+          ))}
 
           {route === 'ai' && (
             <OperationalAiView
@@ -306,6 +322,7 @@ function AuthenticatedShell({
               uid={uid}
               data={data}
               companyEmail={companyEmail}
+              initialTab={clientsInitialTab}
               externalNewQuoteOpen={externalNewQuoteOpen}
               onCloseExternalNewQuote={() => setExternalNewQuoteOpen(false)}
               onProjectCreated={(projId) => {
@@ -409,6 +426,7 @@ function ProtectedPilotisApp() {
 
   return (
     <AuthenticatedShell
+      key={user.uid}
       uid={user.uid}
       companyEmail={user.email}
       onLogout={logout}

@@ -568,33 +568,16 @@ export function calcularResumoConformidade(
 export function calcularAlertasSistema(
   data: PilotisDataState,
   dataReferencia = planningTodayISO(),
+  options: { forecast?: PrevisaoCaixaResult; lateStages?: ReadonlyMap<string, number> } = {},
 ): AlertaDominio[] {
   const { obrigacoes, certidoes } = toDomainComplianceCollections(
     data.complianceItems,
   );
   return alertas(
     {
-      config: data.settings
-        ? {
-            createdBy: 'Sócio',
-            createdAt: '',
-            updatedBy: 'Sócio',
-            updatedAt: '',
-            id: data.settings.id,
-            nomeEmpresa: data.settings.companyName,
-            cnpj: data.settings.cnpj,
-            enderecoFiscal: data.settings.fiscalAddress,
-            cidade: data.settings.city,
-            emailEmpresa: data.settings.email,
-            telefone: data.settings.phone,
-            corDestaque: data.settings.accentColor,
-            exibirEmblemaPdf: data.settings.pdfShowLogo,
-            parametrosEncargos: toDomainTaxParams(data.settings, dataReferencia),
-          }
-        : null,
       lancamentos: toDomainTransactions(data.transactions),
       parcelas: toDomainInstallments(data.installments),
-      orcamentos: toDomainQuotes(data.quotes),
+      dividas: toDomainDebts(data.debts),
       colaboradores: toDomainEmployees(data.employees),
       obrigacoes,
       certidoes,
@@ -603,10 +586,8 @@ export function calcularAlertasSistema(
     },
     {
       dataReferencia,
-      saldoInicialCaixa: calcularSaldoInicialCaixa(
-        data.transactions,
-        dataReferencia,
-      ),
+      forecast: options.forecast ?? calcularPrevisaoCaixa(data, 5, dataReferencia),
+      lateStages: options.lateStages,
     },
   );
 }
