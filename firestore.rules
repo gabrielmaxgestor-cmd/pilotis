@@ -35,6 +35,10 @@ service cloud.firestore {
         && request.auth.token.email.lower() == companyEmail();
     }
 
+    function isBoundedList() {
+      return request.query.limit != null && request.query.limit <= 201;
+    }
+
     function isOwner(uid) {
       return isSignedIn() && request.auth.uid == uid;
     }
@@ -543,7 +547,7 @@ service cloud.firestore {
 
     match /companySettings/{userId} {
       allow get: if isValidId(userId) && isOwner(userId);
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if false;
       allow create: if isValidId(userId) && isOwner(userId) && isValidCompanySettings(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(userId) && isOwner(userId) && isValidCompanySettings(incoming())
@@ -557,7 +561,7 @@ service cloud.firestore {
 
     match /clients/{clientId} {
       allow get: if isValidId(clientId) && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(clientId) && isSignedIn() && isValidClient(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(clientId) && isSignedIn() && isValidClient(incoming())
@@ -582,7 +586,7 @@ service cloud.firestore {
 
     match /quotes/{quoteId} {
       allow get: if isValidId(quoteId) && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(quoteId) && isSignedIn() && isValidQuote(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time
         && exists(/databases/$(database)/documents/clients/$(incoming().clientId))
@@ -624,7 +628,7 @@ service cloud.firestore {
 
     match /projects/{projectId} {
       allow get: if isValidId(projectId) && isSignedIn() && (resource == null || existing().ownerUid == request.auth.uid);
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(projectId) && isSignedIn() && isValidProject(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(projectId) && isSignedIn() && isValidProject(incoming())
@@ -649,7 +653,7 @@ service cloud.firestore {
 
     match /parcelas/{installmentId} {
       allow get: if isValidId(installmentId) && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(installmentId) && isSignedIn() && isValidInstallment(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time
         && existsAfter(/databases/$(database)/documents/projects/$(incoming().projectId))
@@ -694,7 +698,7 @@ service cloud.firestore {
 
     match /baselines/{baselineId} {
       allow get: if isValidId(baselineId) && isOwner(existing().ownerUid);
-      allow list: if isOwner(existing().ownerUid);
+      allow list: if isBoundedList() && isOwner(existing().ownerUid);
       allow create: if isValidId(baselineId) && isSignedIn() && isValidScheduleBaseline(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time
         && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.ownerUid == request.auth.uid;
@@ -703,7 +707,7 @@ service cloud.firestore {
 
     match /scheduleProgress/{progressId} {
       allow get: if isValidId(progressId) && isOwner(existing().ownerUid);
-      allow list: if isOwner(existing().ownerUid);
+      allow list: if isBoundedList() && isOwner(existing().ownerUid);
       allow create: if isValidId(progressId) && isSignedIn() && isValidScheduleProgress(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time
         && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.ownerUid == request.auth.uid;
@@ -727,7 +731,7 @@ service cloud.firestore {
 
     match /projectRisks/{riskId} {
       allow get: if isValidId(riskId) && isOwner(existing().ownerUid);
-      allow list: if isOwner(existing().ownerUid);
+      allow list: if isBoundedList() && isOwner(existing().ownerUid);
       allow create: if isValidId(riskId) && isSignedIn() && isValidProjectRisk(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(riskId) && isOwner(existing().ownerUid) && isValidProjectRisk(incoming())
@@ -739,7 +743,7 @@ service cloud.firestore {
 
     match /stages/{stageId} {
       allow get: if isValidId(stageId) && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(stageId) && isSignedIn() && isValidStage(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time
         && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.ownerUid == request.auth.uid;
@@ -758,7 +762,7 @@ service cloud.firestore {
 
     match /dailyLogs/{logId} {
       allow get: if isValidId(logId) && isSignedIn() && (resource == null || existing().ownerUid == request.auth.uid);
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(logId) && isSignedIn() && isValidDailyLog(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time
         && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
@@ -798,7 +802,7 @@ service cloud.firestore {
 
     match /transactions/{txId} {
       allow get: if isValidId(txId) && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(txId) && isSignedIn() && isValidTransaction(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(txId) && isSignedIn() && isValidTransaction(incoming())
@@ -812,7 +816,7 @@ service cloud.firestore {
 
     match /debts/{debtId} {
       allow get: if isValidId(debtId) && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(debtId) && isSignedIn() && isValidDebt(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(debtId) && isSignedIn() && isValidDebt(incoming())
@@ -826,7 +830,7 @@ service cloud.firestore {
 
     match /employees/{employeeId} {
       allow get: if isValidId(employeeId) && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(employeeId) && isSignedIn() && isValidEmployee(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(employeeId) && isSignedIn() && isValidEmployee(incoming())
@@ -839,7 +843,8 @@ service cloud.firestore {
     }
 
     match /employees/{employeeId}/occurrences/{occurrenceId} {
-      allow read: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow get: if isOwner(existing().ownerUid);
+      allow list: if isBoundedList() && isOwner(existing().ownerUid);
       allow create: if isSignedIn() && isValidId(occurrenceId)
         && get(/databases/$(database)/documents/employees/$(employeeId)).data.ownerUid == request.auth.uid
         && incoming().keys().hasOnly(['ownerUid', 'kind', 'date', 'description', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
@@ -852,7 +857,7 @@ service cloud.firestore {
 
     match /allocations/{allocationId} {
       allow get: if isValidId(allocationId) && isSignedIn() && (resource == null || existing().ownerUid == request.auth.uid);
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(allocationId) && isSignedIn() && isValidAllocation(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time
         && exists(/databases/$(database)/documents/employees/$(incoming().employeeId))
@@ -869,7 +874,7 @@ service cloud.firestore {
 
     match /pops/{popId} {
       allow get: if isValidId(popId) && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(popId) && isSignedIn() && isValidPop(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(popId) && isSignedIn() && isValidPop(incoming())
@@ -883,7 +888,8 @@ service cloud.firestore {
 
 
     match /popVersions/{versionId} {
-      allow get, list: if isOwner(existing().ownerUid);
+      allow get: if isOwner(existing().ownerUid);
+      allow list: if isBoundedList() && isOwner(existing().ownerUid);
       allow create: if isValidId(versionId) && isSignedIn() && hasAuditFields(incoming())
         && incoming().keys().hasOnly(['ownerUid', 'popId', 'version', 'publicationNumber', 'title', 'serviceType',
           'linkedStagePhase', 'objective', 'materialsAndEpi', 'tools', 'protectiveEquipment', 'steps', 'acceptanceCriteria',
@@ -910,7 +916,7 @@ service cloud.firestore {
 
     match /complianceItems/{itemId} {
       allow get: if isValidId(itemId) && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(itemId) && isSignedIn() && isValidComplianceItem(incoming(), itemId)
         && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(itemId) && isSignedIn() && isValidComplianceItem(incoming(), itemId)
@@ -937,7 +943,7 @@ service cloud.firestore {
 
     match /tenders/{tenderId} {
       allow get: if isValidId(tenderId) && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(tenderId) && isSignedIn() && isValidTender(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(tenderId) && isSignedIn() && isValidTender(incoming())
@@ -950,7 +956,8 @@ service cloud.firestore {
     }
 
     match /projectClosures/{projectId} {
-      allow get, list: if isOwner(existing().ownerUid);
+      allow get: if isOwner(existing().ownerUid);
+      allow list: if isBoundedList() && isOwner(existing().ownerUid);
       allow create: if isValidId(projectId) && isSignedIn() && hasAuditFields(incoming())
         && incoming().keys().hasOnly(['ownerUid', 'projectId', 'date', 'dre', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
         && incoming().projectId == projectId && isValidNonEmptyStr(incoming().date, 10)
@@ -975,7 +982,7 @@ service cloud.firestore {
 
     match /projectFollowUps/{projectId} {
       allow get: if isValidId(projectId) && isSignedIn() && (resource == null || isOwner(existing().ownerUid));
-      allow list: if isOwner(existing().ownerUid);
+      allow list: if isBoundedList() && isOwner(existing().ownerUid);
       allow create: if isValidId(projectId) && isSignedIn() && validFollowUp(incoming(), projectId)
         && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(projectId) && isOwner(existing().ownerUid) && validFollowUp(incoming(), projectId)
@@ -985,7 +992,7 @@ service cloud.firestore {
 
     match /warrantyCalls/{callId} {
       allow get: if isValidId(callId) && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(callId) && isSignedIn() && isValidWarrantyCall(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time
         && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
@@ -1006,7 +1013,7 @@ service cloud.firestore {
 
     match /auditLogs/{logId} {
       allow get: if isValidId(logId) && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(logId) && isSignedIn() && isValidAuditLog(incoming())
         && incoming().createdAt == request.time;
       allow update, delete: if false;

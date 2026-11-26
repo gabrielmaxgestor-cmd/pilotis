@@ -227,7 +227,10 @@ export function createAiChatRouter(options: AiChatRouterOptions = {}): Router {
 
 export function createApiApp(options: AiChatRouterOptions = {}): express.Express {
   const app = express();
+  app.disable('x-powered-by');
+  app.get('/healthz', (_req, res) => { res.setHeader('Cache-Control', 'no-store'); res.json({ status: 'ok' }); });
   app.use('/api/ai/chat', createAiChatRouter(options));
+  app.use('/api', (_req, res) => { res.status(404).json({ error: 'Rota da API indisponível.' }); });
   return app;
 }
 
@@ -243,19 +246,28 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distDir = path.resolve(__dirname, 'dist');
-    if (fs.existsSync(distDir)) {
-      app.use(express.static(distDir));
-      app.get('*', (_req, res) => {
-        res.sendFile(path.join(distDir, 'index.html'));
-      });
-    }
+    const shell = path.join(distDir, 'index.html');
+    if (!fs.existsSync(shell)) throw new Error('Build da interface indisponível. Execute npm run build.');
+    app.use(express.static(distDir, { setHeaders(res, file) {
+      const name = path.basename(file);
+      if (name === 'sw.js' || name === 'index.html') res.setHeader('Cache-Control', 'no-cache');
+    } }));
+    app.get('*', (req, res) => {
+      if (path.extname(req.path) || !req.accepts('html')) {
+        res.sendStatus(404);
+        return;
+      }
+      res.setHeader('Cache-Control', 'no-cache');
+      res.sendFile(shell);
+    });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(
       `Pilotis server listening on http://0.0.0.0:${PORT} (model: ${getConfiguredGeminiModel()})`,
     );
   });
+  process.once('SIGTERM', () => server.close());
 }
 
 const isDirectExecution =

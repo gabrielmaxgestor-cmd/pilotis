@@ -3,7 +3,6 @@ import {
   collection,
   doc,
   getDoc,
-  getDocsFromServer,
   onSnapshot,
   query,
   runTransaction,
@@ -16,6 +15,7 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { listenToPages, readAllPages } from '../lib/firestorePages';
 import type {
   ActorRole,
   Allocation,
@@ -190,7 +190,8 @@ export function generateId(prefix = 'rec'): string {
 
 export function subscribePilotisCollections(
   uid: string,
-  onUpdate: (partial: Partial<PilotisDataState>) => void
+  onUpdate: (partial: Partial<PilotisDataState>) => void,
+  onError: (key: keyof PilotisDataState) => void,
 ): () => void {
   const unsubs: Unsubscribe[] = [];
 
@@ -205,7 +206,7 @@ export function subscribePilotisCollections(
             : null,
         });
       },
-      (err) => handleFirestoreError(err, OperationType.GET, `companySettings/${uid}`)
+      () => onError('settings')
     )
   );
 
@@ -239,13 +240,13 @@ export function subscribePilotisCollections(
   for (const { colName, stateKey } of collectionMappings) {
     const q = query(collection(db, colName), where('ownerUid', '==', uid));
     unsubs.push(
-      onSnapshot(
+      listenToPages(
         q,
-        (snap) => {
-          const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        (rows) => {
+          const items = rows.map((d) => ({ id: d.id, ...d.data() }));
           onUpdate({ [stateKey]: items } as Partial<PilotisDataState>);
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, colName)
+        () => onError(stateKey)
       )
     );
   }
@@ -1359,7 +1360,7 @@ export async function markInstallmentReceived(
   date: string,
   paymentMethod: string,
 ): Promise<void> {
-  if (!isValidISODate(date) || date > todayISO() || !paymentMethod.trim()) {
+  if (!isValidISODate(date) || date > planningTodayISO() || !paymentMethod.trim()) {
     throw new InstallmentValidationError('Informe a data efetiva e a forma de recebimento.');
   }
   await runTransaction(db, async (tx) => {
@@ -1392,7 +1393,7 @@ function stageTransactionSettlement(
 }
 
 export async function settleFinancialTransaction(uid: string, actor: ActorRole, id: string, date: string) {
-  if (!isValidISODate(date) || date > todayISO()) throw new Error('Informe a data efetiva da baixa.');
+  if (!isValidISODate(date) || date > planningTodayISO()) throw new Error('Informe a data efetiva da baixa.');
   await runTransaction(db, async (tx) => {
     const snap = await tx.get(doc(db, 'transactions', id));
     if (!snap.exists()) throw new Error('Lançamento não encontrado.');
@@ -1668,9 +1669,9 @@ export async function importBankStatement(uid: string, actor: ActorRole, rows: S
 export function subscribeEmployeeOccurrences(
   uid: string, employeeId: string, onChange: (rows: EmployeeOccurrence[]) => void, onError: () => void,
 ): Unsubscribe {
-  return onSnapshot(
+  return listenToPages(
     query(collection(db, 'employees', employeeId, 'occurrences'), where('ownerUid', '==', uid)),
-    (snapshot) => onChange(snapshot.docs.map((item) => ({ ...item.data(), id: item.id }) as EmployeeOccurrence)
+    (rows) => onChange(rows.map((item) => ({ ...item.data(), id: item.id }) as EmployeeOccurrence)
       .sort((a, b) => b.date.localeCompare(a.date))),
     onError,
   );
@@ -1775,11 +1776,13 @@ export async function saveWeeklyAllocation(
       defaultProject?.status === 'Concluída' ? (defaultProject.closureDate || defaultProject.warrantyStartDate) : '',
     ].filter((date) => date && date <= weekEnd).sort().at(-1) ?? week;
     const stageId = target.status === 'Obra' ? target.stageId ?? '' : '';
-    let stage: ProjectStage | undefined;
+    const liveEmployee = (await tx.get(doc(db, 'employees', employee.id))).data() as Employee | undefined;
+    if (!liveEmployee || liveEmployee.ownerUid !== uid) throw new Error('Colaborador indisponível.');
+    if (target.status === 'Obra' && target.projectId !== 'Sem obra' && (!targetProject || targetProject.ownerUid !== uid)) {
+      throw new Error('Obra indisponível para alocação.');
+    }
+    const stage = stageId ? (await tx.get(doc(db, 'stages', stageId))).data() as ProjectStage | undefined : undefined;
     if (stageId) {
-      const liveEmployee = (await tx.get(doc(db, 'employees', employee.id))).data() as Employee | undefined;
-      stage = (await tx.get(doc(db, 'stages', stageId))).data() as ProjectStage | undefined;
-      if (!liveEmployee || liveEmployee.ownerUid !== uid) throw new Error('Colaborador indisponível.');
       if (!stage || stage.ownerUid !== uid || stage.projectId !== target.projectId) throw new Error('Escolha uma etapa desta obra.');
       const availability = resolveTeamWeek(liveEmployee, week, { employees: [liveEmployee], allocations: [], projects: [] });
       if (!availability.started || availability.vacation || (preventConflictingAssignment && activeRows.some((row) => row.status === 'Férias'))) {
@@ -1794,7 +1797,7 @@ export async function saveWeeklyAllocation(
       const { id, ownerUid, createdBy, createdAt, updatedAt, updatedBy, ...snapshot } = historical;
       tx.set(doc(db, 'allocations', generateId('alloc_history')), { ...snapshot, ...auditFields(uid, actor) });
     }
-    const row = { ...target, stageId, effectiveFrom, employeeId: employee.id, employeeName: employee.name, weekStart: week };
+    const row = { ...target, stageId, effectiveFrom, employeeId: employee.id, employeeName: liveEmployee.name, weekStart: week };
     if (previous?.id === canonicalId) {
       tx.update(ref, { ...row, updatedBy: actor, updatedAt: serverTimestamp() });
     } else {
@@ -1814,7 +1817,7 @@ export async function saveWeeklyAllocation(
 }
 
 function workDocuments(uid: string, projectId: string, name: string) {
-  return getDocsFromServer(query(collection(db, name), where('ownerUid', '==', uid), where('projectId', '==', projectId)));
+  return readAllPages(query(collection(db, name), where('ownerUid', '==', uid), where('projectId', '==', projectId)));
 }
 
 async function readClosureRows<T>(tx: Transaction, refs: DocumentReference[]): Promise<T[]> {
@@ -1856,7 +1859,7 @@ export async function closeProject(
     const current = { ...project, id: projectId };
     if (current.status !== 'Em execução') throw new Error('A obra precisa estar em execução para ser encerrada.');
 
-    const refs = (snapshots: typeof stages) => snapshots.docs.map((item) => item.ref);
+    const refs = (snapshots: typeof stages) => snapshots.map((item) => item.ref);
     const stageRefs = current.scheduleStageIds?.map((id) => doc(db, 'stages', id)) ?? refs(stages);
     const [currentStages, currentInstallments, currentTransactions, currentDocuments, client] = await Promise.all([
       readClosureRows<ProjectStage>(tx, stageRefs),

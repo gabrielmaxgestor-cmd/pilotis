@@ -15,7 +15,7 @@
   --brand-primary-hover: #182E4C;
   --brand-accent: #9A6212;
   --brand-accent-soft: #F6E7CC;
-  --status-success: #1E7F5C;
+  --status-success: #1D6849;
   --status-success-bg: #E3F4EC;
   --status-warning: #8A5200;
   --status-warning-bg: #FBF1DC;
@@ -43,7 +43,7 @@
   --color-primary: #1F3A5F;
   --color-bronze: #9A6212;
   --color-bronze-soft: #F6E7CC;
-  --color-success: #1E7F5C;
+  --color-success: #1D6849;
   --color-success-bg: #E3F4EC;
   --color-warning: #8A5200;
   --color-warning-bg: #FBF1DC;
@@ -74,6 +74,15 @@
     outline: 2px solid var(--brand-primary);
     outline-offset: 2px;
   }
+}
+
+/* Dark navigation and form controls need visible outlines on their own backgrounds. */
+.pilotis-dark-focus :focus-visible {
+  outline-color: #F6E7CC;
+}
+.pilotis-data-row:focus-within {
+  outline: 2px solid var(--brand-primary);
+  outline-offset: -2px;
 }
 
 .tabular-nums {

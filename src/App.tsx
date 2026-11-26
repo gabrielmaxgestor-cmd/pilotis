@@ -9,7 +9,6 @@ import { ErrorBoundary } from './components/ui/PilotisUI';
 import { Sidebar, type AppRouteKey } from './components/ui/Sidebar';
 import { ToastProvider } from './components/ui/Toast';
 import { useCurrentUser } from './hooks/useCurrentUser';
-import { testFirestoreConnection } from './lib/firebase';
 import { importLegacyDailyQueue, startFieldSync } from './services/fieldQueue';
 import { subscribePilotisCollections } from './services/pilotisService';
 import type { ModuleKey, PilotisDataState } from './types/pilotis';
@@ -44,11 +43,8 @@ const SettingsView = lazy(() =>
 const TeamView = lazy(() =>
   import('./modules/TeamView').then((m) => ({ default: m.TeamView }))
 );
-const DevCatalogPage = lazy(() =>
-  import('./pages/DevCatalogPage').then((m) => ({ default: m.DevCatalogPage }))
-);
 const MaisView = lazy(() =>
-  import('./pages/EmptyModulePage').then((m) => ({ default: m.MaisView }))
+  import('./pages/MaisView').then((m) => ({ default: m.MaisView }))
 );
 
 function ModuleLoadingFallback({ label = 'Carregando módulo...' }: { label?: string }) {
@@ -101,7 +97,6 @@ const ROUTE_TO_PATH: Record<AppRouteKey, string> = {
   compliance: '/conformidade',
   settings: '/configuracoes',
   more: '/mais',
-  dev: '/dev',
   login: '/login',
 };
 
@@ -131,8 +126,6 @@ function parseRouteFromPathname(pathname: string): AppRouteKey {
       return 'settings';
     case '/mais':
       return 'more';
-    case '/dev':
-      return 'dev';
     case '/login':
       return 'login';
     default:
@@ -154,7 +147,6 @@ const MOBILE_MODULE_TITLES: Record<ModuleKey, string> = {
 
 function getMobileTopTitle(route: AppRouteKey): string {
   if (route === 'more') return 'Mais';
-  if (route === 'dev') return 'Catálogo UI (/dev)';
   return MOBILE_MODULE_TITLES[route as ModuleKey] || 'Pilotis';
 }
 
@@ -174,6 +166,7 @@ function AuthenticatedShell({
 
   const [data, setData] = useState<PilotisDataState>(INITIAL_DATA_STATE);
   const [dashboardReady, setDashboardReady] = useState(false);
+  const [dashboardLoadFailed, setDashboardLoadFailed] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
   const [financialInitialTab, setFinancialInitialTab] = useState<string | undefined>(undefined);
   const [clientsInitialTab, setClientsInitialTab] = useState<string | undefined>(undefined);
@@ -196,7 +189,6 @@ function AuthenticatedShell({
   }, []);
 
   useEffect(() => {
-    void testFirestoreConnection();
     const dashboardPending = new Set([
       'clients', 'quotes', 'projects', 'installments', 'stages', 'transactions',
       'debts', 'employees', 'allocations', 'settings', 'complianceItems', 'warrantyCalls',
@@ -207,6 +199,9 @@ function AuthenticatedShell({
         Object.keys(partial).forEach((name) => dashboardPending.delete(name));
         if (!dashboardPending.size) setDashboardReady(true);
       }
+    }, (key) => {
+      if (dashboardPending.has(key)) setDashboardLoadFailed(true);
+      else console.error('Falha ao sincronizar os registros de ' + key);
     });
     return () => {
       unsub();
@@ -252,6 +247,7 @@ function AuthenticatedShell({
 
   return (
     <div className="min-h-screen flex flex-col md:flex-row bg-[#F6F5F2]">
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-50 focus:rounded-lg focus:bg-white focus:px-4 focus:py-2 focus:text-[#1F3A5F]">Ir para o conteúdo</a>
       <Sidebar
         active={route}
         companyName={data.settings?.companyName || 'Pilotis'}
@@ -267,9 +263,8 @@ function AuthenticatedShell({
         onGoMore={() => navigateTo('more')}
       />
 
-      <main className="flex-1 min-w-0 px-4 py-4 pb-24 md:px-8 md:py-6 md:pb-8 max-w-[1360px]">
+      <main id="main-content" tabIndex={-1} className="flex-1 min-w-0 px-4 py-4 pb-24 md:px-8 md:py-6 md:pb-8 max-w-[1360px]">
         <Suspense fallback={<ModuleLoadingFallback />}>
-          {route === 'dev' && <DevCatalogPage onNavigate={(r) => navigateTo(r)} />}
 
           {route === 'more' && (
             <MaisView
@@ -278,7 +273,12 @@ function AuthenticatedShell({
             />
           )}
 
-          {route === 'dashboard' && (!dashboardReady ? <ModuleLoadingFallback label="Carregando dados do Dashboard…" /> : (
+          {route === 'dashboard' && (dashboardLoadFailed ? (
+            <section role="alert" className="rounded-xl bg-white p-5">
+              <p>Não foi possível consultar os registros do Dashboard.</p>
+              <button type="button" className="mt-2 font-semibold text-[#1F3A5F] underline" onClick={() => window.location.reload()}>Tentar novamente</button>
+            </section>
+          ) : !dashboardReady ? <ModuleLoadingFallback label="Carregando dados do Dashboard…" /> : (
             <DashboardView
               data={data}
               companyEmail={companyEmail}

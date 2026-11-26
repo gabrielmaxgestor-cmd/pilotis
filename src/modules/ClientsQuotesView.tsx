@@ -624,7 +624,7 @@ export function ClientsQuotesView({
               {formatBRL(q.totalValue + addenda)}
             </strong>
             {q.status === 'Ganho' && (
-              <span className="text-[11px] text-[#1E7F5C] font-medium">
+              <span className="text-[11px] text-[#1D6849] font-medium">
                 {addenda !== 0 ? `Base + ${formatBRL(addenda)} aditivo` : 'Valor congelado'}
               </span>
             )}
@@ -658,7 +658,7 @@ export function ClientsQuotesView({
             {check.metaConfigurada && (
               <span
                 className={`block text-[11px] ${
-                  check.status === 'acima' ? 'text-[#1E7F5C]' : 'text-[#8A5200]'
+                  check.status === 'acima' ? 'text-[#1D6849]' : 'text-[#8A5200]'
                 }`}
               >
                 {check.status === 'acima' ? 'Acima da meta' : 'Abaixo da meta'}
@@ -1891,7 +1891,7 @@ export function ClientsQuotesView({
             label="Quem indicou"
             value={cReferredBy}
             onChange={(e) => setCReferredBy(e.target.value)}
-            placeholder="Ex.: Nome do cliente, arquiteto ou parceiro que indicou"
+            placeholder="Nome de quem fez a indicação"
             help="Preencha quando houver indicação ou parceria."
           />
 
@@ -1924,7 +1924,7 @@ export function ClientsQuotesView({
             type="email"
             value={cEmail}
             onChange={(e) => setCEmail(e.target.value)}
-            placeholder="cliente@exemplo.com.br"
+            placeholder="E-mail do cliente"
           />
 
           <Textarea
@@ -2049,7 +2049,7 @@ export function ClientsQuotesView({
               required
               value={stageLossReason}
               onChange={(e) => setStageLossReason(e.target.value)}
-              placeholder="Ex.: Preço, prazo, concorrência ou desistência do cliente"
+              placeholder="Motivo da perda"
             />
           )}
 
@@ -2088,7 +2088,7 @@ export function ClientsQuotesView({
             required
             value={discardReason}
             onChange={(e) => setDiscardReason(e.target.value)}
-            placeholder="Ex.: Cliente adiou a obra ou sem retorno"
+            placeholder="Motivo do descarte"
           />
           <RegisteredBySelect
             value={discardActor}
@@ -2155,14 +2155,14 @@ export function ClientsQuotesView({
             required
             value={tAgency}
             onChange={(e) => setTAgency(e.target.value)}
-            placeholder="Ex.: Prefeitura Municipal de Valença"
+            placeholder="Órgão responsável"
           />
           <Input
             label="Objeto"
             required
             value={tObject}
             onChange={(e) => setTObject(e.target.value)}
-            placeholder="Ex.: Reforma de escola municipal"
+            placeholder="Objeto do edital"
           />
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Input

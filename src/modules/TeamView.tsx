@@ -189,6 +189,20 @@ export function TeamView({
     employee,
     cells: weeks.map((week) => resolveTeamWeek(employee, week, data)),
   })), [data, weeks]);
+  function allocationLabel(cell: ReturnType<typeof resolveTeamWeek>) {
+    const stage = data.stages.find((item) => item.id === cell.allocation?.stageId);
+    return stage && !cell.conflict && !cell.vacation && cell.started ? stage.name + ' · ' + cell.label : cell.label;
+  }
+
+  function openAllocationCell(employee: Employee, week: string, cell: ReturnType<typeof resolveTeamWeek>) {
+    setAllocEmpId(employee.id);
+    setAllocProjectId(cell.allocation?.projectId || employee.currentProjectId || '');
+    setAllocWeekStart(week);
+    setAllocStageId(cell.allocation?.stageId ?? '');
+    setAllocStatus(cell.allocation?.status || 'Obra');
+    setAllocModalOpen(true);
+  }
+
   const unallocatedEmployeesCount = data.employees.length ? matrix.filter((row) => row.cells[0]?.idle).length : null;
   const idleWeeks = matrix.reduce((sum, row) => sum + row.cells.filter((cell) => cell.idle).length, 0);
   const conflictWeeks = matrix.reduce((sum, row) => sum + row.cells.filter((cell) => cell.conflict).length, 0);
@@ -1207,7 +1221,7 @@ export function TeamView({
                   </button>
                 </div>
 
-                <div className="overflow-x-auto">
+                <div className="hidden overflow-x-auto md:block">
                   <div className="min-w-[780px] grid grid-cols-[180px_repeat(8,1fr)] gap-1.5 items-center text-xs">
                     <div className="font-semibold text-[#5B6472] px-2">Colaborador</div>
                     {weeks.map((w) => (
@@ -1226,22 +1240,13 @@ export function TeamView({
                         </button>
                         {cells.map((cell, index) => {
                           const w = weeks[index];
-                          const alloc = cell.allocation;
                           const { vacation: isVac, idle: isNone } = cell;
-                          const stage = data.stages.find((item) => item.id === alloc?.stageId);
-                          const label = stage && !cell.conflict && !isVac && cell.started ? stage.name + ' · ' + cell.label : cell.label;
+                          const label = allocationLabel(cell);
                           return (
                             <button
                               key={`${emp.id}-${w}`}
                               type="button"
-                              onClick={() => {
-                                setAllocEmpId(emp.id);
-                                setAllocProjectId(alloc?.projectId || emp.currentProjectId || '');
-                                setAllocWeekStart(w);
-                                setAllocStageId(alloc?.stageId ?? '');
-                                setAllocStatus(alloc?.status || 'Obra');
-                                setAllocModalOpen(true);
-                              }}
+                              onClick={() => openAllocationCell(emp, w, cell)}
                               title={`${emp.name} · ${formatDateBR(w)}: ${label}`}
                               className={`h-8 rounded-md px-1.5 text-[11px] font-semibold truncate cursor-pointer ${
                                 cell.conflict ? 'bg-[#FDECEA] text-[#B42318]' : isVac
@@ -1259,6 +1264,27 @@ export function TeamView({
                     ))}
                   </div>
                 </div>
+
+                <ul className="grid gap-2 md:hidden">
+                  {matrix.map(({ employee, cells }) => (
+                    <li key={employee.id} className="rounded-lg border border-[#E4E1DA] p-3">
+                      <details>
+                        <summary className="cursor-pointer break-words font-semibold text-[#1F3A5F]">{employee.name}</summary>
+                        <ul className="mt-2 grid gap-1">
+                          {cells.map((cell, index) => (
+                            <li key={weeks[index]}>
+                              <button type="button" onClick={() => openAllocationCell(employee, weeks[index], cell)}
+                                className="flex w-full flex-wrap justify-between gap-2 rounded-md px-2 py-2 text-left text-xs hover:bg-[#F0EEE9]">
+                                <strong>{formatDateBR(weeks[index])}</strong>
+                                <span className="break-words">{allocationLabel(cell)}</span>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    </li>
+                  ))}
+                </ul>
 
                 <div className="flex flex-wrap gap-4 text-xs text-[#5B6472]">
                   <span className="inline-flex items-center gap-1.5">
@@ -1829,7 +1855,7 @@ export function TeamView({
                 id="vac-per"
                 value={vacPeriod}
                 onChange={(e) => setVacPeriod(e.target.value)}
-                placeholder="Ex.: 02/2026 a 01/2027"
+                placeholder="Informe o mês de início e o de fim"
                 className="w-full rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
               />
             </div>
@@ -1952,7 +1978,7 @@ export function TeamView({
                 id="p-src"
                 value={taxSource}
                 onChange={(e) => setTaxSource(e.target.value)}
-                placeholder="Ex.: Contador · Simples Anexo IV"
+                placeholder="Fonte dos parâmetros de encargos"
                 className="w-full rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
               />
             </div>

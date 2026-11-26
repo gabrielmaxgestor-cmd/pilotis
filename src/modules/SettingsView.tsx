@@ -73,7 +73,7 @@ const SETTINGS_TABS = [
 const ACCENT_PRESETS = [
   { hex: '#9A6212', label: 'Bronze Pilotis' },
   { hex: '#1F3A5F', label: 'Azul marinho' },
-  { hex: '#1E7F5C', label: 'Verde obra' },
+  { hex: '#1D6849', label: 'Verde obra' },
   { hex: '#8A5200', label: 'Âmbar escuro' },
 ];
 
@@ -968,7 +968,7 @@ export function SettingsView({
                   id="param-src"
                   value={taxSource}
                   onChange={(e) => setTaxSource(e.target.value)}
-                  placeholder="Ex.: Contador · Simples Nacional Anexo IV (a validar)"
+                  placeholder="Fonte dos parâmetros de encargos"
                   className="w-full rounded-[8px] border border-[#E4E1DA] px-3.5 py-2.5 text-sm min-h-[42px]"
                 />
               </div>
@@ -1053,7 +1053,7 @@ export function SettingsView({
               className={`border rounded-[12px] px-4 py-3 text-sm font-semibold ${
                 importStep === 1
                   ? 'border-[#1F3A5F] bg-[#E6EEFB] text-[#1F3A5F]'
-                  : 'border-[#E4E1DA] bg-white text-[#1E7F5C]'
+                  : 'border-[#E4E1DA] bg-white text-[#1D6849]'
               }`}
             >
               1 · Enviar planilha (.csv ou .xlsx) {importStep > 1 ? '✓' : ''}
@@ -1063,7 +1063,7 @@ export function SettingsView({
                 importStep === 2
                   ? 'border-[#1F3A5F] bg-[#E6EEFB] text-[#1F3A5F]'
                   : importStep === 3
-                  ? 'border-[#E4E1DA] bg-white text-[#1E7F5C]'
+                  ? 'border-[#E4E1DA] bg-white text-[#1D6849]'
                   : 'border-[#E4E1DA] bg-white text-[#5B6472]'
               }`}
             >
@@ -1216,7 +1216,7 @@ export function SettingsView({
                 <strong className="text-xs font-semibold text-[#14181F]">
                   Amostra das primeiras linhas lidas
                 </strong>
-                <div className="overflow-x-auto">
+                <div className="hidden overflow-x-auto md:block">
                   <table className="w-full border-collapse text-xs">
                     <thead>
                       <tr className="text-left text-[#5B6472] border-b border-[#E4E1DA]">
@@ -1240,6 +1240,19 @@ export function SettingsView({
                     </tbody>
                   </table>
                 </div>
+                <ol className="grid gap-2 md:hidden">
+                  {sheetData.rawRows.slice(0, 3).map((row, rowIndex) => (
+                    <li key={rowIndex} className="min-w-0 rounded-md border border-[#E4E1DA] bg-white p-2">
+                      <dl className="grid gap-1 text-xs">
+                        {sheetData.headers.map((header, column) => (
+                          <div key={column} className="grid grid-cols-2 gap-2 break-words">
+                            <dt className="text-[#5B6472]">{header}</dt><dd>{row[column] || '—'}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </li>
+                  ))}
+                </ol>
               </div>
 
               <div className="flex justify-end gap-2">

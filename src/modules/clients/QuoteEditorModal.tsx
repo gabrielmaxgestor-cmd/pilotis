@@ -500,7 +500,7 @@ export function QuoteEditorModal({
               disabled={isApprovedLocked}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="Ex.: Residência Alto da Glória"
+              placeholder="Nome ou título da obra"
             />
             <Input
               label="Localidade"
@@ -576,7 +576,7 @@ export function QuoteEditorModal({
               required
               value={lossReason}
               onChange={(e) => setLossReason(e.target.value)}
-              placeholder="Ex.: Preço acima do orçamento do cliente, prazo, concorrência"
+              placeholder="Motivo da perda"
             />
           )}
 
@@ -866,7 +866,7 @@ export function QuoteEditorModal({
                 required
                 value={versionNote}
                 onChange={(e) => setVersionNote(e.target.value)}
-                placeholder="Ex.: Ajuste de BDI e redução do parcelamento para 15x"
+                placeholder="Descreva o que mudou nesta versão"
               />
             )}
 

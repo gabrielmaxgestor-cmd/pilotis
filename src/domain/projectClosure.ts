@@ -1,6 +1,7 @@
 import { addMonthsISO, isValidISODate, roundCents } from './formatters';
 import { resolveWorkDocumentCategory } from './complianceWorkflows';
 import { resolverStatusConformidade } from './conformidade';
+import { gerarParcelas } from './orcamentos';
 import { linkedPopChecklist } from './pops';
 import { calcularDreObra } from './pilotisAdapters';
 import type { ComplianceItem, FinancialTransaction, Installment, Pop, Project, ProjectStage, WarrantyCall } from '../types/pilotis';
@@ -40,11 +41,16 @@ export function getClosureReview(project: Project, data: ClosureData, date: stri
   const expected = project.installmentsCount ?? 0;
   const noPaymentStructure = installments.length === 0 && project.contractValue > 0 &&
     (Boolean(project.quoteId) || dre.receita.realizado < project.contractValue);
-  const hasEntry = Math.round(Math.round(project.contractValue * 100) * (project.downPaymentPct ?? 0) / 100) > 0;
-  const missingInstallments = expected > 0 && (
-    Array.from({ length: expected }, (_, index) => index + 1).some((number) => !installments.some((row) => row.number === number))
-    || (hasEntry && !installments.some((row) => row.number === 0))
-  );
+  const paymentTerms = project.downPaymentPct ?? 0;
+  const hasContractSchedule = Number.isInteger(expected) && expected > 0 && expected <= 36 &&
+    project.contractValue > 0 && paymentTerms >= 0 && paymentTerms <= 100 && isValidISODate(project.startDate);
+  const expectedNumbers = hasContractSchedule
+    ? gerarParcelas(project.contractValue, paymentTerms, expected, project.startDate).filter((row) => row.valor > 0).map((row) => row.numero)
+    : [
+        ...(expected > 0 && Math.round(Math.round(project.contractValue * 100) * paymentTerms / 100) > 0 ? [0] : []),
+        ...Array.from({ length: Math.min(Math.max(0, expected), 36) }, (_, index) => index + 1),
+      ];
+  const missingInstallments = expectedNumbers.some((number) => !installments.some((row) => row.number === number));
   const missingReceipts = dre.receita.realizado < roundCents(payable.filter((row) => !unpaid.includes(row))
     .reduce((total, row) => total + row.amount, 0));
   const attached = (category: 'ART/RRT' | 'CNO') => documents.some((row) =>

@@ -22,7 +22,7 @@ const TOAST_STYLES: Record<
   { container: string; icon: typeof Info; label: string }
 > = {
   success: {
-    container: 'bg-[#E3F4EC] text-[#1E7F5C] border-[#B7E3CE]',
+    container: 'bg-[#E3F4EC] text-[#1D6849] border-[#B7E3CE]',
     icon: CheckCircle2,
     label: 'Sucesso',
   },

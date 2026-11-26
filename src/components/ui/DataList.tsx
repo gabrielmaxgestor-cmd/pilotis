@@ -74,25 +74,17 @@ export function DataList<T>({
                 return (
                   <tr
                     key={keyExtractor(row, idx)}
-                    onClick={onRowClick ? () => onRowClick(row) : undefined}
-                    tabIndex={interactive ? 0 : undefined}
-                    onKeyDown={
-                      onRowClick
-                        ? (e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
-                              onRowClick(row);
-                            }
-                          }
-                        : undefined
-                    }
+                    onClick={onRowClick ? (event) => {
+                      if (event.target instanceof Element && event.target.closest('button, a, input, select, textarea, [role="button"]')) return;
+                      onRowClick(row);
+                    } : undefined}
                     className={`transition-colors ${
                       interactive
-                        ? 'cursor-pointer hover:bg-[#F6F5F2] focus-visible:bg-[#F6F5F2]'
+                        ? 'pilotis-data-row cursor-pointer hover:bg-[#F6F5F2]'
                         : 'hover:bg-[#F6F5F2]/60'
                     }`}
                   >
-                    {columns.map((col) => (
+                    {columns.map((col, columnIndex) => (
                       <td
                         key={col.key}
                         className={`px-4 py-3 text-[13px] text-[#14181F] align-middle ${
@@ -100,6 +92,7 @@ export function DataList<T>({
                         } ${col.numeric ? 'tabular-nums font-medium' : ''}`}
                       >
                         {col.render(row)}
+                        {columnIndex === 0 && onRowClick && <button type="button" className="mt-1 block text-xs font-semibold text-[#1F3A5F] underline" onClick={() => onRowClick(row)}>Abrir detalhes</button>}
                       </td>
                     ))}
                   </tr>
@@ -119,28 +112,8 @@ export function DataList<T>({
           }
 
           const [primaryCol, ...restCols] = columns.filter((c) => !c.hideOnMobileCard);
-          const interactive = Boolean(onRowClick);
-
           return (
-            <div
-              key={key}
-              onClick={onRowClick ? () => onRowClick(row) : undefined}
-              role={interactive ? 'button' : undefined}
-              tabIndex={interactive ? 0 : undefined}
-              onKeyDown={
-                onRowClick
-                  ? (e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        onRowClick(row);
-                      }
-                    }
-                  : undefined
-              }
-              className={`bg-white border border-[#E4E1DA] rounded-[12px] p-4 flex flex-col gap-2.5 ${
-                interactive ? 'cursor-pointer active:bg-[#F0EEE9]' : ''
-              }`}
-            >
+            <article key={key} className="min-w-0 rounded-[12px] border border-[#E4E1DA] bg-white p-4 flex flex-col gap-2.5">
               {primaryCol && (
                 <div className="text-sm font-semibold text-[#14181F]">
                   {primaryCol.render(row)}
@@ -150,11 +123,11 @@ export function DataList<T>({
                 {restCols.map((col) => (
                   <div
                     key={col.key}
-                    className="flex items-center justify-between gap-3 text-xs"
+                    className="flex flex-wrap items-start justify-between gap-2 text-xs"
                   >
                     <span className="text-[#5B6472]">{col.header}</span>
                     <span
-                      className={`text-[#14181F] font-medium text-right ${
+                      className={`min-w-0 break-words text-[#14181F] font-medium text-right ${
                         col.numeric ? 'tabular-nums' : ''
                       }`}
                     >
@@ -163,7 +136,8 @@ export function DataList<T>({
                   </div>
                 ))}
               </div>
-            </div>
+              {onRowClick && <button type="button" className="self-start py-1 text-xs font-semibold text-[#1F3A5F] underline" onClick={() => onRowClick(row)}>Abrir detalhes</button>}
+            </article>
           );
         })}
       </div>

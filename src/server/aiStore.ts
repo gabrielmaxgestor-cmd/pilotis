@@ -1,4 +1,4 @@
-import { getFirestore, type Firestore } from 'firebase-admin/firestore';
+import { FieldPath, getFirestore, type Firestore, type QueryDocumentSnapshot } from 'firebase-admin/firestore';
 import type { App } from 'firebase-admin/app';
 import type { AiTopic, AiTurn } from '../domain/aiContext';
 import type { CompanySettings, PilotisDataState } from '../types/pilotis';
@@ -56,16 +56,31 @@ function needs(topics: Set<AiTopic>, ...requested: AiTopic[]) {
 }
 
 async function readCompanyData(db: Firestore, uid: string, topics: Set<AiTopic>): Promise<PilotisDataState> {
-  async function rows<T>(collection: string, required: boolean): Promise<T[]> {
+  async function rows<T>(collection: string, required: boolean, fields?: string[]): Promise<T[]> {
     if (!required) return [];
-    const snapshot = await db.collection(collection).where('ownerUid', '==', uid).get();
-    return snapshot.docs.map((row) => ({ ...row.data(), id: row.id } as T));
+    const result: T[] = [];
+    const owned = db.collection(collection).where('ownerUid', '==', uid);
+    const source = (fields ? owned.select(...fields) : owned).orderBy(FieldPath.documentId()).limit(200);
+    let cursor: QueryDocumentSnapshot | undefined;
+    for (;;) {
+      const snapshot = await (cursor ? source.startAfter(cursor) : source).get();
+      result.push(...snapshot.docs.map((row) => ({ ...row.data(), id: row.id } as T)));
+      if (snapshot.size < 200) return result;
+      cursor = snapshot.docs[snapshot.docs.length - 1];
+    }
   }
   const [settings, projects, transactions, installments, quotes, employees, allocations, stages, complianceItems, debts, projectClosures] =
     await Promise.all([
       needs(topics, 'forecast', 'payroll') ? db.collection('companySettings').doc(uid).get() : undefined,
-      rows<PilotisDataState['projects'][number]>('projects', true),
-      rows<PilotisDataState['transactions'][number]>('transactions', needs(topics, 'finance', 'forecast', 'invoices', 'projects')),
+      rows<PilotisDataState['projects'][number]>('projects', needs(topics, 'finance', 'forecast', 'invoices', 'projects', 'stages', 'team', 'payroll', 'compliance'), [
+        'name', 'type', 'contractKind', 'status', 'startDate', 'closureDate', 'warrantyStartDate', 'contractValue',
+        'budgetedLabor', 'budgetedSubcontract', 'budgetedEquipment', 'budgetedTax', 'budgetedBdi',
+      ]),
+      rows<PilotisDataState['transactions'][number]>('transactions', needs(topics, 'finance', 'forecast', 'invoices', 'projects'), [
+        'date', 'dueDate', 'description', 'entryKind', 'category', 'projectId', 'projectName', 'amount', 'status',
+        'isForecast', 'wasForecast', 'invoiceStatus', 'source', 'installmentId', 'debtId',
+        'payrollPeriod', 'payrollProvisions',
+      ]),
       rows<PilotisDataState['installments'][number]>('parcelas', needs(topics, 'finance', 'forecast', 'invoices')),
       rows<PilotisDataState['quotes'][number]>('quotes', needs(topics, 'forecast', 'funnel')),
       rows<PilotisDataState['employees'][number]>('employees', needs(topics, 'forecast', 'team', 'payroll')),

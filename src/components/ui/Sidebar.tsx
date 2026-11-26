@@ -1,7 +1,6 @@
 import {
   Building2,
   ClipboardList,
-  Component,
   DollarSign,
   HardHat,
   LayoutGrid,
@@ -13,7 +12,7 @@ import {
 } from 'lucide-react';
 import type { ModuleKey } from '../../types/pilotis';
 
-export type AppRouteKey = ModuleKey | 'more' | 'dev' | 'login';
+export type AppRouteKey = ModuleKey | 'more' | 'login';
 
 export const NAV_ITEMS: Array<{
   key: ModuleKey;
@@ -29,6 +28,14 @@ export const NAV_ITEMS: Array<{
   { key: 'pops', label: 'POPs', icon: ClipboardList },
   { key: 'compliance', label: 'Conformidade', icon: ShieldCheck },
 ];
+
+function logoTextColor(background: string) {
+  const [red, green, blue] = background.slice(1).match(/.{2}/g)!.map((channel) => {
+    const value = Number.parseInt(channel, 16) / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  return (0.2126 * red + 0.7152 * green + 0.0722 * blue) > 0.179 ? '#000000' : '#FFFFFF';
+}
 
 export function Sidebar({
   active,
@@ -50,7 +57,7 @@ export function Sidebar({
 
   return (
     <aside
-      className="hidden md:flex flex-col w-[248px] shrink-0 bg-[#101828] min-h-screen px-4 py-6 justify-between no-print"
+      className="hidden md:flex flex-col w-[248px] pilotis-dark-focus shrink-0 bg-[#101828] min-h-screen px-4 py-6 justify-between no-print"
       aria-label="Navegação principal"
     >
       <div>
@@ -68,7 +75,7 @@ export function Sidebar({
           ) : (
             <div
               className="w-9 h-9 rounded-[8px] text-white font-bold text-lg grid place-items-center shrink-0"
-              style={{ backgroundColor: brandColor }}
+              style={{ backgroundColor: brandColor, color: logoTextColor(brandColor) }}
             >
               {(companyName?.trim().charAt(0) || 'P').toUpperCase()}
             </div>
@@ -133,26 +140,6 @@ export function Sidebar({
           )}
           <Settings className="w-5 h-5 shrink-0" strokeWidth={1.85} />
           <span>Configurações</span>
-        </button>
-
-        <button
-          type="button"
-          aria-current={active === 'dev' ? 'page' : undefined}
-          onClick={() => onSelect('dev')}
-          className={`relative flex items-center gap-3 px-3 py-2.5 min-h-[42px] rounded-[8px] text-sm font-medium text-left transition-colors cursor-pointer ${
-            active === 'dev'
-              ? 'bg-[#1D2A44] text-white font-semibold'
-              : 'text-[#A8B0BF] hover:text-white hover:bg-[#1D2A44]/50'
-          }`}
-        >
-          {active === 'dev' && (
-            <span
-              className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 bg-[#9A6212] rounded-r"
-              aria-hidden="true"
-            />
-          )}
-          <Component className="w-5 h-5 shrink-0" strokeWidth={1.85} />
-          <span>Catálogo UI (/dev)</span>
         </button>
 
         <button
