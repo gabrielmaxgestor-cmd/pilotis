@@ -597,7 +597,7 @@ export function ContractModal({
             required
             value={addendumDesc}
             onChange={(e) => setAddendumDesc(e.target.value)}
-            placeholder="Ex.: Inclusão de pergolado metálico na área externa"
+            placeholder="Descreva o aditivo"
           />
           <Input
             label="Valor do aditivo em R$ (positivo acréscimo, negativo redução)"

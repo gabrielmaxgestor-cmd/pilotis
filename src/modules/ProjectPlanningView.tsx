@@ -1,4 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
+import { PostConstructionView, ProjectClosureView } from './ProjectClosureView';
+import { FieldStages, ProjectDiary } from './ProjectFieldView';
+import { ProjectScheduleView, ScheduleProgressChart } from './ProjectScheduleView';
+import { ProjectKanban, ProjectResources, ProjectRisks } from './ProjectOperationsView';
 import {
   AlertNote,
   EmptySection,
@@ -15,7 +19,7 @@ import {
   applyScheduleTemplateToProject,
   createProjectFromTemplate,
   createRecord,
-  updateRecord,
+  saveProjectStage,
 } from '../services/pilotisService';
 import type {
   ActorRole,
@@ -24,11 +28,21 @@ import type {
   ProjectStage,
   ProjectType,
   StageStatus,
-  WeatherType,
 } from '../types/pilotis';
 import {
-  calcularCaminhoCriticoObra,
   calcularCurvaSObra,
+  DELAY_CATEGORIES,
+  describeScheduleCycle,
+  normalizeDelayCategory,
+  plannedWeeks,
+  resolveTeamWeek,
+  getProjectSchedule,
+  isPublishedPop,
+  linkedPopChecklist,
+  getRecordedScheduleProgress,
+  getWorkPackageBudget,
+  planningTodayISO,
+  roundCents,
   calcularDreObra,
   calcularProgressoObra,
   calcularResumoFasesEap,
@@ -47,18 +61,48 @@ const PLAN_TABS = [
   'Cronograma',
   'Kanban',
   'Recursos',
-  'Riscos e linha de base',
+  'Riscos',
   'Diário de obra',
+  'Etapas em campo',
   'Encerramento',
+  'Pós-obra',
 ];
 
-const KANBAN_COLS: Array<{ status: StageStatus; subtitle: string }> = [
-  { status: 'A fazer', subtitle: 'Pronta para iniciar' },
-  { status: 'Em andamento', subtitle: 'Limite WIP: 4' },
-  { status: 'Aguardando material', subtitle: 'Material do cliente' },
-  { status: 'Em conferência', subtitle: 'Checklist do POP' },
-  { status: 'Concluída', subtitle: 'Entregue e conferida' },
+const TEMPLATE_OPTIONS: { type: ProjectType; description: string }[] = [
+  { type: 'Casa residencial', description: 'Estrutura, instalações e entrega · 52 semanas' },
+  { type: 'Reforma', description: 'Demolição, instalações e entrega · 10 semanas' },
+  { type: 'Obra satélite', description: 'Mobilização, execução e entrega · 4 semanas' },
 ];
+
+function ScheduleTemplateOptions({ value, onChange }: { value: ProjectType; onChange: (value: ProjectType) => void }) {
+  return (
+    <fieldset className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <legend className="sr-only">Modelo de cronograma</legend>
+      {TEMPLATE_OPTIONS.map(({ type, description }) => (
+        <label key={type} className="cursor-pointer">
+          <input type="radio" name="schedule-template" checked={value === type} onChange={() => onChange(type)} className="peer sr-only" />
+          <span className="block h-full rounded-xl p-3.5 border border-[#E4E1DA] bg-white peer-checked:border-[#1F3A5F] peer-checked:bg-[#E6EEFB] peer-focus-visible:ring-2 peer-focus-visible:ring-[#1F3A5F]">
+            <strong className="block text-sm text-[#14181F]">{type}</strong>
+            <span className="text-xs text-[#5B6472]">{description}</span>
+          </span>
+        </label>
+      ))}
+    </fieldset>
+  );
+}
+
+function groupStages(stages: ProjectStage[]) {
+  const phases = new Map<string, Map<string, ProjectStage[]>>();
+  for (const stage of stages) {
+    const phase = phases.get(stage.phase) ?? new Map<string, ProjectStage[]>();
+    phases.set(stage.phase, phase);
+    const delivery = stage.deliverable || 'Entrega ainda não informada';
+    const packages = phase.get(delivery) ?? [];
+    packages.push(stage);
+    phase.set(delivery, packages);
+  }
+  return [...phases];
+}
 
 export function ProjectPlanningView({
   uid,
@@ -74,7 +118,7 @@ export function ProjectPlanningView({
   onSelectProject: (id: string) => void;
 }) {
   const [tab, setTab] = useState('Visão geral');
-  const [kanbanPhaseFilter, setKanbanPhaseFilter] = useState('Todas as fases');
+  const [projectFilter, setProjectFilter] = useState('Todas');
 
   // New Project from Template Modal
   const [newProjModal, setNewProjModal] = useState(false);
@@ -83,15 +127,17 @@ export function ProjectPlanningView({
   const [npType, setNpType] = useState<ProjectType>('Casa residencial');
   const [npContractKind, setNpContractKind] = useState<ProjectContractKind>('Principal');
   const [npValue, setNpValue] = useState('');
+  const [npBudget, setNpBudget] = useState('');
+  const [npError, setNpError] = useState<string | null>(null);
   const [npStart, setNpStart] = useState(todayISO());
-  const [npMonths, setNpMonths] = useState('18');
+  const [npMonths, setNpMonths] = useState('');
   const [npActor, setNpActor] = useState<ActorRole>('Sócio');
   const [npSaving, setNpSaving] = useState(false);
 
   // Schedule Template Onboarding for Contratada projects awaiting cronograma
   const [tplType, setTplType] = useState<ProjectType>('Casa residencial');
   const [tplStart, setTplStart] = useState(todayISO());
-  const [tplMonths, setTplMonths] = useState('18');
+  const [tplMonths, setTplMonths] = useState('');
   const [tplActor, setTplActor] = useState<ActorRole>('Sócio');
   const [tplSaving, setTplSaving] = useState(false);
   const [tplError, setTplError] = useState<string | null>(null);
@@ -102,6 +148,8 @@ export function ProjectPlanningView({
   const [stWbs, setStWbs] = useState('1.1');
   const [stPhase, setStPhase] = useState('1 · Fundação, estrutura e cobertura');
   const [stName, setStName] = useState('');
+  const [stDeliverable, setStDeliverable] = useState('');
+  const [stageRevision, setStageRevision] = useState<number | undefined>();
   const [stResp, setStResp] = useState('');
   const [stStartWeek, setStStartWeek] = useState('0');
   const [stDurWeeks, setStDurWeeks] = useState('4');
@@ -118,38 +166,15 @@ export function ProjectPlanningView({
   const [stError, setStError] = useState<string | null>(null);
   const [stSaving, setStSaving] = useState(false);
 
-  // Daily Log state (with offline queue support)
-  const [logDate, setLogDate] = useState(todayISO());
-  const [logCount, setLogCount] = useState('0');
-  const [logWeather, setLogWeather] = useState<WeatherType>('Sol');
-  const [logActivities, setLogActivities] = useState('');
-  const [logOccurrences, setLogOccurrences] = useState('');
-  const [logActor, setLogActor] = useState<ActorRole>('Sócio');
-  const [isOnline, setIsOnline] = useState(
-    typeof navigator !== 'undefined' ? navigator.onLine : true
-  );
-  const [offlineQueuedCount, setOfflineQueuedCount] = useState(0);
-
-  useEffect(() => {
-    const onOnline = () => setIsOnline(true);
-    const onOffline = () => setIsOnline(false);
-    window.addEventListener('online', onOnline);
-    window.addEventListener('offline', onOffline);
-    return () => {
-      window.removeEventListener('online', onOnline);
-      window.removeEventListener('offline', onOffline);
-    };
-  }, []);
-
   const activeProject =
-    data.projects.find((p) => p.id === selectedProjectId) || data.projects[0] || null;
+    data.projects.find((p) => p.id === selectedProjectId) ?? null;
 
   useEffect(() => {
     if (!activeProject) return;
     setTplType(activeProject.type || 'Casa residencial');
     setTplStart(activeProject.startDate || todayISO());
     const linkedQuote = data.quotes.find((q) => q.id === activeProject.quoteId);
-    setTplMonths(String(linkedQuote?.estimatedMonths || 18));
+    setTplMonths(linkedQuote?.estimatedMonths ? String(linkedQuote.estimatedMonths) : '');
     setTplError(null);
   }, [activeProject, data.quotes]);
 
@@ -165,31 +190,32 @@ export function ProjectPlanningView({
 
   const awaitingScheduleTemplate = Boolean(
     activeProject &&
-      (activeProject.planningStatus === 'Aguardando modelo de cronograma' ||
-        (activeProject.status === 'Contratada' && projectStages.length === 0))
+      activeProject.status === 'Contratada' && activeProject.planningStatus !== 'Cronograma criado' && projectStages.length === 0
   );
 
-  const cpmResult = useMemo(
-    () => calcularCaminhoCriticoObra(projectStages),
-    [projectStages]
+  const scheduleDate = planningTodayISO();
+  const schedule = useMemo(
+    () => activeProject ? getProjectSchedule(activeProject, projectStages, scheduleDate) : null,
+    [activeProject, projectStages, scheduleDate],
   );
-  const criticalIds = useMemo(
-    () => new Set(cpmResult.etapasCriticas),
-    [cpmResult.etapasCriticas]
-  );
-  const projectProgress = activeProject ? calcularProgressoObra(activeProject.id, data.stages) : null;
-  const curvaSData = useMemo(() => calcularCurvaSObra(projectStages), [projectStages]);
-  const delayedStages = projectStages.filter((s) => Boolean(s.delayJustification));
-  const totalWeeks = Math.max(
-    12,
-    ...projectStages.map((s) => Math.max(s.startWeek + s.durationWeeks, s.baselineStartWeek + s.baselineDurationWeeks))
-  );
-
-  const projectLogs = activeProject
-    ? data.dailyLogs
-        .filter((l) => l.projectId === activeProject.id)
-        .sort((a, b) => b.date.localeCompare(a.date))
+  const originalBaseline = data.baselines?.find((baseline) => baseline.projectId === activeProject?.id && baseline.version === 1);
+  const criticalIds = new Set(schedule?.criticalPath.etapasCriticas ?? []);
+  const projectProgress = activeProject ? calcularProgressoObra(activeProject.id, projectStages) : null;
+  const curvaSData = useMemo(() => calcularCurvaSObra(
+    projectStages, schedule?.referenceWeek, originalBaseline, tab === 'Visão geral',
+  ), [projectStages, schedule?.referenceWeek, originalBaseline, tab]);
+  const progressObservations = activeProject && tab === 'Visão geral' && curvaSData.possuiDados
+    ? getRecordedScheduleProgress(activeProject, data.scheduleProgress ?? [], scheduleDate, curvaSData.progressoRealizadoPct)
     : [];
+  const delayedStages = projectStages.filter((stage) => (
+    (schedule?.details.get(stage.id)?.terminoMaisCedo ?? stage.startWeek + stage.durationWeeks)
+    > stage.baselineStartWeek + stage.baselineDurationWeeks
+  ));
+  const scheduleCycle = schedule ? describeScheduleCycle(projectStages, schedule.criticalPath) : null;
+  const filteredProjects = data.projects.filter((project) => projectFilter === 'Todas' || (
+    projectFilter === 'Concluídas' ? project.status === 'Concluída' : project.status === projectFilter
+  ));
+
 
   // Phases breakdown for Visão geral via /src/domain
   const phasesList = useMemo(
@@ -199,8 +225,10 @@ export function ProjectPlanningView({
 
   function openCreateStage() {
     setEditingStage(null);
-    setStWbs(`${phasesList.length + 1}.1`);
-    setStPhase(phasesList[0]?.fase || '1 · Fundação, estrutura e cobertura');
+    setStWbs('');
+    setStPhase('');
+    setStDeliverable('');
+    setStageRevision(activeProject?.scheduleRevision);
     setStName('');
     setStResp('');
     setStStartWeek('0');
@@ -222,6 +250,8 @@ export function ProjectPlanningView({
     setEditingStage(st);
     setStWbs(st.wbsCode);
     setStPhase(st.phase);
+    setStDeliverable(st.deliverable ?? '');
+    setStageRevision(activeProject?.scheduleRevision);
     setStName(st.name);
     setStResp(st.responsible);
     setStStartWeek(String(st.startWeek));
@@ -232,70 +262,17 @@ export function ProjectPlanningView({
     setStDeps(st.dependsOn || []);
     setStStatus(st.status);
     setStMatDate(st.materialExpectedDate || '');
-    setStDelayCat(st.delayCategory || '');
+    setStDelayCat(normalizeDelayCategory(st.delayCategory || ''));
     setStDelayJust(st.delayJustification || '');
     setStChecklistDone(st.checklistCompleted || []);
     setStError(null);
     setStageModalOpen(true);
   }
 
-  // Real-time dependency cycle check via src/domain caminhoCritico
-  const cycleError = useMemo(() => {
-    if (!stageModalOpen) return null;
-    const idToCheck = editingStage?.id || '__new_stage__';
-    const candidateStage: ProjectStage = editingStage
-      ? { ...editingStage, dependsOn: stDeps }
-      : {
-          ownerUid: uid,
-          id: idToCheck,
-          projectId: activeProject?.id || '',
-          wbsCode: stWbs,
-          phase: stPhase,
-          name: stName || 'Nova etapa',
-          responsible: stResp,
-          startWeek: Number(stStartWeek) || 0,
-          durationWeeks: Number(stDurWeeks) || 0,
-          baselineStartWeek: Number(stStartWeek) || 0,
-          baselineDurationWeeks: Number(stDurWeeks) || 0,
-          progressPct: Number(stProgress) || 0,
-          budgetedCost: Number(stBudget) || 0,
-          popId: stPopId,
-          dependsOn: stDeps,
-          isMilestone: (Number(stDurWeeks) || 0) === 0,
-          status: stStatus,
-          materialExpectedDate: stMatDate,
-          delayCategory: stDelayCat,
-          delayJustification: stDelayJust,
-          checklistCompleted: stChecklistDone,
-          createdBy: stActor,
-          createdAt: '',
-          updatedBy: stActor,
-          updatedAt: '',
-        };
-    const candidateStages = editingStage
-      ? projectStages.map((s) => (s.id === editingStage.id ? candidateStage : s))
-      : [...projectStages, candidateStage];
-    if (calcularCaminhoCriticoObra(candidateStages).cicloDetectado) {
-      return 'Esta dependência cria um ciclo entre etapas. Remova uma das ligações para salvar.';
-    }
-    return null;
-  }, [
-    stageModalOpen,
-    editingStage,
-    projectStages,
-    stDeps,
-    activeProject,
-    stWbs,
-    stPhase,
-    stName,
-    stResp,
-    stStartWeek,
-    stDurWeeks,
-    stProgress,
-    stBudget,
-    stStatus,
-    stActor,
-  ]);
+  const cycleError = stageModalOpen && editingStage
+    ? describeScheduleCycle(projectStages.map((stage) =>
+        stage.id === editingStage.id ? { ...stage, wbsCode: stWbs, name: stName, dependsOn: stDeps } : stage))
+    : null;
 
   async function handleSaveStage(e: React.FormEvent) {
     e.preventDefault();
@@ -305,53 +282,22 @@ export function ProjectPlanningView({
     const durNum = Number(stDurWeeks) || 0;
     const baseStart = editingStage ? editingStage.baselineStartWeek : startNum;
     const baseDur = editingStage ? editingStage.baselineDurationWeeks : durNum;
-    const isDelayed = startNum + durNum > baseStart + baseDur;
-
-    if (isDelayed && (!stDelayCat.trim() || !stDelayJust.trim())) {
-      setStError('Etapas deslocadas além da linha de base exigem categoria e justificativa do atraso.');
-      return;
-    }
-
-    // Check POP acceptance checklist if marking Concluída
-    const linkedPop = data.pops.find((p) => p.id === stPopId);
-    if (
-      stStatus === 'Concluída' &&
-      linkedPop &&
-      linkedPop.acceptanceCriteria.length > 0 &&
-      stChecklistDone.length < linkedPop.acceptanceCriteria.length
-    ) {
-      setStError('Complete todos os critérios de aceite do POP vinculado antes de concluir a etapa.');
-      return;
-    }
-
-    // Check dependency gate if moving to Em andamento
-    if (stStatus === 'Em andamento' && stDeps.length > 0) {
-      const pendingDep = stDeps
-        .map((id) => projectStages.find((s) => s.id === id))
-        .find((s) => s && s.status !== 'Concluída');
-      if (pendingDep) {
-        setStError(
-          `Não é possível iniciar: a etapa anterior "${pendingDep.name}" ainda não foi concluída.`
-        );
-        return;
-      }
-    }
-
     setStSaving(true);
     setStError(null);
     try {
       const payload = {
         projectId: activeProject.id,
-        wbsCode: clampStr(stWbs, 24),
-        phase: clampStr(stPhase, 100),
-        name: clampStr(stName, 140),
+        wbsCode: clampStr(stWbs.trim(), 24),
+        phase: clampStr(stPhase.trim(), 100),
+        deliverable: clampStr(stDeliverable.trim(), 120),
+        name: clampStr(stName.trim(), 140),
         responsible: clampStr(stResp, 120),
         startWeek: startNum,
         durationWeeks: durNum,
         baselineStartWeek: baseStart,
         baselineDurationWeeks: baseDur,
         progressPct: stStatus === 'Concluída' ? 100 : Math.min(100, Math.max(0, Number(stProgress) || 0)),
-        budgetedCost: Number(stBudget) || 0,
+        budgetedCost: roundCents(Number(stBudget) || 0),
         popId: stPopId,
         dependsOn: stDeps,
         isMilestone: durNum === 0,
@@ -362,20 +308,10 @@ export function ProjectPlanningView({
         checklistCompleted: stChecklistDone,
       };
 
-      if (editingStage) {
-        await updateRecord(
-          'stages',
-          editingStage.id,
-          uid,
-          stActor,
-          payload,
-          `Etapa atualizada: ${stName}`,
-          editingStage.status,
-          stStatus
-        );
-      } else {
-        await createRecord('stages', uid, stActor, payload, `Nova etapa criada: ${stName}`);
-      }
+      await saveProjectStage({
+        uid, actor: stActor, project: { ...activeProject, scheduleRevision: stageRevision },
+        knownStages: projectStages, stageId: editingStage?.id, payload,
+      });
       setStageModalOpen(false);
     } catch (err) {
       setStError(err instanceof Error ? err.message : 'Erro ao salvar etapa.');
@@ -384,83 +320,20 @@ export function ProjectPlanningView({
     }
   }
 
-  async function handleSaveDailyLog(e: React.FormEvent) {
-    e.preventDefault();
-    if (!activeProject || !logActivities.trim()) return;
-    const payload = {
-      projectId: activeProject.id,
-      date: logDate,
-      presentCount: Number(logCount) || 0,
-      weather: logWeather,
-      activities: clampStr(logActivities, 1500),
-      occurrences: clampStr(logOccurrences, 1000),
-      photoNotes: [],
-    };
-
-    if (!isOnline) {
-      const queueKey = 'pilotis_offline_logs';
-      const existingQueue = JSON.parse(localStorage.getItem(queueKey) || '[]');
-      existingQueue.push({ ...payload, actor: logActor });
-      localStorage.setItem(queueKey, JSON.stringify(existingQueue));
-      setOfflineQueuedCount(existingQueue.length);
-      setLogActivities('');
-      setLogOccurrences('');
-      return;
-    }
-
-    await createRecord('dailyLogs', uid, logActor, payload, `Diário de obra · ${activeProject.name}`);
-    setLogActivities('');
-    setLogOccurrences('');
-  }
-
-  async function handleCloseProject() {
-    if (!activeProject) return;
-    await updateRecord(
-      'projects',
-      activeProject.id,
-      uid,
-      'Sócio',
-      {
-        status: 'Concluída',
-        warrantyStartDate: todayISO(),
-      },
-      `Obra encerrada: ${activeProject.name}`,
-      'Em execução',
-      'Concluída'
-    );
-    if (activeProject.clientId) {
-      await updateRecord(
-        'clients',
-        activeProject.clientId,
-        uid,
-        'Sócio',
-        { status: 'Em garantia' },
-        `Cliente entrou em garantia: ${activeProject.clientName}`,
-        'Ativo',
-        'Em garantia'
-      );
-    }
-  }
-
-  const totalEapBudget = projectStages.reduce((s, st) => s + (st.budgetedCost || 0), 0);
+  const totalEapBudget = getWorkPackageBudget(projectStages);
 
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Planejamento de Obras"
-        subtitle="EAP, cronograma com caminho crítico, Kanban, recursos, linha de base e diário de obra"
+        subtitle="Acompanhe o andamento e os prazos das obras"
         companyEmail={companyEmail}
         actions={
           <>
-            {data.projects.length > 0 && (
-              <SegmentedControl
-                items={data.projects.map((p) => p.name)}
-                active={activeProject?.name || ''}
-                onChange={(name) => {
-                  const found = data.projects.find((p) => p.name === name);
-                  if (found) onSelectProject(found.id);
-                }}
-              />
+            {activeProject && (
+              <button type="button" onClick={() => { onSelectProject(''); setTab('Visão geral'); }} className="rounded-lg border border-[#E4E1DA] bg-white px-4 py-2.5 text-sm font-semibold">
+                Voltar às obras
+              </button>
             )}
             <button
               type="button"
@@ -469,7 +342,7 @@ export function ProjectPlanningView({
             >
               Nova obra
             </button>
-            {activeProject && (
+            {activeProject && activeProject.status !== 'Concluída' && !awaitingScheduleTemplate && (
               <button
                 type="button"
                 onClick={openCreateStage}
@@ -483,12 +356,41 @@ export function ProjectPlanningView({
       />
 
       {!activeProject ? (
-        <EmptySection
-          title="Nenhuma obra cadastrada"
-          description="Confirme um orçamento em Clientes e Orçamentos ou crie uma obra a partir de um modelo de cronograma."
-          actionLabel="Nova obra a partir de modelo"
-          onAction={() => setNewProjModal(true)}
-        />
+        data.projects.length === 0 ? (
+          <EmptySection title="Nenhuma obra cadastrada" description="Confirme um orçamento em Clientes e Orçamentos ou crie uma obra a partir de um modelo de cronograma."
+            actionLabel="Nova obra a partir de modelo" onAction={() => setNewProjModal(true)} />
+        ) : (
+          <section className="grid gap-4" aria-label="Obras">
+            <SegmentedControl items={['Todas', 'Contratada', 'Em execução', 'Concluídas']} active={projectFilter} onChange={setProjectFilter} />
+            {filteredProjects.length === 0 ? <p className="text-sm text-[#5B6472]">Nenhuma obra neste filtro.</p> : (
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
+                {filteredProjects.map((project) => {
+                  const stages = data.stages.filter((stage) => stage.projectId === project.id);
+                  const next = getProjectSchedule(project, stages).nextStage;
+                  const progress = calcularProgressoObra(project.id, stages);
+                  const dre = calcularDreObra(project, data.transactions, stages);
+                  return (
+                    <article key={project.id} className="grid gap-3 rounded-xl border border-[#E4E1DA] bg-white p-5">
+                      <span className="flex flex-wrap items-center justify-between gap-2">
+                        <strong className="text-base text-[#14181F]">{project.name}</strong>
+                        <StatusBadge label={project.status} />
+                      </span>
+                      <span className="text-xs text-[#5B6472]">{project.type}{project.clientName && ` · ${project.clientName}`}</span>
+                      <span className="flex justify-between gap-2 text-sm"><span>Progresso</span><strong>{formatPercentBR(progress)}</strong></span>
+                      {progress !== null && <ProgressBar pct={progress} />}
+                      <span className="flex justify-between gap-2 text-sm"><span>Margem real</span><strong>{formatPercentBR(dre.receita.realizado > 0 ? dre.margemRealizadaPct : null)}</strong></span>
+                      <span className="text-sm"><strong>Próxima etapa</strong> · {next ? `${next.wbsCode} ${next.name}` : stages.length ? 'Etapas concluídas' : 'Sem dados'}</span>
+                      <button type="button" aria-label={`Abrir planejamento de ${project.name}`} onClick={() => { onSelectProject(project.id); setTab('Visão geral'); }}
+                        className="justify-self-start rounded text-sm font-semibold text-[#1F3A5F] hover:underline focus-visible:ring-2 focus-visible:ring-[#1F3A5F]">
+                        Abrir planejamento →
+                      </button>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        )
       ) : (
         <>
           <div className="bg-white border border-[#E4E1DA] rounded-xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
@@ -524,46 +426,27 @@ export function ProjectPlanningView({
                 <StatusBadge label={`${activeProject.contractKind || 'Principal'} · Contratada`} />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {(['Casa residencial', 'Reforma', 'Obra satélite'] as ProjectType[]).map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setTplType(t)}
-                    className={`text-left rounded-xl p-3.5 border cursor-pointer bg-white ${
-                      tplType === t
-                        ? 'border-2 border-[#1F3A5F] bg-[#E6EEFB]'
-                        : 'border-[#E4E1DA]'
-                    }`}
-                  >
-                    <strong className="block text-sm text-[#14181F]">{t}</strong>
-                    <span className="text-xs text-[#5B6472]">
-                      {t === 'Casa residencial'
-                        ? '10 etapas macro · 12 a 24 meses'
-                        : t === 'Reforma'
-                        ? '5 etapas · 2 a 6 meses'
-                        : '3 etapas · semanas'}
-                    </span>
-                  </button>
-                ))}
-              </div>
+              <ScheduleTemplateOptions value={tplType} onChange={setTplType} />
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-semibold text-[#14181F]">Data de início</label>
+                  <label htmlFor="tpl-start" className="text-xs font-semibold text-[#14181F]">Data de início</label>
                   <input
                     type="date"
+                    id="tpl-start"
                     value={tplStart}
                     onChange={(e) => setTplStart(e.target.value)}
                     className="rounded-lg border border-[#E4E1DA] bg-white px-3 py-2 text-sm"
                   />
                 </div>
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-semibold text-[#14181F]">Prazo (meses)</label>
+                  <label htmlFor="tpl-months" className="text-xs font-semibold text-[#14181F]">Prazo (meses)</label>
                   <input
                     type="number"
                     min={1}
-                    max={60}
+                    max={120}
+                    placeholder="Duração do modelo"
+                    id="tpl-months"
                     value={tplMonths}
                     onChange={(e) => setTplMonths(e.target.value)}
                     className="rounded-lg border border-[#E4E1DA] bg-white px-3 py-2 text-sm tabular-nums"
@@ -592,8 +475,8 @@ export function ProjectPlanningView({
                         actor: tplActor,
                         project: activeProject,
                         templateType: tplType,
-                        startDate: tplStart || activeProject.startDate || todayISO(),
-                        estimatedMonths: Math.max(1, Number(tplMonths) || 12),
+                        startDate: tplStart,
+                        estimatedMonths: tplMonths ? Number(tplMonths) : undefined,
                         pops: data.pops,
                       });
                     } catch (err) {
@@ -612,6 +495,14 @@ export function ProjectPlanningView({
             </section>
           )}
 
+          <div className="flex flex-wrap gap-2 md:hidden">
+            <button type="button" onClick={() => setTab('Diário de obra')} className="rounded-lg border border-[#E4E1DA] bg-white px-3 py-2 text-sm font-semibold text-[#1F3A5F] focus-visible:ring-2 focus-visible:ring-[#1F3A5F]">
+              Diário de obra
+            </button>
+            <button type="button" onClick={() => setTab('Etapas em campo')} className="rounded-lg border border-[#E4E1DA] bg-white px-3 py-2 text-sm font-semibold text-[#1F3A5F] focus-visible:ring-2 focus-visible:ring-[#1F3A5F]">
+              Etapas em campo
+            </button>
+          </div>
           <Tabs items={PLAN_TABS} active={tab} onChange={setTab} />
 
           {tab === 'Visão geral' && (
@@ -628,13 +519,13 @@ export function ProjectPlanningView({
                   ],
                   [
                     '3 · Execução',
-                    'Kanban com limite WIP',
-                    awaitingScheduleTemplate ? 'idle' : 'on',
+                    'Execução das etapas planejadas',
+                    awaitingScheduleTemplate ? 'idle' : activeProject.status === 'Concluída' ? 'done' : 'on',
                   ],
                   [
                     '4 · Monitoramento',
                     'Curva S e replanejamento',
-                    awaitingScheduleTemplate ? 'idle' : 'on',
+                    awaitingScheduleTemplate ? 'idle' : activeProject.status === 'Concluída' ? 'done' : 'on',
                   ],
                   [
                     '5 · Encerramento',
@@ -651,9 +542,10 @@ export function ProjectPlanningView({
                     }`}
                   >
                     <strong className="block text-[13px] text-[#14181F]">
-                      {t} {st === 'done' ? '✓' : ''}
+                      {t}
                     </strong>
-                    <span className="text-xs text-[#5B6472]">{sub}</span>
+                    <span className="block text-xs text-[#5B6472]">{sub}</span>
+                    <span className="mt-1 block text-xs font-semibold text-[#1F3A5F]">{st === 'done' ? 'Concluída' : st === 'on' ? 'Em andamento' : 'A iniciar'}</span>
                   </div>
                 ))}
               </div>
@@ -662,7 +554,7 @@ export function ProjectPlanningView({
                 <KpiCard
                   label="Progresso real"
                   value={projectProgress !== null ? `${projectProgress}%` : 'Sem dados'}
-                  subtext={`${projectStages.filter((s) => s.status === 'Concluída').length} de ${projectStages.length} etapas`}
+                  subtext={projectStages.length ? `${projectStages.filter((s) => s.status === 'Concluída').length} de ${projectStages.length} etapas` : undefined}
                 />
                 <KpiCard
                   label="Etapas críticas"
@@ -671,17 +563,17 @@ export function ProjectPlanningView({
                 />
                 <KpiCard
                   label="Etapas atrasadas"
-                  value={String(delayedStages.length)}
+                  value={projectStages.length ? String(delayedStages.length) : 'Sem dados'}
                   subtext={
                     delayedStages.length > 0
-                      ? 'Justificativa registrada'
-                      : 'Sem desvios da linha de base'
+                      ? 'Fim previsto após a linha de base'
+                      : projectStages.length ? 'Sem desvios da linha de base' : undefined
                   }
                 />
                 <KpiCard
                   label="Entrega prevista"
-                  value={formatDateBR(activeProject.forecastEndDate)}
-                  subtext={`Linha de base: ${formatDateBR(activeProject.baselineEndDate)}`}
+                  value={schedule?.forecastEndDate ? formatDateBR(schedule.forecastEndDate) : 'Sem dados'}
+                  subtext={`Linha de base · ${projectStages.length && (originalBaseline?.endDate || activeProject.baselineEndDate) ? formatDateBR(originalBaseline?.endDate || activeProject.baselineEndDate) : 'Sem dados'}`}
                 />
               </div>
 
@@ -709,6 +601,12 @@ export function ProjectPlanningView({
                           <ProgressBar pct={ph.progressoMedioPct} />
                         </div>
                       ))}
+                    </div>
+                  )}
+                  {curvaSData.possuiDados && (
+                    <div className="grid min-w-0 gap-2 border-t border-[#E4E1DA] pt-4">
+                      <h3 className="text-sm font-semibold">Progresso acumulado</h3>
+                      <ScheduleProgressChart curve={curvaSData} observations={progressObservations} />
                     </div>
                   )}
                 </section>
@@ -760,7 +658,7 @@ export function ProjectPlanningView({
 
                   <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-3">
                     <h2 className="text-base font-semibold text-[#14181F]">Caminho crítico</h2>
-                    {criticalIds.size === 0 ? (
+                    {scheduleCycle ? <p role="alert" className="text-sm text-[#B42318]">{scheduleCycle}</p> : criticalIds.size === 0 ? (
                       <p className="text-xs text-[#5B6472]">Sem etapas críticas definidas.</p>
                     ) : (
                       <div className="flex flex-col gap-2">
@@ -771,11 +669,24 @@ export function ProjectPlanningView({
                               <span className="font-medium text-[#14181F] truncate">
                                 {s.wbsCode} · {s.name}
                               </span>
-                              <StatusBadge label={s.status} />
+                              <span className="shrink-0 text-[#5B6472]">Folga {schedule?.details.get(s.id)?.folga ?? 0} sem.</span>
                             </div>
                           ))}
                       </div>
                     )}
+                  </section>
+                  <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-3">
+                    <h2 className="text-base font-semibold text-[#14181F]">Próximos marcos</h2>
+                    {schedule?.milestones.length ? (
+                      <ul className="grid gap-2">
+                        {schedule.milestones.slice(0, 5).map(({ stage, date }) => (
+                          <li key={stage.id} className="flex justify-between gap-3 text-sm">
+                            <span>{stage.wbsCode} · {stage.name}</span>
+                            <span className="shrink-0 text-[#5B6472]">{date ? formatDateBR(date) : 'Sem dados'}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : <p className="text-sm text-[#5B6472]">{projectStages.length ? 'Nenhum marco pendente.' : 'Sem dados'}</p>}
                   </section>
                 </div>
               </div>
@@ -783,475 +694,84 @@ export function ProjectPlanningView({
           )}
 
           {tab === 'EAP' && (
-            <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
-              <div className="flex items-center justify-between">
-                <h2 className="text-base font-semibold text-[#14181F]">
-                  Estrutura analítica do projeto (EAP)
-                </h2>
-                <button
-                  type="button"
-                  onClick={openCreateStage}
-                  className="px-3 py-1.5 rounded-lg border border-[#E4E1DA] text-xs font-semibold cursor-pointer"
-                >
-                  Adicionar pacote
-                </button>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse">
-                  <thead>
-                    <tr className="bg-[#F0EEE9] text-left text-xs font-semibold text-[#5B6472]">
-                      <th className="py-2.5 px-3 rounded-l-lg">Código</th>
-                      <th className="py-2.5 px-3">Entrega / pacote de trabalho</th>
-                      <th className="py-2.5 px-3">Responsável</th>
-                      <th className="py-2.5 px-3">Duração</th>
-                      <th className="py-2.5 px-3 text-right">Custo orçado</th>
-                      <th className="py-2.5 px-3">POP</th>
-                      <th className="py-2.5 px-3 rounded-r-lg">Situação</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {projectStages.map((st) => {
-                      const pop = data.pops.find((p) => p.id === st.popId);
-                      return (
-                        <tr
-                          key={st.id}
-                          onClick={() => openEditStage(st)}
-                          className="border-b border-[#E4E1DA] text-[13px] hover:bg-[#F6F5F2] cursor-pointer"
-                        >
-                          <td className="py-3 px-3 font-medium text-[#14181F] tabular-nums">
-                            {st.wbsCode}
-                          </td>
-                          <td className="py-3 px-3 text-[#14181F] font-medium">{st.name}</td>
-                          <td className="py-3 px-3 text-[#5B6472]">{st.responsible || '—'}</td>
-                          <td className="py-3 px-3 text-[#5B6472] tabular-nums">
-                            {st.durationWeeks > 0 ? `${st.durationWeeks} sem` : 'Marco'}
-                          </td>
-                          <td className="py-3 px-3 text-right tabular-nums">
-                            {formatBRL(st.budgetedCost)}
-                          </td>
-                          <td className="py-3 px-3 text-[#5B6472]">{pop?.title || '—'}</td>
-                          <td className="py-3 px-3">
-                            <StatusBadge label={st.status} />
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    <tr className="font-bold text-[#14181F] text-[13px]">
-                      <td className="py-3 px-3" colSpan={4}>
-                        Total orçado na EAP
-                      </td>
-                      <td className="py-3 px-3 text-right tabular-nums">
-                        {formatBRL(totalEapBudget)}
-                      </td>
-                      <td colSpan={2} />
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          )}
-
-          {tab === 'Cronograma' && (
-            <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h2 className="text-base font-semibold text-[#14181F]">
-                  Cronograma macro · {activeProject.name}
-                </h2>
-                <div className="flex flex-wrap gap-3 text-xs text-[#5B6472]">
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="w-3 h-2 rounded bg-[#1F3A5F]" /> Etapa
-                  </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="w-3 h-2 rounded bg-[#9A6212]" /> Caminho crítico
-                  </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="w-3 h-1.5 rounded bg-[#B9B4A8]" /> Linha de base
-                  </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="w-3 h-2 rounded border-2 border-[#B42318]" /> Atrasada
-                  </span>
+            <section className="grid gap-4" aria-label="Estrutura analítica do projeto">
+              <header className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#E4E1DA] bg-white p-4">
+                <div>
+                  <h2 className="text-base font-semibold text-[#14181F]">Estrutura analítica do projeto</h2>
+                  <p className="text-sm text-[#5B6472]">Custo orçado da obra · {projectStages.length ? formatBRL(totalEapBudget) : 'Sem dados'}</p>
                 </div>
-              </div>
-
-              <div className="border border-[#E4E1DA] rounded-xl overflow-x-auto">
-                <div className="min-w-[820px]">
-                  <div className="grid grid-cols-[280px_1fr] bg-[#F0EEE9] border-b border-[#E4E1DA] text-xs font-semibold text-[#5B6472]">
-                    <div className="py-2.5 px-3">Etapa · responsável</div>
-                    <div className="py-2.5 px-3">Linha do tempo ({totalWeeks} semanas)</div>
+                {!awaitingScheduleTemplate && <button type="button" onClick={openCreateStage} className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm font-semibold">Adicionar pacote</button>}
+              </header>
+              {groupStages(projectStages).map(([phase, deliveries]) => (
+                <section key={phase} className="overflow-hidden rounded-xl border border-[#E4E1DA] bg-white">
+                  <div className="flex flex-wrap justify-between gap-2 bg-[#E6EEFB] px-4 py-3">
+                    <h3 className="text-sm font-bold text-[#14181F]">{phase}</h3>
+                    <strong className="text-sm text-[#1F3A5F]">{formatBRL(getWorkPackageBudget([...deliveries.values()].flat()))}</strong>
                   </div>
-                  {projectStages.map((st) => {
-                    const isCrit = criticalIds.has(st.id);
-                    const isLate =
-                      st.startWeek + st.durationWeeks >
-                      st.baselineStartWeek + st.baselineDurationWeeks;
-                    const leftPct = (st.startWeek / totalWeeks) * 100;
-                    const widthPct = Math.max(2, (st.durationWeeks / totalWeeks) * 100);
-                    const baseLeftPct = (st.baselineStartWeek / totalWeeks) * 100;
-                    const baseWidthPct = Math.max(2, (st.baselineDurationWeeks / totalWeeks) * 100);
-
-                    return (
-                      <div
-                        key={st.id}
-                        onClick={() => openEditStage(st)}
-                        className="grid grid-cols-[280px_1fr] border-b border-[#E4E1DA] hover:bg-[#F6F5F2] cursor-pointer items-center"
-                      >
-                        <div className="py-2.5 px-3 flex items-center justify-between gap-2 text-xs border-r border-[#E4E1DA]">
-                          <span className="truncate font-medium text-[#14181F]">
-                            {st.wbsCode} · {st.name}
-                          </span>
-                          {isCrit && <StatusBadge label="Crítica" tone="crit" />}
-                        </div>
-                        <div className="relative h-10 px-2 flex items-center">
-                          {/* Baseline dashed track */}
-                          <div
-                            className="absolute bottom-1.5 h-1.5 rounded bg-[#D5D1C8]"
-                            style={{ left: `${baseLeftPct}%`, width: `${baseWidthPct}%` }}
-                            title="Linha de base"
-                          />
-                          {/* Current bar */}
-                          {st.isMilestone ? (
-                            <div
-                              className="absolute w-3.5 h-3.5 rotate-45 bg-[#9A6212]"
-                              style={{ left: `${leftPct}%` }}
-                              title={`Marco: ${st.name}`}
-                            />
-                          ) : (
-                            <div
-                              className={`absolute top-2 h-4 rounded overflow-hidden ${
-                                isCrit ? 'bg-[#9A6212]' : 'bg-[#1F3A5F]'
-                              } ${isLate ? 'ring-2 ring-[#B42318]' : ''}`}
-                              style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                              title={`${st.name}: ${st.progressPct}%`}
-                            >
-                              <div
-                                className="h-full bg-black/25"
-                                style={{ width: `${st.progressPct}%` }}
-                              />
-                            </div>
-                          )}
-                        </div>
+                  {[...deliveries].map(([delivery, packages]) => (
+                    <div key={delivery} className="grid gap-2 border-t border-[#E4E1DA] p-4">
+                      <div className="flex flex-wrap justify-between gap-2">
+                        <h4 className="text-sm font-semibold">{delivery}</h4>
+                        <span className="text-sm text-[#5B6472]">{formatBRL(getWorkPackageBudget(packages))}</span>
                       </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </section>
-          )}
-
-          {tab === 'Kanban' && (
-            <div className="flex flex-col gap-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <SegmentedControl
-                  items={['Todas as fases', ...phasesList.map((p) => p.fase)]}
-                  active={kanbanPhaseFilter}
-                  onChange={setKanbanPhaseFilter}
-                />
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-                {KANBAN_COLS.map((col) => {
-                  const cards = projectStages.filter(
-                    (s) =>
-                      s.status === col.status &&
-                      (kanbanPhaseFilter === 'Todas as fases' || s.phase === kanbanPhaseFilter)
-                  );
-                  return (
-                    <div
-                      key={col.status}
-                      className="bg-[#F0EEE9] rounded-xl p-3 flex flex-col gap-2.5 min-h-[240px]"
-                    >
-                      <div className="flex items-center justify-between px-1">
-                        <strong className="text-xs font-bold text-[#14181F]">{col.status}</strong>
-                        <span className="text-[11px] text-[#5B6472]">
-                          {col.status === 'Em andamento' ? `${cards.length} de 4` : cards.length}
-                        </span>
+                      <div className="grid gap-1">
+                        {packages.map((stage) => {
+                          const pop = data.pops.find((item) => item.id === stage.popId);
+                          return (
+                            <button key={stage.id} type="button" onClick={() => openEditStage(stage)}
+                              className="grid items-center gap-2 rounded-lg border border-[#E4E1DA] p-3 text-left text-sm hover:bg-[#F6F5F2] focus-visible:ring-2 focus-visible:ring-[#1F3A5F] md:grid-cols-[2fr_1fr_auto_auto_1fr_auto]">
+                              <strong className="min-w-0 break-words text-[#14181F]">{stage.wbsCode} · {stage.name}</strong>
+                              <span className="text-[#5B6472]">{stage.responsible || 'Sem responsável'}</span>
+                              <span>{stage.isMilestone ? 'Marco' : `${stage.durationWeeks} sem.`}</span>
+                              <span className="tabular-nums">{formatBRL(stage.budgetedCost)}</span>
+                              <span className="text-[#5B6472]">{pop ? `POP · ${pop.title}` : 'Sem POP vinculado'}</span>
+                              <span><StatusBadge label={stage.status} /></span>
+                            </button>
+                          );
+                        })}
                       </div>
-
-                      {cards.map((st) => {
-                        const isCrit = criticalIds.has(st.id);
-                        return (
-                          <button
-                            key={st.id}
-                            type="button"
-                            onClick={() => openEditStage(st)}
-                            className="text-left bg-white border border-[#E4E1DA] rounded-xl p-3 flex flex-col gap-2 hover:border-[#1F3A5F] cursor-pointer"
-                          >
-                            <strong className="text-[13px] text-[#14181F] leading-snug">
-                              {st.name}
-                            </strong>
-                            <div className="flex flex-wrap gap-1">
-                              <StatusBadge label={st.phase.split('·')[0].trim()} tone="info" />
-                              {isCrit && <StatusBadge label="Crítica" tone="crit" />}
-                              {st.delayJustification && (
-                                <StatusBadge label={st.delayCategory || 'Atrasada'} tone="bad" />
-                              )}
-                            </div>
-                            <ProgressBar pct={st.progressPct} />
-                            <span className="text-[11px] text-[#5B6472]">
-                              {st.responsible || 'Sem responsável'} · {st.progressPct}%
-                            </span>
-                          </button>
-                        );
-                      })}
                     </div>
-                  );
-                })}
-              </div>
-
-              <AlertNote tone="soft" title="Regras do quadro">
-                Mover uma etapa para “Concluída” exige o checklist de qualidade do POP completo. Mover para “Em andamento” é bloqueado se a etapa anterior da dependência ainda não terminou.
-              </AlertNote>
-            </div>
-          )}
-
-          {tab === 'Recursos' && (
-            <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
-              <h2 className="text-base font-semibold text-[#14181F]">
-                Equipe alocada nesta obra
-              </h2>
-              {data.employees.filter((e) => e.currentProjectId === activeProject.id).length === 0 ? (
-                <p className="text-sm text-[#5B6472]">
-                  Nenhum colaborador atribuído diretamente a esta obra no cadastro de Equipe.
-                </p>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {data.employees
-                    .filter((e) => e.currentProjectId === activeProject.id)
-                    .map((emp) => (
-                      <div
-                        key={emp.id}
-                        className="border border-[#E4E1DA] rounded-xl p-4 flex items-center justify-between gap-3"
-                      >
-                        <div>
-                          <strong className="block text-sm text-[#14181F]">{emp.name}</strong>
-                          <span className="text-xs text-[#5B6472]">
-                            {emp.role} · {emp.employmentType}
-                          </span>
-                        </div>
-                        <StatusBadge label={emp.epiStatus} />
-                      </div>
-                    ))}
-                </div>
-              )}
+                  ))}
+                </section>
+              ))}
+              {!projectStages.length && <p className="text-sm text-[#5B6472]">Sem dados na EAP.</p>}
             </section>
           )}
 
-          {tab === 'Riscos e linha de base' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <section className="lg:col-span-2 bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
-                <h2 className="text-base font-semibold text-[#14181F]">Atrasos registrados</h2>
-                {delayedStages.length === 0 ? (
-                  <p className="text-sm text-[#5B6472]">
-                    Nenhum atraso registrado frente à linha de base original.
-                  </p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full border-collapse">
-                      <thead>
-                        <tr className="bg-[#F0EEE9] text-left text-xs font-semibold text-[#5B6472]">
-                          <th className="py-2.5 px-3 rounded-l-lg">Etapa</th>
-                          <th className="py-2.5 px-3">Categoria</th>
-                          <th className="py-2.5 px-3">Justificativa</th>
-                          <th className="py-2.5 px-3 rounded-r-lg">Situação</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {delayedStages.map((s) => (
-                          <tr key={s.id} className="border-b border-[#E4E1DA] text-[13px]">
-                            <td className="py-3 px-3 font-medium">{s.name}</td>
-                            <td className="py-3 px-3">{s.delayCategory || '—'}</td>
-                            <td className="py-3 px-3 text-[#5B6472]">{s.delayJustification}</td>
-                            <td className="py-3 px-3">
-                              <StatusBadge label={s.status} />
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </section>
+          {tab === 'Cronograma' && schedule && (
+            <ProjectScheduleView
+              key={activeProject.id}
+              uid={uid}
+              project={activeProject}
+              stages={projectStages}
+              schedule={schedule}
+              baselines={data.baselines ?? []}
+              cycle={scheduleCycle}
+              onEdit={openEditStage}
+            />
+          )}
 
-              <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-3">
-                <h2 className="text-base font-semibold text-[#14181F]">Linha de base x previsão</h2>
-                <div className="flex justify-between text-sm">
-                  <span className="text-[#5B6472]">Início</span>
-                  <strong>{formatDateBR(activeProject.startDate)}</strong>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-[#5B6472]">Entrega na linha de base</span>
-                  <strong>{formatDateBR(activeProject.baselineEndDate)}</strong>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-[#5B6472]">Entrega prevista atual</span>
-                  <strong>{formatDateBR(activeProject.forecastEndDate)}</strong>
-                </div>
-                {curvaSData.possuiDados && (
-                  <div className="flex justify-between text-sm items-center">
-                    <span className="text-[#5B6472]">Curva S (realizado / base)</span>
-                    <strong>
-                      {formatPercentBR(curvaSData.progressoRealizadoPct)} /{' '}
-                      {formatPercentBR(curvaSData.progressoPlanejadoPct)}
-                    </strong>
-                  </div>
-                )}
-                <AlertNote tone="info" title="Linha de base preservada">
-                  O plano original nunca é apagado. Ao replanejar prazos, o sistema exige justificativa.
-                </AlertNote>
-              </section>
-            </div>
+          {tab === 'Kanban' && schedule && (
+            <ProjectKanban key={activeProject.id} uid={uid} project={activeProject} stages={projectStages} data={data} schedule={schedule} onEdit={openEditStage} />
+          )}
+          {tab === 'Recursos' && (
+            <ProjectResources key={activeProject.id} uid={uid} project={activeProject} stages={projectStages} data={data} />
+          )}
+          {tab === 'Riscos' && schedule && (
+            <ProjectRisks key={activeProject.id} uid={uid} project={activeProject} stages={projectStages} data={data} schedule={schedule} onEdit={openEditStage} onSchedule={() => setTab('Cronograma')} />
           )}
 
           {tab === 'Diário de obra' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <section className="lg:col-span-2 bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
-                <h2 className="text-base font-semibold text-[#14181F]">Registros do diário</h2>
-                {!isOnline && (
-                  <AlertNote tone="info" title="Sem conexão no canteiro">
-                    Os novos registros serão salvos no aparelho e sincronizados depois ({offlineQueuedCount} na fila).
-                  </AlertNote>
-                )}
-                {projectLogs.length === 0 ? (
-                  <p className="text-sm text-[#5B6472]">Nenhum registro no diário desta obra.</p>
-                ) : (
-                  <div className="flex flex-col gap-3">
-                    {projectLogs.map((l) => (
-                      <div key={l.id} className="border border-[#E4E1DA] rounded-xl p-3.5 flex flex-col gap-1">
-                        <div className="flex items-center justify-between text-xs">
-                          <strong className="text-[#14181F]">{formatDateBR(l.date)}</strong>
-                          <span className="text-[#5B6472]">
-                            {l.weather} · {l.presentCount} pessoa(s)
-                          </span>
-                        </div>
-                        <p className="text-sm text-[#14181F]">{l.activities}</p>
-                        {l.occurrences && (
-                          <p className="text-xs text-[#8A5200]">Ocorrências: {l.occurrences}</p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </section>
-
-              <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-3">
-                <h2 className="text-base font-semibold text-[#14181F]">Novo registro do dia</h2>
-                <form onSubmit={handleSaveDailyLog} className="flex flex-col gap-3">
-                  <div className="grid grid-cols-2 gap-2.5">
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs font-semibold">Data</label>
-                      <input
-                        type="date"
-                        value={logDate}
-                        onChange={(e) => setLogDate(e.target.value)}
-                        className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm"
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs font-semibold">Equipe presente</label>
-                      <input
-                        type="number"
-                        min={0}
-                        value={logCount}
-                        onChange={(e) => setLogCount(e.target.value)}
-                        className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm tabular-nums"
-                      />
-                    </div>
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs font-semibold">Clima</label>
-                    <SegmentedControl
-                      items={['Sol', 'Chuva fraca', 'Chuva forte']}
-                      active={logWeather}
-                      onChange={(w) => setLogWeather(w as WeatherType)}
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs font-semibold">Atividades do dia</label>
-                    <textarea
-                      required
-                      rows={3}
-                      value={logActivities}
-                      onChange={(e) => setLogActivities(e.target.value)}
-                      className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs font-semibold">Ocorrências</label>
-                    <textarea
-                      rows={2}
-                      value={logOccurrences}
-                      onChange={(e) => setLogOccurrences(e.target.value)}
-                      className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm"
-                    />
-                  </div>
-                  <RegisteredBySelect value={logActor} onChange={setLogActor} id="log-actor" />
-                  <button
-                    type="submit"
-                    className="w-full py-2.5 rounded-lg bg-[#1F3A5F] text-white text-sm font-semibold cursor-pointer"
-                  >
-                    Salvar registro do dia
-                  </button>
-                </form>
-              </section>
-            </div>
+            <ProjectDiary key={activeProject.id} uid={uid} project={activeProject} logs={data.dailyLogs} />
+          )}
+          {tab === 'Etapas em campo' && (
+            <FieldStages key={activeProject.id} uid={uid} project={activeProject} stages={projectStages} pops={data.pops} />
           )}
 
           {tab === 'Encerramento' && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {(() => {
-                const projectDre = calcularDreObra(activeProject, data.transactions);
-                const doneStages = projectStages.filter((s) => s.status === 'Concluída').length;
-                return (
-                  <>
-                    <div className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-2 text-sm">
-                      <h3 className="font-semibold text-[#14181F]">Conferência antes de encerrar</h3>
-                      <div className="flex justify-between">
-                        <span className="text-[#5B6472]">Etapas concluídas</span>
-                        <strong>
-                          {doneStages} de {projectStages.length}
-                        </strong>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-[#5B6472]">Status atual</span>
-                        <StatusBadge label={activeProject.status} />
-                      </div>
-                    </div>
-                    <div className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-2 text-sm">
-                      <h3 className="font-semibold text-[#14181F]">Resultado consolidado</h3>
-                      <div className="flex justify-between">
-                        <span className="text-[#5B6472]">Receita</span>
-                        <strong className="tabular-nums">{formatBRL(projectDre.receita.orcado)}</strong>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-[#5B6472]">Custo real lançado</span>
-                        <strong className="tabular-nums">{formatBRL(projectDre.custosTotais.realizado)}</strong>
-                      </div>
-                      <div className="flex justify-between font-bold">
-                        <span>Margem real</span>
-                        <span className="tabular-nums">{formatPercentBR(projectDre.margemRealizadaPct)}</span>
-                      </div>
-                    </div>
-                    <div className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-3 text-sm">
-                      <h3 className="font-semibold text-[#14181F]">Ao encerrar, o sistema…</h3>
-                      <ul className="text-xs text-[#5B6472] flex flex-col gap-1.5">
-                        <li>✓ Inicia a garantia contratual de 1 ano</li>
-                        <li>✓ Atualiza o cliente para “Em garantia”</li>
-                        <li>✓ Consolida o DRE definitivo da obra</li>
-                      </ul>
-                      <button
-                        type="button"
-                        disabled={activeProject.status === 'Concluída'}
-                        onClick={handleCloseProject}
-                        className="w-full py-2.5 rounded-lg bg-[#1F3A5F] text-white text-sm font-semibold disabled:opacity-45 cursor-pointer"
-                      >
-                        {activeProject.status === 'Concluída' ? 'Obra encerrada' : 'Encerrar obra'}
-                      </button>
-                    </div>
-                  </>
-                );
-              })()}
-            </div>
+            <ProjectClosureView key={activeProject.id} uid={uid} project={activeProject} data={data} onAftercare={() => setTab('Pós-obra')} />
           )}
+          {tab === 'Pós-obra' && <PostConstructionView key={activeProject.id} uid={uid} data={data} projectId={activeProject.id} />}
         </>
       )}
 
@@ -1267,22 +787,29 @@ export function ProjectPlanningView({
             e.preventDefault();
             if (!npName.trim()) return;
             setNpSaving(true);
+            setNpError(null);
             try {
               const id = await createProjectFromTemplate(uid, npActor, {
                 name: npName,
                 clientName: npClientName,
                 type: npType,
                 contractKind: npContractKind,
-                contractValue: Number(npValue) || 0,
+                contractValue: Number(npValue),
+                costBudget: Number(npBudget),
                 startDate: npStart,
-                estimatedMonths: Number(npMonths) || 12,
+                estimatedMonths: npMonths ? Number(npMonths) : undefined,
                 pops: data.pops,
               });
               onSelectProject(id);
+              setTab('Visão geral');
               setNpName('');
               setNpClientName('');
               setNpValue('');
+              setNpBudget('');
+              setNpMonths('');
               setNewProjModal(false);
+            } catch (err) {
+              setNpError(err instanceof Error ? err.message : 'Erro ao criar a obra.');
             } finally {
               setNpSaving(false);
             }
@@ -1291,27 +818,30 @@ export function ProjectPlanningView({
         >
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
             <div className="flex flex-col gap-1.5">
-              <label className="text-[13px] font-semibold">Nome da obra</label>
+              <label htmlFor="np-name" className="text-[13px] font-semibold">Nome da obra</label>
               <input
                 type="text"
                 required
+                id="np-name"
                 value={npName}
                 onChange={(e) => setNpName(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <label className="text-[13px] font-semibold">Cliente</label>
+              <label htmlFor="np-client" className="text-[13px] font-semibold">Cliente</label>
               <input
                 type="text"
+                id="np-client"
                 value={npClientName}
                 onChange={(e) => setNpClientName(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <label className="text-[13px] font-semibold">Tipo de contrato</label>
+              <label htmlFor="np-kind" className="text-[13px] font-semibold">Tipo de contrato</label>
               <select
+                id="np-kind"
                 value={npContractKind}
                 onChange={(e) => setNpContractKind(e.target.value as ProjectContractKind)}
                 className="rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm bg-white"
@@ -1321,58 +851,48 @@ export function ProjectPlanningView({
               </select>
             </div>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {(['Casa residencial', 'Reforma', 'Obra satélite'] as ProjectType[]).map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => {
-                  setNpType(t);
-                  if (t === 'Obra satélite') setNpContractKind('Satélite');
-                }}
-                className={`text-left rounded-xl p-3.5 border cursor-pointer ${
-                  npType === t
-                    ? 'border-2 border-[#1F3A5F] bg-[#E6EEFB]'
-                    : 'border-[#E4E1DA] bg-white'
-                }`}
-              >
-                <strong className="block text-sm text-[#14181F]">{t}</strong>
-                <span className="text-xs text-[#5B6472]">
-                  {t === 'Casa residencial'
-                    ? '10 etapas macro · 12 a 24 meses'
-                    : t === 'Reforma'
-                    ? '5 etapas · 2 a 6 meses'
-                    : '3 etapas · semanas'}
-                </span>
-              </button>
-            ))}
-          </div>
+          <ScheduleTemplateOptions value={npType} onChange={(type) => {
+            setNpType(type);
+            setNpContractKind(type === 'Obra satélite' ? 'Satélite' : 'Principal');
+          }} />
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="flex flex-col gap-1.5">
-              <label className="text-[13px] font-semibold">Valor do contrato (R$)</label>
+              <label htmlFor="np-value" className="text-[13px] font-semibold">Valor do contrato (R$)</label>
               <input
                 type="number"
                 required
                 min={0}
+                step="0.01"
+                id="np-value"
                 value={npValue}
                 onChange={(e) => setNpValue(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm tabular-nums"
               />
             </div>
+            <label className="flex flex-col gap-1.5 text-[13px] font-semibold">
+              Custo orçado da obra (R$)
+              <input type="number" required min={0} step="0.01" value={npBudget} onChange={(e) => setNpBudget(e.target.value)}
+                className="rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm tabular-nums" />
+            </label>
             <div className="flex flex-col gap-1.5">
-              <label className="text-[13px] font-semibold">Início</label>
+              <label htmlFor="np-start" className="text-[13px] font-semibold">Início</label>
               <input
                 type="date"
+                id="np-start"
+                required
                 value={npStart}
                 onChange={(e) => setNpStart(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <label className="text-[13px] font-semibold">Prazo (meses)</label>
+              <label htmlFor="np-months" className="text-[13px] font-semibold">Prazo (meses)</label>
               <input
                 type="number"
                 min={1}
+                max={120}
+                placeholder="Duração do modelo"
+                id="np-months"
                 value={npMonths}
                 onChange={(e) => setNpMonths(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm tabular-nums"
@@ -1380,6 +900,7 @@ export function ProjectPlanningView({
             </div>
           </div>
           <RegisteredBySelect value={npActor} onChange={setNpActor} id="np-actor" />
+          {npError && <p role="alert" className="text-sm text-[#B42318]">{npError}</p>}
           <div className="flex justify-end gap-2.5">
             <button
               type="button"
@@ -1409,20 +930,22 @@ export function ProjectPlanningView({
         <form onSubmit={handleSaveStage} className="flex flex-col gap-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold">Código EAP</label>
+              <label htmlFor="stage-code" className="text-xs font-semibold">Código EAP</label>
               <input
                 type="text"
                 required
+                id="stage-code"
                 value={stWbs}
                 onChange={(e) => setStWbs(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm"
               />
             </div>
             <div className="sm:col-span-2 flex flex-col gap-1">
-              <label className="text-xs font-semibold">Fase da EAP</label>
+              <label htmlFor="stage-phase" className="text-xs font-semibold">Fase da EAP</label>
               <input
                 type="text"
                 required
+                id="stage-phase"
                 value={stPhase}
                 onChange={(e) => setStPhase(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm"
@@ -1430,21 +953,28 @@ export function ProjectPlanningView({
             </div>
           </div>
 
+          <label className="flex flex-col gap-1 text-xs font-semibold">
+            Entrega da EAP
+            <input type="text" required={!editingStage} maxLength={120} value={stDeliverable} onChange={(e) => setStDeliverable(e.target.value)}
+              className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm font-normal" />
+          </label>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold">Nome da etapa</label>
+              <label htmlFor="stage-name" className="text-xs font-semibold">Pacote de trabalho</label>
               <input
                 type="text"
                 required
+                id="stage-name"
                 value={stName}
                 onChange={(e) => setStName(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm"
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold">Responsável</label>
+              <label htmlFor="stage-owner" className="text-xs font-semibold">Responsável</label>
               <input
                 type="text"
+                id="stage-owner"
                 value={stResp}
                 onChange={(e) => setStResp(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm"
@@ -1454,41 +984,46 @@ export function ProjectPlanningView({
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold">Início (semana)</label>
+              <label htmlFor="stage-start" className="text-xs font-semibold">Início mais cedo (semana)</label>
               <input
                 type="number"
                 min={0}
+                id="stage-start"
                 value={stStartWeek}
                 onChange={(e) => setStStartWeek(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm tabular-nums"
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold">Duração (semanas)</label>
+              <label htmlFor="stage-duration" className="text-xs font-semibold">Duração (semanas)</label>
               <input
                 type="number"
                 min={0}
+                id="stage-duration"
                 value={stDurWeeks}
                 onChange={(e) => setStDurWeeks(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm tabular-nums"
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold">Progresso (%)</label>
+              <label htmlFor="stage-progress" className="text-xs font-semibold">Progresso (%)</label>
               <input
                 type="number"
                 min={0}
                 max={100}
+                id="stage-progress"
                 value={stProgress}
                 onChange={(e) => setStProgress(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm tabular-nums"
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold">Custo orçado (R$)</label>
+              <label htmlFor="stage-budget" className="text-xs font-semibold">Custo orçado (R$)</label>
               <input
                 type="number"
                 min={0}
+                step="0.01"
+                id="stage-budget"
                 value={stBudget}
                 onChange={(e) => setStBudget(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm tabular-nums"
@@ -1498,28 +1033,30 @@ export function ProjectPlanningView({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold">Situação</label>
+              <label htmlFor="stage-status" className="text-xs font-semibold">Situação</label>
               <select
+                id="stage-status"
                 value={stStatus}
                 onChange={(e) => setStStatus(e.target.value as StageStatus)}
                 className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm bg-white"
               >
                 <option value="A fazer">A fazer</option>
                 <option value="Em andamento">Em andamento</option>
-                <option value="Aguardando material">Aguardando material</option>
+                <option value="Aguardando material">Aguardando</option>
                 <option value="Em conferência">Em conferência</option>
                 <option value="Concluída">Concluída</option>
               </select>
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold">POP vinculado</label>
+              <label htmlFor="stage-pop" className="text-xs font-semibold">POP vinculado</label>
               <select
+                id="stage-pop"
                 value={stPopId}
-                onChange={(e) => setStPopId(e.target.value)}
+                onChange={(e) => { setStPopId(e.target.value); setStChecklistDone([]); }}
                 className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm bg-white"
               >
                 <option value="">Sem POP vinculado</option>
-                {data.pops.map((p) => (
+                {data.pops.filter((p) => isPublishedPop(p) || p.id === stPopId).map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.title} ({p.version})
                   </option>
@@ -1561,20 +1098,21 @@ export function ProjectPlanningView({
                     );
                   })}
               </div>
-              {cycleError && <span className="text-xs font-medium text-[#B42318]">{cycleError}</span>}
+              {cycleError && <span role="alert" className="text-xs font-medium text-[#B42318]">{cycleError}</span>}
             </div>
           )}
 
           {/* POP acceptance checklist */}
           {(() => {
             const pop = data.pops.find((p) => p.id === stPopId);
-            if (!pop || pop.acceptanceCriteria.length === 0) return null;
+            const review = linkedPopChecklist({ popId: stPopId, status: stStatus, popReview: editingStage?.popReview }, pop);
+            if (!review?.acceptanceCriteria.length) return null;
             return (
               <div className="border border-[#E4E1DA] rounded-xl p-3 flex flex-col gap-2">
                 <strong className="text-xs text-[#14181F]">
-                  Checklist de qualidade do POP ({pop.title})
+                  Checklist de qualidade do POP · {pop?.title || 'Procedimento vinculado'} · {review.version}
                 </strong>
-                {pop.acceptanceCriteria.map((crit) => {
+                {review.acceptanceCriteria.map((crit) => {
                   const done = stChecklistDone.includes(crit);
                   return (
                     <label key={crit} className="inline-flex items-center gap-2 text-xs cursor-pointer">
@@ -1597,25 +1135,21 @@ export function ProjectPlanningView({
           {/* Delay justification */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold">Categoria do atraso (se houver)</label>
+              <label htmlFor="stage-delay-category" className="text-xs font-semibold">Categoria do atraso</label>
               <select
-                value={stDelayCat}
+                id="stage-delay-category" value={stDelayCat}
                 onChange={(e) => setStDelayCat(e.target.value)}
                 className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm bg-white"
               >
                 <option value="">Sem atraso</option>
-                <option value="Chuva">Chuva</option>
-                <option value="Material do cliente">Material do cliente</option>
-                <option value="Fornecedor">Fornecedor</option>
-                <option value="Equipe">Equipe</option>
-                <option value="Outro">Outro</option>
+                {DELAY_CATEGORIES.map((category) => <option key={category}>{category}</option>)}
               </select>
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold">Justificativa do atraso</label>
+              <label htmlFor="stage-delay-reason" className="text-xs font-semibold">Justificativa do atraso</label>
               <input
                 type="text"
-                value={stDelayJust}
+                id="stage-delay-reason" maxLength={500} value={stDelayJust}
                 onChange={(e) => setStDelayJust(e.target.value)}
                 placeholder="Descreva o motivo do desvio"
                 className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm"
@@ -1623,6 +1157,22 @@ export function ProjectPlanningView({
             </div>
           </div>
 
+          {(stStatus === 'Aguardando material' || stDelayCat === 'Material do cliente' || stMatDate) && (
+            <label className="grid gap-1 text-xs font-semibold">Chegada prevista do material do cliente
+              <input type="date" value={stMatDate} onChange={(event) => setStMatDate(event.target.value)}
+                className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm font-normal" />
+            </label>
+          )}
+          {editingStage && (() => {
+            const week = plannedWeeks(scheduleDate)[0];
+            const people = data.employees.filter((employee) => {
+              const cell = resolveTeamWeek(employee, week, data);
+              return cell.allocation?.stageId === editingStage.id && !cell.vacation && !cell.conflict && cell.started;
+            });
+            return <p className="text-xs text-[#5B6472]"><strong>Colaboradores na semana · </strong>
+              {people.length ? people.map((employee) => employee.name).join(', ') : 'Sem atribuições'}
+            </p>;
+          })()}
           <RegisteredBySelect value={stActor} onChange={setStActor} id="stage-actor" />
           {stError && (
             <AlertNote tone="bad" title="Atenção">

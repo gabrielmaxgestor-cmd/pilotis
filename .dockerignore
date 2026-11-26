@@ -1,0 +1,14 @@
+.git
+.github
+.env*
+*.pem
+*.key
+*service-account*.json
+*credentials*.json
+node_modules
+dist
+coverage
+docs
+tests
+*.log
+pilotis-dashboard-*.mjs

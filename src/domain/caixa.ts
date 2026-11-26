@@ -25,6 +25,7 @@ export interface PrevisaoCaixaInput {
   contasPagar?: ContaPagarRecord[];
   colaboradores?: ColaboradorRecord[];
   parametrosEncargos?: TaxChargeParameters | null;
+  payrollByMonth?: ReadonlyMap<string, { amount: number; provisions: number }>;
 }
 
 export interface MesPrevisaoCaixa {
@@ -175,15 +176,19 @@ export function previsaoCaixa(
       .filter((cp) => cp.status !== 'Paga' && pendingMonth(cp.vencimento) === mk)
       .reduce((s, cp) => s + cp.valor, 0);
 
-    const hasExplicitFolha = txsInMonth.some(
-      (l) =>
-        l.tipo === 'despesa' &&
-        (l.categoria.toLowerCase() === 'folha' || l.origem === 'folha'),
+    const hasExplicitFolha = lancamentosUnicos.some(
+      (l) => l.tipo === 'despesa' &&
+        (l.categoria.toLowerCase() === 'folha' || l.origem === 'folha') &&
+        (l.payrollPeriod || monthKey(l.vencimento || l.data)) === mk,
     );
 
     let payrollProjectedOutflow = 0;
-    let provisoesFolhaIncluidas = 0;
-    if (!hasExplicitFolha && colaboradores.length > 0) {
+    let provisoesFolhaIncluidas = txsInMonth.reduce((sum, item) => sum + (item.payrollProvisions ?? 0), 0);
+    const plannedPayroll = input.payrollByMonth?.get(mk);
+    if (!hasExplicitFolha && plannedPayroll) {
+      payrollProjectedOutflow = plannedPayroll.amount;
+      provisoesFolhaIncluidas += plannedPayroll.provisions;
+    } else if (!hasExplicitFolha && colaboradores.length > 0) {
       if (payroll.configurado && payroll.custoTotalMensal !== null) {
         payrollProjectedOutflow = payroll.custoTotalMensal;
         provisoesFolhaIncluidas = payroll.provisoesMensais ?? 0;

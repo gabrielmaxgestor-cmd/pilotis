@@ -1,4 +1,4 @@
-import { diffDaysISO, roundCents } from './formatters';
+import { diffDaysISO, roundCents, todayISO } from './formatters';
 import type { LancamentoRecord, ParcelaRecord } from './types';
 
 export interface ItemConformidadeEntrada {
@@ -16,33 +16,40 @@ export interface ItemConformidadeEntrada {
   vencimento?: string;
 }
 
+export const OBLIGATION_WARNING_DAYS = 7;
+export const CERTIFICATE_WARNING_DAYS = 30;
+
 export function resolverStatusConformidade(
-  item: Pick<ItemConformidadeEntrada, 'status' | 'vencimento'>,
+  item: Pick<ItemConformidadeEntrada, 'status' | 'vencimento'> & Partial<Pick<ItemConformidadeEntrada, 'tipo'>>,
   dataReferencia: string,
 ): ItemConformidadeEntrada['status'] {
-  if (
-    item.status === 'Em dia' ||
-    item.status === 'Válida' ||
-    item.status === 'Anexado'
-  ) {
-    return item.status;
+  const ready = item.status === 'Em dia' || item.status === 'Válida' || item.status === 'Anexado';
+  if (!item.tipo && ready) return item.status;
+  if (item.tipo === 'Obrigação' && ready) return 'Em dia';
+
+  const days = diffDaysISO(item.vencimento ?? '', dataReferencia);
+  if (days !== null && days < 0) return 'Em atraso';
+  if (item.tipo === 'Obrigação' && days !== null && days <= OBLIGATION_WARNING_DAYS) return 'Vence em breve';
+  if (item.tipo === 'Certidão') {
+    if (days === null || !ready && item.status !== 'Vence em breve') return item.status === 'Parcial' ? 'Parcial' : 'Pendente';
+    return days <= CERTIFICATE_WARNING_DAYS ? 'Vence em breve' : 'Válida';
   }
-  const due = (item.vencimento || '').trim().slice(0, 10);
-  const ref = (dataReferencia || '').trim().slice(0, 10);
-  if (due && ref && due < ref) {
-    return 'Em atraso';
-  }
-  return item.status === 'Em atraso' ? 'Pendente' : item.status;
+  if (ready) return item.status;
+  return item.status === 'Em atraso' || (item.tipo === 'Obrigação' && item.status === 'Vence em breve') ? 'Pendente' : item.status;
+}
+
+function tenderReady(item: ItemConformidadeEntrada, referenceDate: string) {
+  const resolved = resolverStatusConformidade(item, referenceDate);
+  return resolved === 'Em dia' || resolved === 'Válida' || resolved === 'Anexado';
 }
 
 export function prontidaoLicitacao(
   itens: ItemConformidadeEntrada[],
+  referenceDate = todayISO(),
 ): number | null {
   const tenderItems = itens.filter((i) => i.tipo === 'Licitação');
   if (tenderItems.length === 0) return null;
-  const ready = tenderItems.filter(
-    (i) => i.status === 'Em dia' || i.status === 'Válida' || i.status === 'Anexado',
-  ).length;
+  const ready = tenderItems.filter((item) => tenderReady(item, referenceDate)).length;
   return Math.round((ready / tenderItems.length) * 100);
 }
 
@@ -56,6 +63,7 @@ export interface ProntidaoLicitacaoCategoria {
 
 export function prontidaoLicitacaoPorCategoria(
   itens: ItemConformidadeEntrada[],
+  referenceDate = todayISO(),
 ): ProntidaoLicitacaoCategoria[] {
   const tenderItems = itens.filter((i) => i.tipo === 'Licitação');
   if (tenderItems.length === 0) return [];
@@ -64,11 +72,7 @@ export function prontidaoLicitacaoPorCategoria(
     const cat = item.categoria || 'Documentação geral';
     const entry = grouped.get(cat) || { total: 0, ready: 0 };
     entry.total += 1;
-    if (
-      item.status === 'Em dia' ||
-      item.status === 'Válida' ||
-      item.status === 'Anexado'
-    ) {
+    if (tenderReady(item, referenceDate)) {
       entry.ready += 1;
     }
     grouped.set(cat, entry);
@@ -106,74 +110,40 @@ export function resumoConformidade(
   const certidoes = itens.filter((i) => i.tipo === 'Certidão');
   const docsObra = itens.filter((i) => i.tipo === 'Documento de obra');
 
-  const obrigacoesAVencerOuAtrasadas =
-    obrigacoes.length === 0
-      ? null
-      : obrigacoes.filter((o) => {
-          const resolvedStatus = resolverStatusConformidade(o, dataReferencia);
-          if (
-            resolvedStatus === 'Em atraso' ||
-            resolvedStatus === 'Pendente' ||
-            resolvedStatus === 'Vence em breve'
-          ) {
-            return true;
-          }
-          if (!o.vencimento) return false;
-          const days = diffDaysISO(o.vencimento.slice(0, 10), dataReferencia);
-          return days !== null && days <= 30 && resolvedStatus !== 'Em dia';
-        }).length;
+  const obrigacoesAVencerOuAtrasadas = obrigacoes.length === 0 ? null : obrigacoes.filter((item) => {
+    const status = resolverStatusConformidade(item, dataReferencia);
+    return status === 'Vence em breve' || status === 'Em atraso';
+  }).length;
+  const certidoesValidas = certidoes.length === 0 ? null : certidoes.filter((item) => {
+    const status = resolverStatusConformidade(item, dataReferencia);
+    return status === 'Válida' || status === 'Vence em breve';
+  }).length;
+  const documentosObraPendentes = docsObra.length === 0 ? null : docsObra.filter((item) => {
+    const status = resolverStatusConformidade(item, dataReferencia);
+    return status === 'Pendente' || status === 'Parcial' || status === 'Em atraso';
+  }).length;
 
-  const certidoesValidas =
-    certidoes.length === 0
-      ? null
-      : certidoes.filter((c) => c.status === 'Válida' || c.status === 'Em dia').length;
-
-  const documentosObraPendentes =
-    docsObra.length === 0
-      ? null
-      : docsObra.filter((d) => d.status === 'Pendente' || d.status === 'Parcial')
-          .length;
-
-  const parcelaIds = new Set(parcelas.map((p) => p.id));
-  const realizedParcelaIds = new Set<string>();
-  const receitasValidas = [];
-  for (const l of lancamentos) {
-    if (l.tipo !== 'receita') continue;
-    const pid = (l.parcelaId || '').trim();
-    const isRealized = !l.previsto && (l.status === undefined || l.status === 'Recebido');
-    if (pid && !isRealized && parcelaIds.has(pid)) continue;
-    if (isRealized && pid) {
-      if (realizedParcelaIds.has(pid)) continue;
-      realizedParcelaIds.add(pid);
+  const realized = new Set<string>();
+  const receipts = [];
+  for (const item of lancamentos) {
+    if (item.tipo !== 'receita' || item.previsto || (item.status !== undefined && item.status !== 'Recebido')) continue;
+    if (item.parcelaId) {
+      if (realized.has(item.parcelaId)) continue;
+      realized.add(item.parcelaId);
     }
-    receitasValidas.push(l);
+    receipts.push(item);
   }
-  const parcelasAbertas = parcelas.filter(
-    (p) => p.status !== 'Recebida' && !realizedParcelaIds.has(p.id),
-  );
-
-  const receitaSemNotaPendente =
-    receitasValidas.length === 0 && parcelasAbertas.length === 0
-      ? null
-      : roundCents(
-          receitasValidas
-            .filter(
-              (r) => r.notaFiscal === 'Não emitida' || r.notaFiscal === 'A emitir',
-            )
-            .reduce((sum, r) => sum + r.valor, 0) +
-            parcelasAbertas
-              .filter(
-                (p) =>
-                  p.notaFiscal === 'Não emitida' || p.notaFiscal === 'A emitir',
-              )
-              .reduce((sum, p) => sum + p.valor, 0),
-        );
+  for (const item of parcelas) {
+    if (item.status === 'Recebida' && !realized.has(item.id)) receipts.push(item);
+  }
+  const receitaSemNotaPendente = receipts.length ? roundCents(receipts.filter((row) =>
+    !row.notaFiscal || row.notaFiscal === 'Não emitida' || row.notaFiscal === 'A emitir').reduce((sum, row) => sum + row.valor, 0)) : null;
 
   return {
     obrigacoesAVencerOuAtrasadas,
     certidoesValidas,
     documentosObraPendentes,
     receitaSemNotaPendente,
-    prontidaoLicitacoesPct: prontidaoLicitacao(itens),
+    prontidaoLicitacoesPct: prontidaoLicitacao(itens, dataReferencia),
   };
 }

@@ -39,6 +39,7 @@ import {
   resolverStatusParcela,
   simulateCommercialCash,
   todayISO,
+  planningTodayISO,
   validarLancamentoFinanceiro,
   type ExtratoLinhaConciliada,
   type StatusConciliacaoExtrato,
@@ -127,7 +128,7 @@ export function FinancialView({
   externalNewTxOpen?: boolean;
   onCloseExternalNewTx?: () => void;
 }) {
-  const [tab, setTab] = useState(initialTab || 'Visão geral');
+  const [tab, setTab] = useState(initialTab && FIN_TABS.includes(initialTab) ? initialTab : 'Visão geral');
 
   useEffect(() => {
     if (initialTab && FIN_TABS.includes(initialTab)) {
@@ -135,12 +136,19 @@ export function FinancialView({
     }
   }, [initialTab]);
 
+  useEffect(() => {
+    if (initialTab !== 'Simulador' || tab !== 'Visão geral') return;
+    const simulator = document.getElementById('financial-commercial-simulator');
+    simulator?.scrollIntoView({ block: 'start' });
+    simulator?.focus({ preventScroll: true });
+  }, [initialTab, tab]);
+
   const [receivableFilter, setReceivableFilter] = useState('A vencer');
   const [payableFilter, setPayableFilter] = useState('A vencer');
   const [selectedDreProjectId, setSelectedDreProjectId] = useState<string>('');
 
   // DRE da empresa (período)
-  const todayStr = todayISO();
+  const todayStr = planningTodayISO();
   const [drePeriodStart, setDrePeriodStart] = useState(`${monthKey(todayStr)}-01`);
   const [drePeriodEnd, setDrePeriodEnd] = useState(addDaysISO(addMonthsISO(`${monthKey(todayStr)}-01`, 1), -1));
 
@@ -615,9 +623,10 @@ export function FinancialView({
   // DRE por obra & DRE da empresa via src/domain/dre.ts
   const activeDreProject =
     data.projects.find((p) => p.id === selectedDreProjectId) || data.projects[0] || null;
+  const consolidatedDre = data.projectClosures?.find((row) => row.projectId === activeDreProject?.id);
   const activeDre = useMemo(
-    () => (activeDreProject ? calcularDreObra(activeDreProject, data.transactions) : null),
-    [activeDreProject, data.transactions],
+    () => consolidatedDre?.dre ?? (activeDreProject ? calcularDreObra(activeDreProject, data.transactions, data.stages) : null),
+    [consolidatedDre, activeDreProject, data.transactions, data.stages],
   );
 
   const companyDre = useMemo(
@@ -730,7 +739,7 @@ export function FinancialView({
               )}
             </section>
 
-            <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-3">
+            <section id="financial-commercial-simulator" tabIndex={-1} aria-label="Simulador de condições comerciais" className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-3">
               <h2 className="text-base font-semibold text-[#14181F]">
                 Simulador de condições comerciais
               </h2>
@@ -917,6 +926,11 @@ export function FinancialView({
                           {formatBRL(tx.amount)}
                         </strong>
                       </div>
+                      {tx.invoiceStatus && tx.invoiceStatus !== 'Não se aplica' && (
+                        <div className="flex items-center gap-2 text-xs text-[#5B6472]">
+                          Nota fiscal <StatusBadge label={tx.invoiceStatus} />
+                        </div>
+                      )}
                       {tx.receiptFile ? (
                         <button type="button" onClick={() => tx.receiptFile && downloadReceipt(tx.receiptFile)}
                           className="self-start text-sm text-[#1F3A5F] underline">Baixar {tx.receiptFile.name}</button>
@@ -1026,64 +1040,23 @@ export function FinancialView({
                   <h3 className="text-sm font-semibold text-[#14181F]">
                     Outros recebimentos avulsos
                   </h3>
-                  <div className="overflow-x-auto">
-                    <table className="w-full border-collapse">
-                      <thead>
-                        <tr className="bg-[#F0EEE9] text-left text-xs font-semibold text-[#5B6472]">
-                          <th className="py-2 px-3 rounded-l-lg">Descrição</th>
-                          <th className="py-2 px-3">Vencimento</th>
-                          <th className="py-2 px-3 text-right">Valor</th>
-                          <th className="py-2 px-3">Status</th>
-                          <th className="py-2 px-3 rounded-r-lg text-right">Ação</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {manualReceivablesFiltered.map((tx) => (
-                          <tr key={tx.id} className="border-b border-[#E4E1DA] text-[13px]">
-                            <td className="py-2.5 px-3 font-medium text-[#14181F]">
-                              {tx.description}
-                            </td>
-                            <td className="py-2.5 px-3 text-[#5B6472] tabular-nums">
-                              {formatDateBR(tx.dueDate || tx.date)}
-                            </td>
-                            <td className="py-2.5 px-3 text-right font-semibold text-[#14181F] tabular-nums">
-                              {formatBRL(tx.amount)}
-                            </td>
-                            <td className="py-2.5 px-3">
-                              <StatusBadge
-                                label={resolverStatusLancamento(
-                                  {
-                                    tipo: 'receita',
-                                    status: tx.status,
-                                    previsto: tx.isForecast,
-                                    vencimento: tx.dueDate || tx.date,
-                                    data: tx.date,
-                                  },
-                                  todayStr,
-                                )}
-                              />
-                            </td>
-                            <td className="py-2.5 px-3 text-right">
-                              {tx.status !== 'Recebido' && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setSettlingTx(tx);
-                                  setSettlingDate(todayStr);
-                                    setSettlingActor('Sócio');
-                                    setSettlingError(null);
-                                  }}
-                                  className="px-2.5 py-1 rounded-md border border-[#E4E1DA] text-xs font-semibold text-[#1F3A5F] hover:bg-[#F0EEE9] cursor-pointer whitespace-nowrap"
-                                >
-                                  Receber
-                                </button>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  <DataList caption="Outros recebimentos avulsos" rows={manualReceivablesFiltered} keyExtractor={(tx) => tx.id}
+                    columns={[
+                      { key: 'description', header: 'Descrição', render: (tx) => tx.description },
+                      { key: 'date', header: 'Vencimento', render: (tx) => formatDateBR(tx.dueDate || tx.date) },
+                      { key: 'amount', header: 'Valor', align: 'right', numeric: true, render: (tx) => formatBRL(tx.amount) },
+                      { key: 'status', header: 'Situação', render: (tx) => <StatusBadge label={resolverStatusLancamento({
+                        tipo: 'receita', status: tx.status, previsto: tx.isForecast, vencimento: tx.dueDate || tx.date, data: tx.date,
+                      }, todayStr)} /> },
+                      { key: 'action', header: 'Ação', render: (tx) => tx.status !== 'Recebido' && <button type="button"
+                          className="rounded-md border border-[#E4E1DA] px-2.5 py-1 text-xs font-semibold text-[#1F3A5F] hover:bg-[#F0EEE9]"
+                          onClick={() => {
+                            setSettlingTx(tx);
+                            setSettlingDate(todayStr);
+                            setSettlingActor('Sócio');
+                            setSettlingError(null);
+                          }}>Receber</button> },
+                    ]} />
                 </div>
               )}
             </section>
@@ -1355,6 +1328,8 @@ export function FinancialView({
                 </button>
               </div>
 
+              {consolidatedDre && <p className="text-sm font-semibold text-[#1F3A5F]">DRE consolidado no encerramento em {formatDateBR(consolidatedDre.date)}</p>}
+
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <KpiCard
                   label="Receita realizada"
@@ -1400,73 +1375,30 @@ export function FinancialView({
                   />
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse">
-                    <thead>
-                      <tr className="bg-[#F0EEE9] text-left text-xs font-semibold text-[#5B6472]">
-                        <th className="py-2.5 px-3 rounded-l-lg">Linha</th>
-                        <th className="py-2.5 px-3 text-right">Orçado</th>
-                        <th className="py-2.5 px-3 text-right">Realizado</th>
-                        <th className="py-2.5 px-3 rounded-r-lg">Variação</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {([
-                        ['Receita de obra', activeDre.receita],
-                        ['(−) Mão de obra', activeDre.maoDeObra],
-                        ['(−) Subempreitadas', activeDre.empreita],
-                        ['(−) Equipamentos e EPI', activeDre.equipamentos],
-                        ['(−) Tributos', activeDre.impostos],
-                        ['(−) BDI e comissões', activeDre.bdi],
-                      ] as const).map(([label, line]) => {
-                        const diffPct = activeDre.possuiRealizado ? line.variacaoPct : null;
-                        const isCost = String(label).startsWith('(−)');
-                        const tone: BadgeTone =
-                          diffPct == null || diffPct === 0
-                            ? 'neutral'
-                            : isCost
-                            ? diffPct > 0
-                              ? 'bad'
-                              : 'ok'
-                            : diffPct < 0
-                            ? 'bad'
-                            : 'ok';
-                        return (
-                          <tr key={String(label)} className="border-b border-[#E4E1DA] text-[13px]">
-                            <td className="py-3 px-3 font-medium text-[#14181F]">{label}</td>
-                            <td className="py-3 px-3 text-right tabular-nums">{formatBRL(line.orcado)}</td>
-                            <td className="py-3 px-3 text-right tabular-nums">{formatBRL(activeDre.possuiRealizado ? line.realizado : null)}</td>
-                            <td className="py-3 px-3">
-                              <StatusBadge
-                                label={formatPercentBR(diffPct)}
-                                tone={tone}
-                              />
-                            </td>
-                          </tr>
-                        );
-                      })}
-                      <tr className="font-bold text-[#14181F] text-[13px]">
-                        <td className="py-3 px-3">Resultado / margem da obra</td>
-                        <td className="py-3 px-3 text-right tabular-nums">
-                          {formatBRL(activeDre.resultado.orcado)}
-                        </td>
-                        <td className="py-3 px-3 text-right tabular-nums">
-                          {formatBRL(activeDre.resultado.realizado)}
-                        </td>
-                        <td className="py-3 px-3">
-                          <StatusBadge
-                            label={formatPercentBR(activeDre.margemRealizadaPct)}
-                            tone={
-                              activeDre.resultado.realizado >= activeDre.resultado.orcado
-                                ? 'ok'
-                                : 'warn'
-                            }
-                          />
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
+                <DataList caption="DRE por obra" keyExtractor={(row) => row.label}
+                  rows={([
+                    ['Receita de obra', activeDre.receita],
+                    ['(−) Mão de obra', activeDre.maoDeObra],
+                    ['(−) Subempreitadas', activeDre.empreita],
+                    ['(−) Equipamentos e EPI', activeDre.equipamentos],
+                    ['(−) Tributos', activeDre.impostos],
+                    ['(−) BDI e comissões', activeDre.bdi],
+                    ['(−) Ajuste do orçamento pela EAP', activeDre.ajusteEap],
+                    ['Resultado / margem da obra', activeDre.resultado],
+                  ] as const).filter(([, line]) => line !== activeDre.ajusteEap || line.orcado !== 0).map(([label, line]) => ({ label, line }))}
+                  columns={[
+                    { key: 'label', header: 'Linha', render: (row) => row.label },
+                    { key: 'budget', header: 'Orçado', numeric: true, align: 'right', render: ({ line }) => formatBRL(line.orcado) },
+                    { key: 'actual', header: 'Realizado', numeric: true, align: 'right', render: ({ line }) =>
+                      formatBRL(activeDre.possuiRealizado && line !== activeDre.ajusteEap ? line.realizado : null) },
+                    { key: 'variance', header: 'Variação / margem', render: ({ label, line }) => {
+                      if (!activeDre.possuiRealizado || line === activeDre.ajusteEap) return 'Sem dados';
+                      const pct = line === activeDre.resultado ? activeDre.margemRealizadaPct : line.variacaoPct;
+                      const tone: BadgeTone = line === activeDre.resultado ? (line.realizado >= line.orcado ? 'ok' : 'warn')
+                        : !pct ? 'neutral' : (pct > 0) === label.startsWith('(−)') ? 'bad' : 'ok';
+                      return <StatusBadge label={formatPercentBR(pct)} tone={tone} />;
+                    } },
+                  ]} />
               </section>
             </>
           )}
@@ -1524,64 +1456,24 @@ export function FinancialView({
                 Sem dados financeiros no período selecionado.
               </p>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse">
-                  <thead>
-                    <tr className="bg-[#F0EEE9] text-left text-xs font-semibold text-[#5B6472]">
-                      <th className="py-2.5 px-3 rounded-l-lg">Categoria</th>
-                      <th className="py-2.5 px-3 text-right">Previsto / orçado</th>
-                      <th className="py-2.5 px-3 text-right">Realizado</th>
-                      <th className="py-2.5 px-3 rounded-r-lg text-right">Variação</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr className="border-b border-[#E4E1DA] text-[13px] font-semibold">
-                      <td className="py-3 px-3 text-[#14181F]">Receitas operacionais</td>
-                      <td className="py-3 px-3 text-right tabular-nums">
-                        {formatBRL(companyDre.receitas.orcado)}
-                      </td>
-                      <td className="py-3 px-3 text-right tabular-nums">
-                        {formatBRL(companyDre.receitas.realizado)}
-                      </td>
-                      <td className="py-3 px-3 text-right tabular-nums">
-                        {formatBRL(companyDre.receitas.variacao)}
-                      </td>
-                    </tr>
-                    {companyDreCategories.map(([cat, linha]) => (
-                      <tr key={cat} className="border-b border-[#E4E1DA] text-[13px]">
-                        <td className="py-3 px-3 text-[#5B6472]">(−) {cat}</td>
-                        <td className="py-3 px-3 text-right tabular-nums">
-                          {formatBRL(linha.orcado)}
-                        </td>
-                        <td className="py-3 px-3 text-right tabular-nums">
-                          {formatBRL(linha.realizado)}
-                        </td>
-                        <td className="py-3 px-3 text-right tabular-nums">
-                          {formatBRL(linha.variacao)}
-                        </td>
-                      </tr>
-                    ))}
-                    <tr className="font-bold text-[#14181F] text-[13px] bg-[#F6F5F2]">
-                      <td className="py-3 px-3">
-                        Resultado da empresa ({formatPercentBR(companyDre.receitas.realizado > 0 ? companyDre.margemRealizadaPct : null)} margem
-                        real)
-                      </td>
-                      <td className="py-3 px-3 text-right tabular-nums">
-                        {formatBRL(companyDre.resultado.orcado)}
-                      </td>
-                      <td className="py-3 px-3 text-right tabular-nums">
-                        {formatBRL(companyDre.resultado.realizado)}
-                      </td>
-                      <td className="py-3 px-3 text-right tabular-nums">
-                        <StatusBadge
-                          label={formatPercentBR(companyDre.margemRealizadaPct)}
-                          tone={companyDre.resultado.realizado >= 0 ? 'ok' : 'bad'}
-                        />
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
+              <DataList caption="DRE da empresa" keyExtractor={(row) => row.label}
+                rows={[
+                  { label: 'Receitas operacionais', line: companyDre.receitas },
+                  ...companyDreCategories.map(([category, line]) => ({ label: '(−) ' + category, line })),
+                  { label: 'Resultado da empresa', line: companyDre.resultado },
+                ]}
+                columns={[
+                  { key: 'label', header: 'Categoria', render: (row) => row.label },
+                  { key: 'budget', header: 'Previsto / orçado', numeric: true, align: 'right', render: ({ line }) => formatBRL(line.orcado) },
+                  { key: 'actual', header: 'Realizado', numeric: true, align: 'right', render: ({ line }) => formatBRL(companyDre.possuiRealizado ? line.realizado : null) },
+                  { key: 'variance', header: 'Variação / margem', numeric: true, align: 'right', render: ({ line }) => {
+                    if (!companyDre.possuiRealizado) return 'Sem dados';
+                    return line === companyDre.resultado
+                      ? <StatusBadge label={formatPercentBR(companyDre.receitas.realizado > 0 ? companyDre.margemRealizadaPct : null)}
+                          tone={line.realizado >= 0 ? 'ok' : 'bad'} />
+                      : formatBRL(line.variacao);
+                  } },
+                ]} />
             )}
           </section>
         </div>
@@ -1637,7 +1529,7 @@ export function FinancialView({
                 required
                 value={txDesc}
                 onChange={(e) => setTxDesc(e.target.value)}
-                placeholder="Ex.: Parcela 1/18 ou Guia Simples"
+                placeholder="Descrição do lançamento"
                 className="rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
               />
             </div>
@@ -1852,7 +1744,7 @@ export function FinancialView({
                 required
                 value={debtCreditor}
                 onChange={(e) => setDebtCreditor(e.target.value)}
-                placeholder="Ex.: Banco · capital de giro"
+                placeholder="Nome do credor"
                 className="rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
               />
             </div>

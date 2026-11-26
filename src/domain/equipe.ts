@@ -1,4 +1,4 @@
-import { diffDaysISO, formatDateBR, isValidISODate, roundCents } from './formatters';
+import { addDaysISO, diffDaysISO, formatDateBR, isValidISODate, roundCents } from './formatters';
 import type { ColaboradorRecord, TaxChargeParameters } from './types';
 
 export interface EncargosColaboradorResult {
@@ -137,7 +137,7 @@ export interface ResumoFolhaEquipe {
 }
 
 export function resumoFolhaEquipe(
-  colaboradores: Array<Pick<ColaboradorRecord, 'vinculo' | 'salarioBase'>>,
+  colaboradores: Array<Pick<ColaboradorRecord, 'vinculo' | 'salarioBase' | 'paymentFrequency'>>,
   parametros: TaxChargeParameters | null | undefined,
   dataReferencia?: string,
 ): ResumoFolhaEquipe {
@@ -178,7 +178,7 @@ export function resumoFolhaEquipe(
     } else {
       outrosCount++;
       outrosSalarioBase += res.salarioBase;
-      if (colab.vinculo === 'Autônomo' && res.salarioBase > 0) {
+      if ((colab.vinculo === 'Autônomo' || colab.vinculo === 'PJ') && colab.paymentFrequency !== 'oneOff' && res.salarioBase > 0) {
         recorrentesNaoCltCount++;
       }
     }
@@ -272,4 +272,16 @@ export function contarPendenciasSegurancaEquipe(
     if (colab.statusEpi !== 'Em dia') count++;
   }
   return count;
+}
+
+export function onboardingDeadline(start: string | undefined, hireDate: string | undefined): string | null {
+  const date = start || hireDate;
+  return date && isValidISODate(date) ? addDaysISO(date, 7) : null;
+}
+
+export function getOnboardingAlert(start: string | undefined, hireDate: string | undefined, status: string, today: string) {
+  if (status === 'Concluída') return null;
+  const deadline = onboardingDeadline(start, hireDate);
+  if (!deadline) return null;
+  return deadline < today ? 'Integração em atraso' : 'Integração até ' + formatDateBR(deadline);
 }

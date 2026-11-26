@@ -1,982 +1,419 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { DataList, type DataListColumn } from '../components/ui/DataList';
+import { AlertNote, KpiCard, Modal, PageHeader, ProgressBar, RegisteredBySelect, StatusBadge, Tabs } from '../components/ui/PilotisUI';
 import {
-  AlertNote,
-  EmptySection,
-  KpiCard,
-  Modal,
-  PageHeader,
-  ProgressBar,
-  RegisteredBySelect,
-  StatusBadge,
-  Tabs,
-} from '../components/ui/PilotisUI';
-import {
-  createRecord,
-  markInstallmentInvoiceIssued,
-  updateRecord,
-} from '../services/pilotisService';
-import type {
-  ActorRole,
-  ComplianceItem,
-  ComplianceKind,
-  ComplianceStatus,
-  Installment,
-  PilotisDataState,
-} from '../types/pilotis';
-import {
-  calcularResumoConformidade,
-  clampStr,
-  diffDaysFromToday,
-  formatBRL,
-  formatDateBR as domainFormatDateBR,
-  resolverStatusConformidade,
-  todayISO,
+  addDaysISO, addMonthsISO, calcularResumoConformidade, CERTIFICATE_TYPES, formatBRL, formatDateBR,
+  formatMonthLabelBR, getInvoiceReceipts, normalizeCompetence, normalizeTenderCategory, OBLIGATION_TYPES,
+  pendingInvoiceReceipts, planningTodayISO, prontidaoLicitacaoPorCategoria, resolveCertificateCategory,
+  resolverStatusConformidade, resolveWorkDocumentCategory, sumPendingInvoices, TENDER_CATEGORIES,
+  toDomainComplianceItems, WORK_DOCUMENT_TYPES, type InvoiceReceipt,
 } from '../domain';
+import { markReceiptInvoiceIssued, readComplianceFile, saveComplianceItem } from '../services/pilotisService';
+import type { ActorRole, ComplianceItem, ComplianceKind, ComplianceStatus, PilotisDataState } from '../types/pilotis';
 
-const formatDateBR = (val: string | null | undefined) => domainFormatDateBR(val, '—');
+const tabs = ['Obrigações', 'Certidões', 'Documentos por obra', 'Notas fiscais', 'Licitações'];
+const panel = 'grid min-w-0 gap-3 rounded-xl border border-[#E4E1DA] bg-white p-4 sm:p-5';
+const primary = 'rounded-lg bg-[#1F3A5F] px-3 py-2 text-sm font-semibold text-white focus-visible:ring-2 focus-visible:ring-[#1F3A5F] disabled:opacity-50';
+const button = 'rounded-lg border border-[#E4E1DA] bg-white px-3 py-2 text-sm font-semibold text-[#1F3A5F] focus-visible:ring-2 focus-visible:ring-[#1F3A5F] disabled:opacity-50';
+const field = 'w-full rounded-lg border border-[#E4E1DA] bg-white px-3 py-2 text-sm font-normal focus-visible:ring-2 focus-visible:ring-[#1F3A5F]';
+const label = 'grid gap-1 text-sm font-semibold';
+const note = 'text-sm text-[#5B6472]';
 
-const COMP_TABS = [
-  'Obrigações',
-  'Certidões',
-  'Documentos por obra',
-  'Notas fiscais',
-  'Licitações',
-];
+const kindByTab: Record<string, ComplianceKind> = {
+  Obrigações: 'Obrigação', Certidões: 'Certidão', 'Documentos por obra': 'Documento de obra', Licitações: 'Licitação',
+};
+const actionByKind: Record<ComplianceKind, string> = {
+  Obrigação: 'Nova obrigação', Certidão: 'Registrar certidão', 'Documento de obra': 'Registrar documento', Licitação: 'Novo item de habilitação',
+};
+const fieldsByKind: Record<ComplianceKind, readonly string[]> = {
+  Obrigação: OBLIGATION_TYPES, Certidão: CERTIFICATE_TYPES, 'Documento de obra': WORK_DOCUMENT_TYPES, Licitação: TENDER_CATEGORIES,
+};
+const statusesByKind: Record<ComplianceKind, ComplianceStatus[]> = {
+  Obrigação: ['Pendente', 'Parcial', 'Em dia'], Certidão: ['Pendente', 'Parcial', 'Válida'],
+  'Documento de obra': ['Pendente', 'Parcial', 'Anexado', 'Em dia'], Licitação: ['Pendente', 'Parcial', 'Anexado', 'Válida', 'Em dia'],
+};
+type Draft = Pick<ComplianceItem, 'kind' | 'title' | 'category' | 'projectId' | 'competence' | 'dueDate' | 'issuedDate' | 'fileName' | 'mandatory' | 'status' | 'notes'>;
+type OptionActions = { onEdit: (item: ComplianceItem) => void; onFile: (item: ComplianceItem) => void };
 
-export function ComplianceView({
-  uid,
-  data,
-  companyEmail,
-}: {
-  uid: string;
-  data: PilotisDataState;
-  companyEmail?: string | null;
+const statusOf = (row: ComplianceItem, today: string) =>
+  resolverStatusConformidade({ tipo: row.kind, status: row.status, vencimento: row.dueDate }, today);
+const isReady = (status: ComplianceStatus) => status === 'Anexado' || status === 'Em dia' || status === 'Válida';
+const categoryOf = (item: ComplianceItem) => item.kind === 'Certidão' ? resolveCertificateCategory(item)
+  : item.kind === 'Documento de obra' ? resolveWorkDocumentCategory(item)
+  : item.kind === 'Licitação' ? normalizeTenderCategory(item.category)
+  : item.category || 'Outra obrigação';
+
+function ComplianceStatusBadge({ status, kind }: { status: ComplianceStatus; kind: ComplianceKind }) {
+  return <StatusBadge label={kind === 'Certidão' && status === 'Em atraso' ? 'Vencida' : status}
+    tone={status === 'Em atraso' ? 'bad' : status === 'Vence em breve' || status === 'Pendente' || status === 'Parcial' ? 'warn' : 'ok'} />;
+}
+
+function Records({ rows, kind, today, onEdit, onFile }: OptionActions & { rows: ComplianceItem[]; kind: ComplianceKind; today: string }) {
+  const columns: DataListColumn<ComplianceItem>[] = [
+    { key: 'name', header: kind === 'Obrigação' ? 'Guia ou declaração' : 'Registro', render: (row) => <div>
+      <strong className="break-words">{row.title}</strong><p className="text-xs text-[#5B6472]">{categoryOf(row)}</p>
+    </div> },
+    ...(kind === 'Obrigação' ? [{
+      key: 'competence', header: 'Competência',
+      render: (row: ComplianceItem) => normalizeCompetence(row.competence ?? '') ? formatMonthLabelBR(normalizeCompetence(row.competence)) : row.competence || 'Sem dados',
+    }] : kind === 'Certidão' ? [{
+      key: 'issue', header: 'Emissão', render: (row: ComplianceItem) => formatDateBR(row.issuedDate),
+    }] : []),
+    { key: 'date', header: kind === 'Obrigação' ? 'Vencimento' : 'Validade', render: (row) => formatDateBR(row.dueDate) },
+    { key: 'status', header: 'Situação', render: (row) => <ComplianceStatusBadge status={statusOf(row, today)} kind={row.kind} /> },
+    { key: 'file', header: kind === 'Obrigação' ? 'Comprovante' : 'Arquivo', render: (row) => row.attachmentId
+      ? <button type="button" className="text-left font-semibold text-[#1F3A5F] underline focus-visible:ring-2 focus-visible:ring-[#1F3A5F]"
+          onClick={() => onFile(row)}>Baixar {row.fileName || 'arquivo'}</button>
+      : <span className="break-words text-[#5B6472]">{row.fileName ? 'Ref. ' + row.fileName : 'Sem arquivo'}</span> },
+    { key: 'edit', header: 'Ação', render: (row) => <button type="button" className={button} onClick={() => onEdit(row)} aria-label={'Editar ' + row.title}>Editar</button> },
+  ];
+  return <DataList rows={rows} columns={columns} keyExtractor={(row) => row.id}
+    caption={kind} emptyTitle="Sem registros neste recorte" emptyDescription="Os registros cadastrados aparecem aqui."
+    renderMobileCard={(row) => <article className={panel}>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div><strong className="break-words text-sm">{row.title}</strong><p className="text-xs text-[#5B6472]">{categoryOf(row)}</p></div>
+        <ComplianceStatusBadge status={statusOf(row, today)} kind={row.kind} />
+      </div>
+      <dl className="grid gap-2 text-sm">
+        {kind === 'Obrigação' && <div className="flex justify-between gap-2"><dt>Competência</dt><dd>{normalizeCompetence(row.competence ?? '') ? formatMonthLabelBR(normalizeCompetence(row.competence)) : row.competence || 'Sem dados'}</dd></div>}
+        {kind === 'Certidão' && <div className="flex justify-between gap-2"><dt>Emissão</dt><dd>{formatDateBR(row.issuedDate)}</dd></div>}
+        <div className="flex justify-between gap-2"><dt>{kind === 'Obrigação' ? 'Vencimento' : 'Validade'}</dt><dd>{formatDateBR(row.dueDate)}</dd></div>
+      </dl>
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <button type="button" className={button} onClick={() => onEdit(row)} aria-label={'Editar ' + row.title}>Editar</button>
+        {row.attachmentId ? <button type="button" className={button + ' break-all'} onClick={() => onFile(row)}>Baixar {row.fileName || 'arquivo'}</button>
+          : row.fileName && <span className={note}>Ref. {row.fileName}</span>}
+      </div>
+    </article>} />;
+}
+
+function ObligationsCalendar({ month, items, today, onEdit }: { month: string; items: ComplianceItem[]; today: string; onEdit: OptionActions['onEdit'] }) {
+  const first = month + '-01';
+  const next = addMonthsISO(first, 1);
+  const leading = new Date(first + 'T12:00:00Z').getUTCDay();
+  const days = Number(addDaysISO(next, -1).slice(-2));
+  const slots = Array.from({ length: Math.ceil((leading + days) / 7) * 7 }, (_, index) => index - leading + 1);
+  const byDate = new Map<string, ComplianceItem[]>();
+  for (const item of items) {
+    const current = byDate.get(item.dueDate);
+    if (current) current.push(item);
+    else byDate.set(item.dueDate, [item]);
+  }
+  return (
+    <div className="hidden min-w-0 md:block">
+      <div className="grid grid-cols-7 overflow-hidden rounded-lg border border-[#E4E1DA]" aria-label="Calendário de vencimentos">
+        {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map((weekday) => <div key={weekday} className="border-b border-[#E4E1DA] bg-[#F0EEE9] p-2 text-center text-xs font-semibold">{weekday}</div>)}
+        {slots.map((day) => {
+          const date = day > 0 && day <= days ? month + '-' + String(day).padStart(2, '0') : '';
+          return <div key={day} className={'min-w-0 min-h-16 border-b border-r border-[#E4E1DA] p-1.5 ' + (date === today ? 'bg-[#E6EEFB]' : date ? '' : 'bg-[#F6F5F2]')}>
+            {date && <><span className="mb-1 block text-xs font-semibold" aria-current={date === today ? 'date' : undefined}>{day}</span>
+              <div className="grid gap-1">{(byDate.get(date) ?? []).map((item) => {
+                const status = statusOf(item, today);
+                const tone = status === 'Em atraso' ? 'bg-[#FDECEA] text-[#B42318]' : status === 'Em dia' ? 'bg-[#EAF6EF] text-[#1E694C]' : 'bg-[#F0EEE9] text-[#1F3A5F]';
+                return <button key={item.id} type="button" title={item.title + ' · ' + status}
+                  aria-label={item.title + ' · ' + status} onClick={() => onEdit(item)}
+                  className={'min-w-0 rounded border-0 px-1.5 py-1 text-left text-xs font-medium focus-visible:ring-2 focus-visible:ring-[#1F3A5F] ' + tone}>
+                  <span className="block truncate">{item.title}</span><span className="block">{status}</span>
+                </button>;
+              })}</div>
+            </>}
+          </div>;
+        })}
+      </div>
+    </div>
+  );
+}
+
+function defaultDraft(kind: ComplianceKind, projectId = '', category = ''): Draft {
+  return { kind, title: category, category, projectId, competence: '', dueDate: '', issuedDate: '',
+    fileName: '', mandatory: true, status: 'Pendente', notes: '' };
+}
+
+export function ComplianceView({ uid, data, companyEmail, initialTab }: {
+  uid: string; data: PilotisDataState; companyEmail?: string | null; initialTab?: string;
 }) {
-  const [tab, setTab] = useState('Obrigações');
-  const [selectedProjectId, setSelectedProjectId] = useState<string>(data.projects[0]?.id || 'ALL');
-  const [modalOpen, setModalOpen] = useState(false);
-  const [editingItem, setEditingItem] = useState<ComplianceItem | null>(null);
-  const [invoiceConfirmTarget, setInvoiceConfirmTarget] = useState<
-    | { kind: 'transaction'; id: string; description: string }
-    | { kind: 'installment'; installment: Installment }
-    | null
-  >(null);
-  const [invoiceActor, setInvoiceActor] = useState<ActorRole>('Responsável administrativo');
-
-  const [saving, setSaving] = useState(false);
-  const [feedback, setFeedback] = useState<{ tone: 'ok' | 'bad' | 'info'; title: string; text: string } | null>(null);
-
-  // Item form
-  const [kind, setKind] = useState<ComplianceKind>('Obrigação');
-  const [title, setTitle] = useState('');
-  const [category, setCategory] = useState('Fiscal');
-  const [projectId, setProjectId] = useState('');
-  const [competence, setCompetence] = useState('');
-  const [dueDate, setDueDate] = useState(todayISO());
-  const [issuedDate, setIssuedDate] = useState('');
-  const [fileName, setFileName] = useState('');
-  const [mandatory, setMandatory] = useState(true);
-  const [status, setStatus] = useState<ComplianceStatus>('Pendente');
-  const [notes, setNotes] = useState('');
+  const today = planningTodayISO();
+  const [tab, setTab] = useState(initialTab && tabs.includes(initialTab) ? initialTab : 'Obrigações');
+  const [calendarMonth, setCalendarMonth] = useState(today.slice(0, 7));
+  const [onlyLate, setOnlyLate] = useState(false);
+  const [workProject, setWorkProject] = useState('');
+  const [invoiceProject, setInvoiceProject] = useState('');
+  const [invoiceMonth, setInvoiceMonth] = useState('');
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [editing, setEditing] = useState<ComplianceItem | null>(null);
+  const [pickedFile, setPickedFile] = useState<File | undefined>();
+  const [invoice, setInvoice] = useState<InvoiceReceipt | null>(null);
   const [actor, setActor] = useState<ActorRole>('Responsável administrativo');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [feedback, setFeedback] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
 
-  const obligations = data.complianceItems.filter((c) => c.kind === 'Obrigação');
-  const certs = data.complianceItems.filter((c) => c.kind === 'Certidão');
-  const workDocs = data.complianceItems.filter((c) => c.kind === 'Documento de obra');
-  const tenderDocs = data.complianceItems.filter((c) => c.kind === 'Licitação');
+  useEffect(() => { if (initialTab && tabs.includes(initialTab)) setTab(initialTab); }, [initialTab]);
 
-  const filteredWorkDocs = workDocs.filter((d) =>
-    selectedProjectId === 'ALL' || !selectedProjectId ? true : d.projectId === selectedProjectId
-  );
+  const summary = calcularResumoConformidade(data.complianceItems, data.transactions, today, data.installments);
+  const obligations = data.complianceItems.filter((row) => row.kind === 'Obrigação').sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''));
+  const certificates = data.complianceItems.filter((row) => row.kind === 'Certidão').sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''));
+  const currentMonth = obligations.filter((row) => (row.dueDate ?? '').slice(0, 7) === calendarMonth);
+  const late = obligations.filter((row) => statusOf(row, today) === 'Em atraso');
+  const currentProject = data.projects.find((project) => project.id === workProject) ?? data.projects[0];
+  const workDocs = data.complianceItems.filter((row) => row.kind === 'Documento de obra' && row.projectId === currentProject?.id);
+  const tenderDocs = data.complianceItems.filter((row) => row.kind === 'Licitação');
+  const readiness = prontidaoLicitacaoPorCategoria(toDomainComplianceItems(tenderDocs), today);
+  const tenderCategories = [...new Set([...TENDER_CATEGORIES, ...readiness.map((row) => row.categoria)])];
+  const receipts = getInvoiceReceipts(data.transactions, data.installments);
+  const invoiceOptions = [...new Map(receipts.map((row) => [row.projectId, row.projectName || (row.projectId === 'Empresa' ? 'Empresa' : 'Obra vinculada')])).entries()];
+  const pending = pendingInvoiceReceipts(receipts, invoiceProject, invoiceMonth);
+  const receiptsInView = receipts.some((row) => (!invoiceProject || row.projectId === invoiceProject) && (!invoiceMonth || row.date.startsWith(invoiceMonth)));
+  const activeKind = kindByTab[tab];
 
-  const pendingInvoices = useMemo(() => {
-    const realizedParcelaIds = new Set(
-      data.transactions
-        .filter(
-          (t) =>
-            t.entryKind === 'income' &&
-            !t.isForecast &&
-            t.status === 'Recebido' &&
-            t.installmentId
-        )
-        .map((t) => t.installmentId as string)
-    );
-    const parcelaIds = new Set(data.installments.map((inst) => inst.id));
-
-    const fromTransactions = data.transactions
-      .filter(
-        (t) =>
-          t.entryKind === 'income' &&
-          !(t.isForecast && t.installmentId && parcelaIds.has(t.installmentId)) &&
-          (t.invoiceStatus === 'Não emitida' || t.invoiceStatus === 'A emitir')
-      )
-      .map((t) => ({
-        key: `tx_${t.id}`,
-        date: t.dueDate || t.date,
-        projectName: t.projectName,
-        description: t.description,
-        amount: t.amount,
-        invoiceStatus: t.invoiceStatus,
-        target: { kind: 'transaction' as const, id: t.id, description: t.description },
-      }));
-
-    const fromOpenInstallments = data.installments
-      .filter(
-        (inst) =>
-          inst.status !== 'Recebida' &&
-          !realizedParcelaIds.has(inst.id) &&
-          (inst.invoiceStatus === 'Não emitida' || inst.invoiceStatus === 'A emitir')
-      )
-      .map((inst) => ({
-        key: `par_${inst.id}`,
-        date: inst.dueDate,
-        projectName: inst.projectName,
-        description: `${inst.number === 0 ? 'Entrada' : `Parcela ${inst.label}`} · ${inst.clientName || inst.projectName}`,
-        amount: inst.amount,
-        invoiceStatus: inst.invoiceStatus,
-        target: { kind: 'installment' as const, installment: inst },
-      }));
-
-    return [...fromTransactions, ...fromOpenInstallments].sort((a, b) =>
-      a.date.localeCompare(b.date)
-    );
-  }, [data.transactions, data.installments]);
-
-  const todayRef = todayISO();
-
-  const complianceSummary = useMemo(
-    () =>
-      calcularResumoConformidade(
-        data.complianceItems,
-        data.transactions,
-        todayRef,
-        data.installments
-      ),
-    [data.complianceItems, data.transactions, data.installments, todayRef]
-  );
-
-  const unissuedInvoiceAmount = complianceSummary.receitaSemNotaPendente;
-  const obligationsDueCount = complianceSummary.obrigacoesAVencerOuAtrasadas;
-  const validCertsCount = complianceSummary.certidoesValidas;
-  const pendingWorkDocsCount = complianceSummary.documentosObraPendentes;
-  const tenderReadinessPct = complianceSummary.prontidaoLicitacoesPct;
-
-  function openNewModal(defaultKind: ComplianceKind) {
-    setEditingItem(null);
-    setKind(defaultKind);
-    setTitle('');
-    setCategory(defaultKind === 'Licitação' ? 'Regularidade fiscal' : defaultKind === 'Documento de obra' ? 'Obra' : 'Fiscal');
-    setProjectId(defaultKind === 'Documento de obra' ? data.projects[0]?.id || '' : '');
-    setCompetence('');
-    setDueDate(todayISO());
-    setIssuedDate('');
-    setFileName('');
-    setMandatory(true);
-    setStatus(defaultKind === 'Certidão' ? 'Válida' : 'Pendente');
-    setNotes('');
-    setActor('Responsável administrativo');
-    setModalOpen(true);
+  function openNew(kind: ComplianceKind, category = '') {
+    setEditing(null); setPickedFile(undefined); setError('');
+    setDraft(defaultDraft(kind, kind === 'Documento de obra' ? currentProject?.id : '', category));
   }
 
-  function openEditModal(item: ComplianceItem) {
-    setEditingItem(item);
-    setKind(item.kind);
-    setTitle(item.title);
-    setCategory(item.category || '');
-    setProjectId(item.projectId || '');
-    setCompetence(item.competence || '');
-    setDueDate(item.dueDate || '');
-    setIssuedDate(item.issuedDate || '');
-    setFileName(item.fileName || '');
-    setMandatory(Boolean(item.mandatory));
-    setStatus(item.status === 'Em atraso' ? 'Pendente' : item.status);
-    setNotes(item.notes || '');
-    setActor('Responsável administrativo');
-    setModalOpen(true);
+  function openEdit(row: ComplianceItem) {
+    setEditing(row); setPickedFile(undefined); setError('');
+    const known = statusesByKind[row.kind];
+    const status = known.includes(row.status) ? row.status : row.kind === 'Certidão' && row.status === 'Vence em breve' ? 'Válida' : 'Pendente';
+    setDraft({
+      kind: row.kind, title: row.title, category: categoryOf(row), projectId: row.projectId || '',
+      competence: normalizeCompetence(row.competence || ''), dueDate: row.dueDate || '',
+      issuedDate: row.issuedDate || '', fileName: row.fileName || '',
+      mandatory: row.mandatory !== false, status, notes: row.notes || '',
+    });
   }
 
-  async function handleSaveItem(e: React.FormEvent) {
-    e.preventDefault();
-    if (!title.trim()) return;
-    setSaving(true);
+  async function download(row: ComplianceItem) {
     try {
-      const proj = data.projects.find((p) => p.id === projectId);
-      const payload = {
-        kind,
-        title: clampStr(title, 160),
-        category: clampStr(category, 80),
-        projectId: proj?.id || '',
-        projectName: clampStr(proj?.name || '', 160),
-        competence: clampStr(competence, 40),
-        dueDate,
-        issuedDate,
-        fileName: clampStr(fileName, 160),
-        mandatory,
-        status,
-        notes: clampStr(notes, 500),
-      };
-
-      if (editingItem) {
-        await updateRecord(
-          'complianceItems',
-          editingItem.id,
-          uid,
-          actor,
-          payload,
-          `Item de conformidade atualizado: ${payload.title} (${payload.status})`,
-          editingItem.status,
-          payload.status
-        );
-        setFeedback({
-          tone: 'ok',
-          title: 'Registro atualizado',
-          text: `${payload.title} atualizado para "${payload.status}".`,
-        });
-      } else {
-        await createRecord(
-          'complianceItems',
-          uid,
-          actor,
-          payload,
-          `Novo item em Conformidade (${kind}): ${payload.title}`
-        );
-        setFeedback({
-          tone: 'ok',
-          title: 'Item registrado',
-          text: `${payload.title} salvo em ${kind}.`,
-        });
-      }
-      setModalOpen(false);
-    } finally {
-      setSaving(false);
-    }
+      const file = await readComplianceFile(row);
+      const bytes = file.content.toUint8Array().slice().buffer as ArrayBuffer;
+      const url = URL.createObjectURL(new Blob([bytes], { type: file.mimeType }));
+      const link = document.createElement('a');
+      link.href = url; link.download = file.name;
+      document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+    } catch (err) { setFeedback({ tone: 'bad', text: err instanceof Error ? err.message : 'Não foi possível abrir o arquivo.' }); }
   }
 
-  async function handleMarkInvoiceIssued(e: React.FormEvent) {
-    e.preventDefault();
-    if (!invoiceConfirmTarget) return;
-    setSaving(true);
-    try {
-      if (invoiceConfirmTarget.kind === 'transaction') {
-        const tx = data.transactions.find((t) => t.id === invoiceConfirmTarget.id);
-        if (!tx) return;
-        await updateRecord(
-          'transactions',
-          tx.id,
-          uid,
-          invoiceActor,
-          { invoiceStatus: 'Emitida' },
-          `Nota fiscal emitida: ${tx.description}`,
-          tx.invoiceStatus,
-          'Emitida'
-        );
-        setFeedback({
-          tone: 'ok',
-          title: 'Nota fiscal marcada como emitida',
-          text: `${tx.description} atualizado no Financeiro e na Conformidade.`,
-        });
-      } else {
-        const inst = invoiceConfirmTarget.installment;
-        await markInstallmentInvoiceIssued(uid, invoiceActor, inst);
-        setFeedback({
-          tone: 'ok',
-          title: 'Nota fiscal marcada como emitida',
-          text: `${inst.label} (${inst.projectName}) atualizada em /parcelas e na Conformidade.`,
-        });
-      }
-      setInvoiceConfirmTarget(null);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  const defaultKindForTab: ComplianceKind =
-    tab === 'Certidões'
-      ? 'Certidão'
-      : tab === 'Documentos por obra'
-      ? 'Documento de obra'
-      : tab === 'Licitações'
-      ? 'Licitação'
-      : 'Obrigação';
+  const records = (rows: ComplianceItem[], kind: ComplianceKind) =>
+    <Records rows={rows} kind={kind} today={today} onEdit={openEdit} onFile={(row) => void download(row)} />;
+  const invoicePlace = (row: InvoiceReceipt) => row.projectName || invoiceOptions.find(([id]) => id === row.projectId)?.[1] || 'Empresa';
+  const openInvoice = (row: InvoiceReceipt) => { setInvoice(row); setError(''); };
+  const invoiceColumns: DataListColumn<InvoiceReceipt>[] = [
+    { key: 'name', header: 'Recebimento', render: (row) => <strong className="break-words">{row.description}</strong> },
+    { key: 'project', header: 'Obra ou empresa', render: invoicePlace },
+    { key: 'date', header: 'Data do recebimento', render: (row) => formatDateBR(row.date) },
+    { key: 'amount', header: 'Valor recebido', numeric: true, align: 'right', render: (row) => formatBRL(row.amount) },
+    { key: 'status', header: 'Nota fiscal', render: (row) => <StatusBadge label={row.invoiceStatus} tone="warn" /> },
+    { key: 'action', header: 'Ação', render: (row) => <button type="button" className={button} onClick={() => openInvoice(row)}>Marcar como emitida</button> },
+  ];
 
   return (
-    <div className="flex flex-col gap-6">
-      <PageHeader
-        title="Conformidade e Documentos"
-        subtitle="Obrigações, certidões, documentos obrigatórios por obra, notas fiscais e licitações"
-        companyEmail={companyEmail}
-        actions={
-          <button
-            type="button"
-            onClick={() => openNewModal(defaultKindForTab)}
-            className="px-4 py-2.5 rounded-lg bg-[#1F3A5F] text-white text-sm font-semibold hover:bg-[#182E4C] cursor-pointer"
-          >
-            {tab === 'Certidões'
-              ? 'Registrar certidão'
-              : tab === 'Documentos por obra'
-              ? 'Registrar documento'
-              : tab === 'Licitações'
-              ? 'Novo item de habilitação'
-              : 'Nova obrigação'}
-          </button>
-        }
-      />
-
-      {feedback && (
-        <AlertNote tone={feedback.tone} title={feedback.title}>
-          {feedback.text}
-        </AlertNote>
-      )}
-
-      <Tabs items={COMP_TABS} active={tab} onChange={setTab} />
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard
-          label="Obrigações a vencer / atraso"
-          value={obligationsDueCount !== null ? String(obligationsDueCount) : 'Sem dados'}
-          subtext={
-            obligations.length > 0
-              ? `${obligations.length} obrigação(ões) cadastrada(s)`
-              : 'Nenhuma obrigação cadastrada'
-          }
-          isEmpty={obligationsDueCount === null}
-        />
-        <KpiCard
-          label="Certidões válidas"
-          value={validCertsCount !== null ? `${validCertsCount} de ${certs.length}` : 'Sem dados'}
-          subtext={certs.length > 0 ? 'Controle de validade' : 'Nenhuma certidão registrada'}
-          isEmpty={validCertsCount === null}
-        />
-        <KpiCard
-          label="Receita sem nota emitida"
-          value={unissuedInvoiceAmount !== null ? formatBRL(unissuedInvoiceAmount) : 'Sem dados'}
-          subtext={
-            pendingInvoices.length > 0
-              ? `${pendingInvoices.length} lançamento(s) pendente(s)`
-              : 'Sincronizado com o Financeiro'
-          }
-          isEmpty={unissuedInvoiceAmount === null}
-        />
-        <KpiCard
-          label="Documentos de obra pendentes"
-          value={pendingWorkDocsCount !== null ? String(pendingWorkDocsCount) : 'Sem dados'}
-          subtext={
-            workDocs.length > 0
-              ? `${workDocs.length} documento(s) monitorado(s)`
-              : 'Gerado ao confirmar orçamentos'
-          }
-          isEmpty={pendingWorkDocsCount === null}
-        />
+    <div className="grid gap-4">
+      <PageHeader title="Conformidade e Documentos" subtitle="Guias, certidões, documentos de obra, notas fiscais e habilitação"
+        companyEmail={companyEmail} actions={activeKind ? <button type="button" className={primary}
+          disabled={activeKind === 'Documento de obra' && !currentProject} onClick={() => openNew(activeKind)}>{actionByKind[activeKind]}</button> : undefined} />
+      <AlertNote tone="info" title="Registro e acompanhamento">
+        Este módulo registra e alerta. As decisões sobre regularização são tratadas com o contador, o advogado e o CREA.
+      </AlertNote>
+      {feedback && <AlertNote tone={feedback.tone} title={feedback.tone === 'ok' ? 'Conformidade' : 'Atenção'}>{feedback.text}</AlertNote>}
+      <Tabs items={tabs} active={tab} onChange={setTab} />
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        <KpiCard label="Obrigações a vencer ou em atraso" value={summary.obrigacoesAVencerOuAtrasadas?.toString() ?? 'Sem dados'} isEmpty={summary.obrigacoesAVencerOuAtrasadas === null} subtext="Prazo nos próximos 7 dias ou vencido" />
+        <KpiCard label="Certidões válidas" value={summary.certidoesValidas?.toString() ?? 'Sem dados'} isEmpty={summary.certidoesValidas === null} subtext="Considera a data de validade" />
+        <KpiCard label="Recebido sem nota" value={formatBRL(summary.receitaSemNotaPendente)} isEmpty={summary.receitaSemNotaPendente === null} subtext="Saldo de notas a emitir ou não emitidas" />
+        <KpiCard label="Documentos de obra pendentes" value={summary.documentosObraPendentes?.toString() ?? 'Sem dados'} isEmpty={summary.documentosObraPendentes === null} subtext="Itens cadastrados que exigem atenção" />
       </div>
 
-      {tab === 'Obrigações' && (
-        obligations.length === 0 ? (
-          <EmptySection
-            title="Nenhuma obrigação cadastrada"
-            description="Registre guias mensais, obrigações fiscais e trabalhistas (Simples Nacional, ISS, FGTS, eSocial) para monitorar vencimentos."
-            actionLabel="Cadastrar primeira obrigação"
-            onAction={() => openNewModal('Obrigação')}
-          />
-        ) : (
-          <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
-            <h2 className="text-base font-semibold text-[#14181F]">Obrigações cadastradas</h2>
-            <div className="hidden md:block overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="bg-[#F0EEE9] text-left text-xs font-semibold text-[#5B6472]">
-                    <th className="py-2.5 px-3 rounded-l-lg">Obrigação</th>
-                    <th className="py-2.5 px-3">Categoria</th>
-                    <th className="py-2.5 px-3">Competência</th>
-                    <th className="py-2.5 px-3">Vencimento</th>
-                    <th className="py-2.5 px-3">Status</th>
-                    <th className="py-2.5 px-3 text-right rounded-r-lg">Ação</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {obligations.map((o) => (
-                    <tr key={o.id} className="border-b border-[#E4E1DA] text-[13px]">
-                      <td className="py-3 px-3 font-medium text-[#14181F]">{o.title}</td>
-                      <td className="py-3 px-3 text-[#5B6472]">{o.category || '—'}</td>
-                      <td className="py-3 px-3 text-[#5B6472]">{o.competence || '—'}</td>
-                      <td className="py-3 px-3 text-[#14181F] tabular-nums">{formatDateBR(o.dueDate)}</td>
-                      <td className="py-3 px-3">
-                        <StatusBadge
-                          label={resolverStatusConformidade(
-                            { status: o.status, vencimento: o.dueDate },
-                            todayRef
-                          )}
-                        />
-                      </td>
-                      <td className="py-3 px-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => openEditModal(o)}
-                          className="text-xs font-semibold text-[#1F3A5F] hover:underline cursor-pointer"
-                        >
-                          Atualizar
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="md:hidden flex flex-col gap-3">
-              {obligations.map((o) => (
-                <div key={o.id} className="border border-[#E4E1DA] rounded-xl p-4 flex flex-col gap-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <strong className="text-sm text-[#14181F]">{o.title}</strong>
-                    <StatusBadge
-                      label={resolverStatusConformidade(
-                        { status: o.status, vencimento: o.dueDate },
-                        todayRef
-                      )}
-                    />
-                  </div>
-                  <span className="text-xs text-[#5B6472]">
-                    Vencimento: {formatDateBR(o.dueDate)} · {o.category}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => openEditModal(o)}
-                    className="self-start text-xs font-semibold text-[#1F3A5F] cursor-pointer"
-                  >
-                    Atualizar
-                  </button>
-                </div>
-              ))}
-            </div>
-          </section>
-        )
-      )}
-
-      {tab === 'Certidões' && (
-        certs.length === 0 ? (
-          <EmptySection
-            title="Nenhuma certidão registrada"
-            description="Cadastre certidões negativas (RFB/PGFN, Estadual, Municipal, FGTS CRF, CNDT) com data de emissão e validade."
-            actionLabel="Registrar primeira certidão"
-            onAction={() => openNewModal('Certidão')}
-          />
-        ) : (
-          <div className="flex flex-col gap-4">
-            <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
-              <h2 className="text-base font-semibold text-[#14181F]">Certidões</h2>
-              <div className="hidden md:block overflow-x-auto">
-                <table className="w-full border-collapse">
-                  <thead>
-                    <tr className="bg-[#F0EEE9] text-left text-xs font-semibold text-[#5B6472]">
-                      <th className="py-2.5 px-3 rounded-l-lg">Certidão</th>
-                      <th className="py-2.5 px-3">Emitida em</th>
-                      <th className="py-2.5 px-3">Validade</th>
-                      <th className="py-2.5 px-3">Situação</th>
-                      <th className="py-2.5 px-3 text-right rounded-r-lg">Ação</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {certs.map((c) => {
-                      const resolvedStatus = resolverStatusConformidade(
-                        { status: c.status, vencimento: c.dueDate },
-                        todayRef
-                      );
-                      const days = diffDaysFromToday(c.dueDate);
-                      const statusDisplay =
-                        resolvedStatus === 'Em atraso'
-                          ? 'Em atraso'
-                          : days !== null && days >= 0 && days <= 30 && resolvedStatus !== 'Válida'
-                          ? `Vence em ${days}d`
-                          : resolvedStatus;
-                      return (
-                        <tr key={c.id} className="border-b border-[#E4E1DA] text-[13px]">
-                          <td className="py-3 px-3 font-medium text-[#14181F]">{c.title}</td>
-                          <td className="py-3 px-3 text-[#5B6472] tabular-nums">{formatDateBR(c.issuedDate)}</td>
-                          <td className="py-3 px-3 text-[#14181F] tabular-nums">{formatDateBR(c.dueDate)}</td>
-                          <td className="py-3 px-3">
-                            <StatusBadge label={statusDisplay} />
-                          </td>
-                          <td className="py-3 px-3 text-right">
-                            <button
-                              type="button"
-                              onClick={() => openEditModal(c)}
-                              className="text-xs font-semibold text-[#1F3A5F] hover:underline cursor-pointer"
-                            >
-                              Atualizar / renovar
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="md:hidden flex flex-col gap-3">
-                {certs.map((c) => (
-                  <div key={c.id} className="border border-[#E4E1DA] rounded-xl p-4 flex flex-col gap-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <strong className="text-sm text-[#14181F]">{c.title}</strong>
-                      <StatusBadge
-                        label={resolverStatusConformidade(
-                          { status: c.status, vencimento: c.dueDate },
-                          todayRef
-                        )}
-                      />
-                    </div>
-                    <span className="text-xs text-[#5B6472]">Validade: {formatDateBR(c.dueDate)}</span>
-                    <button
-                      type="button"
-                      onClick={() => openEditModal(c)}
-                      className="self-start text-xs font-semibold text-[#1F3A5F] cursor-pointer"
-                    >
-                      Atualizar
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </section>
-            <AlertNote tone="info" title="Tributos em atraso">
-              Pendências fiscais podem impedir a emissão de certidões negativas. Valide parcelamentos com o contador.
-            </AlertNote>
-          </div>
-        )
-      )}
-
-      {tab === 'Documentos por obra' && (
-        workDocs.length === 0 ? (
-          <EmptySection
-            title="Nenhum documento de obra registrado"
-            description="Ao confirmar um orçamento, o sistema gera o checklist obrigatório da obra (Contrato, ART/RRT, Matrícula CNO, Responsável técnico). Você também pode cadastrar documentos avulsos."
-            actionLabel="Registrar documento de obra"
-            onAction={() => openNewModal('Documento de obra')}
-          />
-        ) : (
-          <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-base font-semibold text-[#14181F]">Checklist de documentos por obra</h2>
-              <select
-                aria-label="Filtrar por obra"
-                value={selectedProjectId}
-                onChange={(e) => setSelectedProjectId(e.target.value)}
-                className="rounded-lg border border-[#E4E1DA] bg-white px-3 py-1.5 text-sm"
-              >
-                <option value="ALL">Todas as obras</option>
-                {data.projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="hidden md:block overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="bg-[#F0EEE9] text-left text-xs font-semibold text-[#5B6472]">
-                    <th className="py-2.5 px-3 rounded-l-lg">Documento</th>
-                    <th className="py-2.5 px-3">Obra</th>
-                    <th className="py-2.5 px-3">Obrigatório</th>
-                    <th className="py-2.5 px-3">Arquivo</th>
-                    <th className="py-2.5 px-3">Status</th>
-                    <th className="py-2.5 px-3 text-right rounded-r-lg">Ação</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredWorkDocs.map((d) => (
-                    <tr key={d.id} className="border-b border-[#E4E1DA] text-[13px]">
-                      <td className="py-3 px-3 font-medium text-[#14181F]">{d.title}</td>
-                      <td className="py-3 px-3 text-[#5B6472]">{d.projectName || 'Geral'}</td>
-                      <td className="py-3 px-3 text-[#5B6472]">{d.mandatory ? 'Sim' : 'Não'}</td>
-                      <td className="py-3 px-3 text-[#5B6472]">{d.fileName || '—'}</td>
-                      <td className="py-3 px-3">
-                        <StatusBadge label={d.status} />
-                      </td>
-                      <td className="py-3 px-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => openEditModal(d)}
-                          className="text-xs font-semibold text-[#1F3A5F] hover:underline cursor-pointer"
-                        >
-                          Anexar / atualizar
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="md:hidden flex flex-col gap-3">
-              {filteredWorkDocs.map((d) => (
-                <div key={d.id} className="border border-[#E4E1DA] rounded-xl p-4 flex flex-col gap-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <strong className="text-sm text-[#14181F]">{d.title}</strong>
-                    <StatusBadge label={d.status} />
-                  </div>
-                  <span className="text-xs text-[#5B6472]">
-                    {d.projectName || 'Geral'} · {d.fileName || 'Sem arquivo'}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => openEditModal(d)}
-                    className="self-start text-xs font-semibold text-[#1F3A5F] cursor-pointer"
-                  >
-                    Atualizar
-                  </button>
-                </div>
-              ))}
-            </div>
-          </section>
-        )
-      )}
-
-      {tab === 'Notas fiscais' && (
-        pendingInvoices.length === 0 ? (
-          <EmptySection
-            title="Nenhuma nota fiscal pendente"
-            description="Todos os recebimentos cadastrados no Financeiro estão com nota emitida ou ainda não há receitas cadastradas."
-          />
-        ) : (
-          <div className="flex flex-col gap-4">
-            <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
-              <h2 className="text-base font-semibold text-[#14181F]">Recebimentos sem nota emitida</h2>
-              <div className="hidden md:block overflow-x-auto">
-                <table className="w-full border-collapse">
-                  <thead>
-                    <tr className="bg-[#F0EEE9] text-left text-xs font-semibold text-[#5B6472]">
-                      <th className="py-2.5 px-3 rounded-l-lg">Data / vencimento</th>
-                      <th className="py-2.5 px-3">Obra</th>
-                      <th className="py-2.5 px-3">Descrição / parcela</th>
-                      <th className="py-2.5 px-3 text-right">Valor</th>
-                      <th className="py-2.5 px-3">Nota fiscal</th>
-                      <th className="py-2.5 px-3 text-right rounded-r-lg">Ação</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pendingInvoices.map((inv) => (
-                      <tr key={inv.key} className="border-b border-[#E4E1DA] text-[13px]">
-                        <td className="py-3 px-3 text-[#5B6472] tabular-nums">
-                          {formatDateBR(inv.date)}
-                        </td>
-                        <td className="py-3 px-3 font-medium text-[#14181F]">{inv.projectName}</td>
-                        <td className="py-3 px-3 text-[#5B6472]">{inv.description}</td>
-                        <td className="py-3 px-3 text-right font-semibold text-[#14181F] tabular-nums">
-                          {formatBRL(inv.amount)}
-                        </td>
-                        <td className="py-3 px-3">
-                          <StatusBadge label={inv.invoiceStatus} />
-                        </td>
-                        <td className="py-3 px-3 text-right">
-                          <button
-                            type="button"
-                            onClick={() => setInvoiceConfirmTarget(inv.target)}
-                            className="px-3 py-1 rounded-lg border border-[#E4E1DA] text-xs font-semibold text-[#14181F] hover:bg-[#F0EEE9] cursor-pointer"
-                          >
-                            Marcar como emitida
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="md:hidden flex flex-col gap-3">
-                {pendingInvoices.map((inv) => (
-                  <div key={inv.key} className="border border-[#E4E1DA] rounded-xl p-4 flex flex-col gap-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <strong className="text-sm text-[#14181F]">{inv.projectName}</strong>
-                      <StatusBadge label={inv.invoiceStatus} />
-                    </div>
-                    <span className="text-xs text-[#5B6472]">{inv.description}</span>
-                    <div className="flex items-center justify-between">
-                      <strong className="text-sm tabular-nums">{formatBRL(inv.amount)}</strong>
-                      <button
-                        type="button"
-                        onClick={() => setInvoiceConfirmTarget(inv.target)}
-                        className="px-3 py-1 rounded-lg border border-[#E4E1DA] text-xs font-semibold cursor-pointer"
-                      >
-                        Marcar emitida
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-            <AlertNote tone="info" title="Conciliação fiscal">
-              Receitas sem nota fiscal emitida exigem atenção contábil para não gerar divergência na apuração tributária.
-            </AlertNote>
-          </div>
-        )
-      )}
-
-      {tab === 'Licitações' && (
-        tenderDocs.length === 0 ? (
-          <EmptySection
-            title="Nenhum item de habilitação cadastrado"
-            description="Cadastre os requisitos de habilitação (regularidade fiscal, qualificação técnica, acervo e balanço patrimonial) para acompanhar a prontidão da empresa."
-            actionLabel="Cadastrar item de habilitação"
-            onAction={() => openNewModal('Licitação')}
-          />
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
-            <section className="lg:col-span-2 bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
-              <h2 className="text-base font-semibold text-[#14181F]">Checklist de habilitação</h2>
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse">
-                  <thead>
-                    <tr className="bg-[#F0EEE9] text-left text-xs font-semibold text-[#5B6472]">
-                      <th className="py-2.5 px-3 rounded-l-lg">Categoria</th>
-                      <th className="py-2.5 px-3">Item</th>
-                      <th className="py-2.5 px-3">Status</th>
-                      <th className="py-2.5 px-3 text-right rounded-r-lg">Ação</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {tenderDocs.map((item) => (
-                      <tr key={item.id} className="border-b border-[#E4E1DA] text-[13px]">
-                        <td className="py-3 px-3 text-[#5B6472]">{item.category || 'Geral'}</td>
-                        <td className="py-3 px-3 font-medium text-[#14181F]">{item.title}</td>
-                        <td className="py-3 px-3">
-                          <StatusBadge label={item.status} />
-                        </td>
-                        <td className="py-3 px-3 text-right">
-                          <button
-                            type="button"
-                            onClick={() => openEditModal(item)}
-                            className="text-xs font-semibold text-[#1F3A5F] hover:underline cursor-pointer"
-                          >
-                            Atualizar
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-
-            <div className="flex flex-col gap-4">
-              <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-3">
-                <h2 className="text-base font-semibold text-[#14181F]">Prontidão geral</h2>
-                <strong className="text-3xl font-bold text-[#14181F] tabular-nums">
-                  {tenderReadinessPct !== null ? `${tenderReadinessPct}%` : 'Sem dados'}
-                </strong>
-                <ProgressBar pct={tenderReadinessPct ?? 0} />
-                <span className="text-xs text-[#5B6472]">
-                  Percentual calculado automaticamente a partir dos itens concluídos no checklist.
-                </span>
-              </section>
-              <AlertNote tone="info" title="Regularização técnica e contábil">
-                Acervo técnico, certidões e balanço patrimonial ficam centralizados aqui e refletem nos editais em Clientes e Orçamentos.
-              </AlertNote>
-            </div>
-          </div>
-        )
-      )}
-
-      {/* Compliance Item Modal */}
-      <Modal
-        open={modalOpen}
-        onClose={() => setModalOpen(false)}
-        title={editingItem ? `Atualizar · ${editingItem.title}` : `Novo registro · ${kind}`}
-      >
-        <form onSubmit={handleSaveItem} className="flex flex-col gap-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="cmp-kind" className="text-[13px] font-semibold text-[#14181F]">
-                Tipo de registro
+      {tab === 'Obrigações' && <>
+        <section className={panel}>
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <div><h2 className="text-base font-semibold">Calendário de guias e declarações</h2>
+              <p className={note}>Vencimentos informados no cadastro.</p></div>
+            <div className="flex flex-wrap items-end gap-2">
+              <button type="button" className={button} aria-label="Mês anterior"
+                onClick={() => { setCalendarMonth(addMonthsISO(calendarMonth + '-01', -1).slice(0, 7)); setOnlyLate(false); }}>←</button>
+              <label className={label}>Mês
+                <input type="month" className={field} value={calendarMonth} onChange={(event) => {
+                  const month = normalizeCompetence(event.target.value);
+                  if (month) { setCalendarMonth(month); setOnlyLate(false); }
+                }} />
               </label>
-              <select
-                id="cmp-kind"
-                value={kind}
-                onChange={(e) => setKind(e.target.value as ComplianceKind)}
-                className="w-full rounded-lg border border-[#E4E1DA] bg-white px-3.5 py-2.5 text-sm"
-              >
-                <option value="Obrigação">Obrigação</option>
-                <option value="Certidão">Certidão</option>
-                <option value="Documento de obra">Documento de obra</option>
-                <option value="Licitação">Licitação</option>
-              </select>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="cmp-status" className="text-[13px] font-semibold text-[#14181F]">
-                Status
-              </label>
-              <select
-                id="cmp-status"
-                value={status}
-                onChange={(e) => setStatus(e.target.value as ComplianceStatus)}
-                className="w-full rounded-lg border border-[#E4E1DA] bg-white px-3.5 py-2.5 text-sm"
-              >
-                <option value="Pendente">Pendente</option>
-                <option value="Em dia">Em dia</option>
-                <option value="Válida">Válida</option>
-                <option value="Anexado">Anexado</option>
-                <option value="Vence em breve">Vence em breve</option>
-                <option value="Parcial">Parcial</option>
-              </select>
+              <button type="button" className={button} aria-label="Próximo mês"
+                onClick={() => { setCalendarMonth(addMonthsISO(calendarMonth + '-01', 1).slice(0, 7)); setOnlyLate(false); }}>→</button>
+              <button type="button" className={button + ' aria-pressed:bg-[#FDECEA]'} aria-pressed={onlyLate}
+                onClick={() => setOnlyLate((value) => !value)}>{late.length ? 'Em atraso (' + late.length + ')' : 'Em atraso'}</button>
             </div>
           </div>
+          {!onlyLate && <ObligationsCalendar month={calendarMonth} items={currentMonth} today={today} onEdit={openEdit} />}
+        </section>
+        <h2 className="text-base font-semibold">{onlyLate ? 'Obrigações em atraso' : formatMonthLabelBR(calendarMonth)}</h2>
+        {records(onlyLate ? late : currentMonth, 'Obrigação')}
+        {obligations.some((row) => !row.dueDate) && <><h3 className="text-sm font-semibold">Registros sem vencimento</h3>
+          {records(obligations.filter((row) => !row.dueDate), 'Obrigação')}</>}
+      </>}
 
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="cmp-title" className="text-[13px] font-semibold text-[#14181F]">
-              Título / documento
-            </label>
-            <input
-              id="cmp-title"
-              required
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Ex.: Certidão Federal (RFB/PGFN), Guia Simples Nacional, ART/RRT"
-              className="w-full rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
-            />
-          </div>
+      {tab === 'Certidões' && <>
+        <h2 className="text-base font-semibold">Emissão e validade</h2>
+        {records(certificates, 'Certidão')}
+      </>}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="cmp-cat" className="text-[13px] font-semibold text-[#14181F]">
-                Categoria
-              </label>
-              <input
-                id="cmp-cat"
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                placeholder="Fiscal, Trabalhista, Qualificação técnica..."
-                className="w-full rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="cmp-proj" className="text-[13px] font-semibold text-[#14181F]">
-                Obra vinculada (opcional)
-              </label>
-              <select
-                id="cmp-proj"
-                value={projectId}
-                onChange={(e) => setProjectId(e.target.value)}
-                className="w-full rounded-lg border border-[#E4E1DA] bg-white px-3.5 py-2.5 text-sm"
-              >
-                <option value="">Empresa (geral)</option>
-                {data.projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="cmp-iss" className="text-[13px] font-semibold text-[#14181F]">
-                Emitida em
-              </label>
-              <input
-                id="cmp-iss"
-                type="date"
-                value={issuedDate}
-                onChange={(e) => setIssuedDate(e.target.value)}
-                className="w-full rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="cmp-due" className="text-[13px] font-semibold text-[#14181F]">
-                Validade / vencimento
-              </label>
-              <input
-                id="cmp-due"
-                type="date"
-                value={dueDate}
-                onChange={(e) => setDueDate(e.target.value)}
-                className="w-full rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="cmp-comp" className="text-[13px] font-semibold text-[#14181F]">
-                Competência
-              </label>
-              <input
-                id="cmp-comp"
-                value={competence}
-                onChange={(e) => setCompetence(e.target.value)}
-                placeholder="Ex.: 11/2026"
-                className="w-full rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
-              />
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="cmp-file" className="text-[13px] font-semibold text-[#14181F]">
-              Referência do arquivo / protocolo
-            </label>
-            <input
-              id="cmp-file"
-              value={fileName}
-              onChange={(e) => setFileName(e.target.value)}
-              placeholder="Ex.: cnd-federal-2026.pdf"
-              className="w-full rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
-            />
-          </div>
-
-          <label className="flex items-center gap-2 text-sm text-[#14181F] cursor-pointer">
-            <input
-              type="checkbox"
-              checked={mandatory}
-              onChange={(e) => setMandatory(e.target.checked)}
-              className="w-4 h-4 rounded border-[#E4E1DA]"
-            />
-            Item obrigatório
+      {tab === 'Documentos por obra' && <section className={panel}>
+        {!currentProject ? <p className={note}>Sem obras cadastradas para conferir documentos.</p> : <>
+          <label className={label + ' max-w-md'}>Obra
+            <select className={field} value={currentProject.id} onChange={(event) => setWorkProject(event.target.value)}>
+              {data.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+            </select>
           </label>
+          {[...WORK_DOCUMENT_TYPES, ...(workDocs.some((row) => categoryOf(row) === 'Outros') ? ['Outros'] : [])].map((type) => {
+            const rows = workDocs.filter((row) => categoryOf(row) === type);
+            const checked = rows.some((row) => isReady(statusOf(row, today)) && Boolean(row.fileName || row.attachmentId));
+            return <section key={type} className="grid gap-2 border-t border-[#E4E1DA] pt-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-semibold">{type}</h3>
+                  <StatusBadge label={checked ? 'Registrado' : rows.length ? 'Pendente' : 'Sem registro'} tone={checked ? 'ok' : 'neutral'} /></div>
+                <button type="button" className={button} onClick={() => openNew('Documento de obra', type)}>Adicionar documento</button>
+              </div>
+              {rows.length > 0 && records(rows, 'Documento de obra')}
+            </section>;
+          })}
+        </>}
+      </section>}
 
-          <RegisteredBySelect value={actor} onChange={setActor} id="cmp-actor" />
-
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={() => setModalOpen(false)}
-              className="px-4 py-2 rounded-lg border border-[#E4E1DA] text-sm font-semibold text-[#14181F] cursor-pointer"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="px-4 py-2 rounded-lg bg-[#1F3A5F] text-white text-sm font-semibold cursor-pointer disabled:opacity-50"
-            >
-              {saving ? 'Salvando...' : 'Salvar registro'}
-            </button>
+      {tab === 'Notas fiscais' && <>
+        <section className={panel}>
+          <h2 className="text-base font-semibold">Recebimentos sem nota emitida</h2>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <label className={label}>Obra ou empresa
+              <select className={field} value={invoiceProject} onChange={(event) => setInvoiceProject(event.target.value)}>
+                <option value="">Todos os centros</option>{invoiceOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+              </select>
+            </label>
+            <div className="flex items-end gap-2">
+              <label className={label + ' flex-1'}>Mês de recebimento
+                <input type="month" className={field} value={invoiceMonth} onChange={(event) => setInvoiceMonth(event.target.value)} />
+              </label>
+              {invoiceMonth && <button type="button" className={button} onClick={() => setInvoiceMonth('')}>Todos os meses</button>}
+            </div>
           </div>
-        </form>
+          <p className="text-sm">Total pendente no recorte · <strong>{formatBRL(receiptsInView ? sumPendingInvoices(pending) : null)}</strong></p>
+        </section>
+        <DataList rows={pending} columns={invoiceColumns} keyExtractor={(row) => row.key}
+          emptyTitle="Sem recebimentos pendentes de nota no recorte" emptyDescription="Os registros vêm dos recebimentos realizados no Financeiro."
+          renderMobileCard={(row) => <article className={panel}>
+            <div className="flex flex-wrap items-start justify-between gap-2"><strong className="break-words text-sm">{row.description}</strong><StatusBadge label={row.invoiceStatus} tone="warn" /></div>
+            <p className={note}>{invoicePlace(row)} · {formatDateBR(row.date)}</p>
+            <strong className="text-sm">{formatBRL(row.amount)}</strong>
+            <button type="button" className={button + ' justify-self-start'} onClick={() => openInvoice(row)}>Marcar como emitida</button>
+          </article>} />
+      </>}
+
+      {tab === 'Licitações' && <section className={panel}>
+        <div className="grid gap-2"><h2 className="text-base font-semibold">Checklist de habilitação</h2>
+          <p className="text-sm">Prontidão geral · <strong>{summary.prontidaoLicitacoesPct === null ? 'Sem dados' : summary.prontidaoLicitacoesPct + '%'}</strong></p>
+          {summary.prontidaoLicitacoesPct !== null && <ProgressBar pct={summary.prontidaoLicitacoesPct} />}
+        </div>
+        {tenderCategories.map((category) => {
+          const result = readiness.find((row) => row.categoria === category);
+          const rows = tenderDocs.filter((row) => categoryOf(row) === category);
+          return <section key={category} className="grid gap-2 border-t border-[#E4E1DA] pt-3">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div><h3 className="text-sm font-semibold">{category}</h3>
+                <p className={note}>{result ? result.pct + '% · ' + result.prontos + ' de ' + result.total + ' itens prontos' : 'Sem dados'}</p>
+              </div>
+              <button type="button" className={button} onClick={() => openNew('Licitação', category)}>Adicionar item</button>
+            </div>
+            {result && <ProgressBar pct={result.pct} />}
+            {rows.length > 0 && records(rows, 'Licitação')}
+          </section>;
+        })}
+      </section>}
+
+      <Modal open={Boolean(draft)} onClose={() => { if (!saving) setDraft(null); }} title={editing ? 'Editar registro' : 'Novo registro'} maxWidth="max-w-2xl">
+        {draft && <form className="grid gap-3" onSubmit={async (event) => {
+          event.preventDefault();
+          setSaving(true); setError('');
+          try {
+            await saveComplianceItem(uid, actor, draft, editing?.id, pickedFile);
+            if (draft.kind === 'Obrigação') { setCalendarMonth(draft.dueDate.slice(0, 7)); setOnlyLate(false); }
+            if (draft.kind === 'Documento de obra') setWorkProject(draft.projectId);
+            setDraft(null); setFeedback({ tone: 'ok', text: 'Registro salvo.' });
+          } catch (err) { setError(err instanceof Error ? err.message : 'Não foi possível salvar o registro.'); }
+          finally { setSaving(false); }
+        }}>
+          <label className={label}>Categoria
+            <select className={field} value={draft.category} required onChange={(event) => {
+              const category = event.target.value;
+              setDraft({ ...draft, category, title: !draft.title || draft.title === draft.category ? category : draft.title });
+            }}>
+              <option value="">Selecione a categoria</option>
+              {[...new Set([...fieldsByKind[draft.kind], 'Outros', ...(draft.category ? [draft.category] : [])])].map((item) => <option key={item}>{item}</option>)}
+            </select>
+          </label>
+          <label className={label}>Título
+            <input className={field} required maxLength={160} value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} />
+          </label>
+          {(draft.kind === 'Documento de obra' || draft.kind === 'Obrigação') && <label className={label}>Obra vinculada{draft.kind === 'Obrigação' ? ' (opcional)' : ''}
+            <select className={field} required={draft.kind === 'Documento de obra'} value={draft.projectId}
+              onChange={(event) => setDraft({ ...draft, projectId: event.target.value })}>
+              <option value="">{draft.kind === 'Documento de obra' ? 'Selecione a obra' : 'Empresa'}</option>
+              {data.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+            </select>
+          </label>}
+          <div className="grid gap-2 sm:grid-cols-2">
+            {draft.kind === 'Obrigação' ? <label className={label}>Competência
+              <input type="month" required className={field} value={draft.competence} onChange={(event) => setDraft({ ...draft, competence: event.target.value })} />
+            </label> : <label className={label}>Emissão
+              <input type="date" required={draft.kind === 'Certidão'} className={field} value={draft.issuedDate}
+                onChange={(event) => setDraft({ ...draft, issuedDate: event.target.value })} />
+            </label>}
+            <label className={label}>{draft.kind === 'Obrigação' ? 'Vencimento' : 'Validade'}
+              <input type="date" required={draft.kind === 'Obrigação' || draft.kind === 'Certidão'} className={field}
+                value={draft.dueDate} min={draft.kind !== 'Obrigação' ? draft.issuedDate : undefined}
+                onChange={(event) => setDraft({ ...draft, dueDate: event.target.value })} />
+            </label>
+            <label className={label}>Situação
+              <select className={field} value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value as ComplianceStatus })}>
+                {statusesByKind[draft.kind].map((item) => <option key={item}>{item}</option>)}
+              </select>
+            </label>
+          </div>
+          <label className={label}>{draft.kind === 'Obrigação' ? 'Comprovante' : 'Arquivo'} (PDF, PNG ou JPEG até 700 KB)
+            <input type="file" className={field} accept="application/pdf,image/png,image/jpeg" onChange={(event) => setPickedFile(event.target.files?.[0])} />
+          </label>
+          {!pickedFile && editing?.attachmentId ? <p className={note}>Anexo atual · {editing.fileName}</p> : !pickedFile && (
+            <label className={label}>Referência do arquivo ou protocolo
+              <input className={field} maxLength={160} value={draft.fileName} onChange={(event) => setDraft({ ...draft, fileName: event.target.value })} />
+            </label>
+          )}
+          <label className={label}>Observações
+            <textarea className={field} rows={2} maxLength={500} value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} />
+          </label>
+          {(draft.kind === 'Documento de obra' || draft.kind === 'Licitação') && <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={draft.mandatory} onChange={(event) => setDraft({ ...draft, mandatory: event.target.checked })} />
+            Item obrigatório
+          </label>}
+          <RegisteredBySelect id="compliance-record-actor" value={actor} onChange={setActor} />
+          {error && <p role="alert" className="text-sm text-[#B42318]">{error}</p>}
+          <button type="submit" className={primary + ' justify-self-end'} disabled={saving}>{saving ? 'Salvando...' : 'Salvar registro'}</button>
+        </form>}
       </Modal>
 
-      {/* Invoice Issued Modal */}
-      <Modal
-        open={Boolean(invoiceConfirmTarget)}
-        onClose={() => setInvoiceConfirmTarget(null)}
-        title="Confirmar emissão de nota fiscal"
-      >
-        <form onSubmit={handleMarkInvoiceIssued} className="flex flex-col gap-4">
-          <p className="text-sm text-[#5B6472]">
-            O status da nota fiscal será atualizado para <strong>Emitida</strong> tanto na Conformidade quanto no Financeiro.
-          </p>
-          <RegisteredBySelect value={invoiceActor} onChange={setInvoiceActor} id="inv-actor" />
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={() => setInvoiceConfirmTarget(null)}
-              className="px-4 py-2 rounded-lg border border-[#E4E1DA] text-sm font-semibold text-[#14181F] cursor-pointer"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="px-4 py-2 rounded-lg bg-[#1F3A5F] text-white text-sm font-semibold cursor-pointer disabled:opacity-50"
-            >
-              {saving ? 'Atualizando...' : 'Confirmar emissão'}
-            </button>
-          </div>
-        </form>
+      <Modal open={Boolean(invoice)} onClose={() => { if (!saving) setInvoice(null); }} title="Confirmar emissão de nota">
+        {invoice && <form className="grid gap-3" onSubmit={async (event) => {
+          event.preventDefault();
+          setSaving(true); setError('');
+          try {
+            await markReceiptInvoiceIssued(uid, actor, invoice.target);
+            setInvoice(null); setFeedback({ tone: 'ok', text: 'Nota marcada como emitida no Financeiro e na Conformidade.' });
+          } catch (err) { setError(err instanceof Error ? err.message : 'Não foi possível confirmar a emissão.'); }
+          finally { setSaving(false); }
+        }}>
+          <p className="break-words text-sm">{invoice.description} · {formatDateBR(invoice.date)} · {formatBRL(invoice.amount)}</p>
+          <RegisteredBySelect id="compliance-invoice-actor" value={actor} onChange={setActor} />
+          {error && <p role="alert" className="text-sm text-[#B42318]">{error}</p>}
+          <button type="submit" className={primary + ' justify-self-end'} disabled={saving}>{saving ? 'Atualizando...' : 'Confirmar emissão'}</button>
+        </form>}
       </Modal>
     </div>
   );

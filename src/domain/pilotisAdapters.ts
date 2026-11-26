@@ -9,9 +9,13 @@ import type {
   Project,
   ProjectStage,
   Quote,
+  ScheduleBaseline,
+  ScheduleBaselineStage,
+  ScheduleProgress,
   TransactionKind,
   WarrantyCall,
 } from '../types/pilotis';
+import { getInvoiceReceipts, normalizeTenderCategory, pendingInvoiceReceipts, resolveCertificateCategory, sumPendingInvoices } from './complianceWorkflows';
 import { alertas, type AlertaDominio } from './alertas';
 import { previsaoCaixa, type PrevisaoCaixaResult } from './caixa';
 import {
@@ -30,7 +34,9 @@ import {
   type ObraDreInput,
 } from './dre';
 import {
+  avaliarValidadeSst,
   calcularEncargos,
+  getOnboardingAlert,
   contarPendenciasSegurancaEquipe,
   resumoFolhaEquipe,
   type EncargosColaboradorResult,
@@ -49,7 +55,8 @@ import {
   installmentProgress,
   signedCashAmount,
 } from './financeiro';
-import { monthKey, roundCents, todayISO } from './formatters';
+import { addDaysISO, addMonthsISO, diffDaysISO, monthKey, roundCents, todayISO } from './formatters';
+import { planMonthlyPayroll } from './teamPlanning';
 import {
   indicadoresDashboard,
   type IndicadoresDashboardResult,
@@ -112,6 +119,8 @@ export function toDomainTransactions(
     previsto: t.isForecast,
     originalmentePrevisto: t.wasForecast,
     statementKey: t.statementKey,
+    payrollPeriod: t.payrollPeriod,
+    payrollProvisions: t.payrollProvisions,
     status: t.status,
     notaFiscal: t.invoiceStatus || 'Não se aplica',
     formaPagamento: t.paymentMethod || '',
@@ -176,6 +185,8 @@ export function toDomainEmployees(employees: Employee[]): ColaboradorRecord[] {
     funcao: e.role,
     vinculo: e.employmentType,
     salarioBase: e.baseSalary,
+    paymentFrequency: e.paymentFrequency,
+    paymentMonth: e.paymentMonth,
     formaPagamento: e.paymentMethod,
     dataAdmissao: e.startDate,
     obraAtualId: e.currentProjectId || undefined,
@@ -207,23 +218,20 @@ export function toDomainTaxParams(
   referenceDate = todayISO(),
 ): TaxChargeParameters | null {
   if (!settings) return null;
-  const totalRate =
-    (settings.inssRate || 0) +
-    (settings.fgtsRate || 0) +
-    (settings.vacationRate || 0) +
-    (settings.thirteenthRate || 0);
-  if (totalRate <= 0) return null;
+  const { inssRate, fgtsRate, vacationRate, thirteenthRate } = settings;
+  if (inssRate == null || fgtsRate == null || vacationRate == null || thirteenthRate == null) return null;
   return {
-    inssPct: settings.inssRate || 0,
-    fgtsPct: settings.fgtsRate || 0,
-    feriasPct: settings.vacationRate || 0,
-    decimoTerceiroPct: settings.thirteenthRate || 0,
+    inssPct: inssRate,
+    fgtsPct: fgtsRate,
+    feriasPct: vacationRate,
+    decimoTerceiroPct: thirteenthRate,
     vigenciaInicio: settings.taxParamsEffectiveDate || referenceDate,
     fonte: settings.taxParamsSource || undefined,
   };
 }
 
-export function toDomainProjectDreInput(project: Project): ObraDreInput {
+export function toDomainProjectDreInput(project: Project, stages: ProjectStage[] = []): ObraDreInput {
+  const projectStages = stages.filter((stage) => stage.projectId === project.id);
   return {
     id: project.id,
     nome: project.name,
@@ -233,6 +241,7 @@ export function toDomainProjectDreInput(project: Project): ObraDreInput {
     orcadoEquipamentos: project.budgetedEquipment || 0,
     orcadoImpostos: project.budgetedTax || 0,
     orcadoBdi: project.budgetedBdi || 0,
+    orcadoEap: projectStages.length ? getWorkPackageBudget(projectStages) : undefined,
   };
 }
 
@@ -264,9 +273,9 @@ export function toDomainBaselineFromStages(
 ): BaselineEtapaItem[] {
   return stages.map((s) => ({
     etapaId: s.id,
-    semanaInicioBaseline: s.baselineStartWeek,
-    duracaoBaselineSemanas: s.baselineDurationWeeks,
-    custoOrcadoBaseline: s.budgetedCost,
+    semanaInicioBaseline: s.baselineStartWeek ?? s.startWeek,
+    duracaoBaselineSemanas: s.baselineDurationWeeks ?? s.durationWeeks,
+    custoOrcadoBaseline: s.baselineBudgetedCost ?? s.budgetedCost,
   }));
 }
 
@@ -276,7 +285,7 @@ export function toDomainComplianceItems(
   return items.map((c) => ({
     id: c.id,
     tipo: c.kind,
-    categoria: c.category,
+    categoria: c.kind === 'Licitação' ? normalizeTenderCategory(c.category) : c.category,
     status: c.status,
     vencimento: c.dueDate || undefined,
   }));
@@ -299,12 +308,8 @@ export function toDomainComplianceCollections(items: ComplianceItem[]): {
         competencia: c.competence,
         vencimento: c.dueDate,
         status:
-          c.status === 'Em dia' ||
-          c.status === 'Vence em breve' ||
-          c.status === 'Em atraso' ||
-          c.status === 'Pendente'
-            ? c.status
-            : 'Pendente',
+          c.status === 'Em dia' || c.status === 'Válida' || c.status === 'Anexado' ? 'Em dia'
+            : c.status === 'Vence em breve' || c.status === 'Em atraso' ? c.status : 'Pendente',
         arquivo: c.fileName || undefined,
       });
     } else if (c.kind === 'Certidão') {
@@ -312,7 +317,7 @@ export function toDomainComplianceCollections(items: ComplianceItem[]): {
         ...DOMAIN_AUDIT_FALLBACK,
         id: c.id,
         titulo: c.title,
-        esfera: 'Outro',
+        esfera: resolveCertificateCategory(c),
         dataEmissao: c.issuedDate || undefined,
         dataValidade: c.dueDate,
         status:
@@ -364,14 +369,14 @@ export function calcularSaldoInicialCaixa(
 
 export function calcularIndicadoresDashboard(
   data: PilotisDataState,
-  dataReferencia = todayISO(),
+  dataReferencia = planningTodayISO(),
 ): IndicadoresDashboardResult {
   return indicadoresDashboard({
     dataReferencia,
     lancamentos: toDomainTransactions(data.transactions),
     parcelas: toDomainInstallments(data.installments),
     obras: data.projects.map((p) => ({
-      ...toDomainProjectDreInput(p),
+      ...toDomainProjectDreInput(p, data.stages),
       status: p.status,
     })),
     orcamentos: data.quotes.map((q) => ({ status: q.status })),
@@ -395,7 +400,7 @@ export function calcularResumoFinanceiroPeriodo(
 export function calcularPrevisaoCaixa(
   data: PilotisDataState,
   mesesCount = 5,
-  dataBase = todayISO(),
+  dataBase = planningTodayISO(),
 ): PrevisaoCaixaResult {
   return previsaoCaixa(mesesCount, {
     dataBase,
@@ -405,15 +410,21 @@ export function calcularPrevisaoCaixa(
     orcamentos: toDomainQuotes(data.quotes),
     colaboradores: toDomainEmployees(data.employees),
     parametrosEncargos: toDomainTaxParams(data.settings, dataBase),
+    payrollByMonth: new Map(Array.from({ length: mesesCount }, (_, index) => {
+      const month = monthKey(addMonthsISO(dataBase, index));
+      const payroll = calculateTeamPayroll(data, month);
+      return [month, { amount: payroll.totalKnown, provisions: payroll.provisions ?? 0 }] as const;
+    })),
   });
 }
 
 export function calcularDreObra(
   project: Project,
   transactions: FinancialTransaction[],
+  stages: ProjectStage[] = [],
 ): DreObraResult {
   return dre(
-    toDomainProjectDreInput(project),
+    toDomainProjectDreInput(project, stages),
     toDomainTransactions(transactions),
   );
 }
@@ -453,7 +464,10 @@ export function calcularResumoFolhaEquipe(
   dataReferencia = todayISO(),
 ): ResumoFolhaEquipe {
   return resumoFolhaEquipe(
-    toDomainEmployees(employees),
+    toDomainEmployees(employees.filter((employee) =>
+      (!employee.startDate || employee.startDate <= dataReferencia) &&
+      (employee.paymentFrequency !== 'oneOff' || employee.paymentMonth === monthKey(dataReferencia)),
+    )),
     toDomainTaxParams(settings, dataReferencia),
     dataReferencia,
   );
@@ -466,7 +480,10 @@ export function calcularPendenciasSegurancaEquipe(
   return contarPendenciasSegurancaEquipe(
     toDomainEmployees(employees),
     dataReferencia,
-  );
+  ) + employees.filter((employee) => avaliarValidadeSst(employee.epiExpiry, dataReferencia).expiredOrSoon).length
+    + employees.filter((employee) =>
+      getOnboardingAlert(employee.onboardingStart, employee.startDate, employee.onboardingStatus, dataReferencia) === 'Integração em atraso',
+    ).length;
 }
 
 export function calcularResumoDividas(debts: Debt[]): ResumoDividasResult {
@@ -484,11 +501,24 @@ export function calcularCaminhoCriticoObra(
 export function calcularCurvaSObra(
   stages: ProjectStage[],
   semanaReferencia?: number,
+  baseline?: ScheduleBaseline,
+  includePoints = true,
 ): CurvaSResult {
+  const schedule = calcularCaminhoCriticoObra(stages);
+  const starts = new Map(schedule.detalhes.map((item) => [item.etapaId, item.inicioMaisCedo]));
   return curvaS(
-    toDomainStages(stages),
-    toDomainBaselineFromStages(stages),
+    toDomainStages(stages).map((stage) => ({
+      ...stage, semanaInicio: starts.get(stage.id) ?? stage.semanaInicio,
+    })),
+    baseline ? baseline.stages.map((stage) => ({
+      etapaId: stage.stageId,
+      semanaInicioBaseline: stage.startWeek,
+      duracaoBaselineSemanas: stage.durationWeeks,
+      custoOrcadoBaseline: stage.budgetedCost,
+    })) : toDomainBaselineFromStages(stages),
     semanaReferencia,
+    includePoints,
+    Boolean(baseline),
   );
 }
 
@@ -509,13 +539,13 @@ export function calcularResumoFasesEap(
 export function calcularProntidaoLicitacao(
   items: ComplianceItem[],
 ): number | null {
-  return prontidaoLicitacao(toDomainComplianceItems(items));
+  return prontidaoLicitacao(toDomainComplianceItems(items), planningTodayISO());
 }
 
 export function calcularProntidaoLicitacaoPorCategoria(
   items: ComplianceItem[],
 ): ProntidaoLicitacaoCategoria[] {
-  return prontidaoLicitacaoPorCategoria(toDomainComplianceItems(items));
+  return prontidaoLicitacaoPorCategoria(toDomainComplianceItems(items), planningTodayISO());
 }
 
 export function calcularResumoFunilOrcamentos(
@@ -527,47 +557,27 @@ export function calcularResumoFunilOrcamentos(
 export function calcularResumoConformidade(
   items: ComplianceItem[],
   transactions: FinancialTransaction[],
-  dataReferencia = todayISO(),
+  dataReferencia = planningTodayISO(),
   installments: Installment[] = [],
 ): ResumoConformidadeResult {
-  return resumoConformidade(
-    toDomainComplianceItems(items),
-    toDomainTransactions(transactions),
-    dataReferencia,
-    toDomainInstallments(installments),
-  );
+  const summary = resumoConformidade(toDomainComplianceItems(items), [], dataReferencia);
+  const receipts = getInvoiceReceipts(transactions, installments);
+  return { ...summary, receitaSemNotaPendente: receipts.length ? sumPendingInvoices(pendingInvoiceReceipts(receipts)) : null };
 }
 
 export function calcularAlertasSistema(
   data: PilotisDataState,
-  dataReferencia = todayISO(),
+  dataReferencia = planningTodayISO(),
+  options: { forecast?: PrevisaoCaixaResult; lateStages?: ReadonlyMap<string, number> } = {},
 ): AlertaDominio[] {
   const { obrigacoes, certidoes } = toDomainComplianceCollections(
     data.complianceItems,
   );
   return alertas(
     {
-      config: data.settings
-        ? {
-            createdBy: 'Sócio',
-            createdAt: '',
-            updatedBy: 'Sócio',
-            updatedAt: '',
-            id: data.settings.id,
-            nomeEmpresa: data.settings.companyName,
-            cnpj: data.settings.cnpj,
-            enderecoFiscal: data.settings.fiscalAddress,
-            cidade: data.settings.city,
-            emailEmpresa: data.settings.email,
-            telefone: data.settings.phone,
-            corDestaque: data.settings.accentColor,
-            exibirEmblemaPdf: data.settings.pdfShowLogo,
-            parametrosEncargos: toDomainTaxParams(data.settings, dataReferencia),
-          }
-        : null,
       lancamentos: toDomainTransactions(data.transactions),
       parcelas: toDomainInstallments(data.installments),
-      orcamentos: toDomainQuotes(data.quotes),
+      dividas: toDomainDebts(data.debts),
       colaboradores: toDomainEmployees(data.employees),
       obrigacoes,
       certidoes,
@@ -576,10 +586,8 @@ export function calcularAlertasSistema(
     },
     {
       dataReferencia,
-      saldoInicialCaixa: calcularSaldoInicialCaixa(
-        data.transactions,
-        dataReferencia,
-      ),
+      forecast: options.forecast ?? calcularPrevisaoCaixa(data, 5, dataReferencia),
+      lateStages: options.lateStages,
     },
   );
 }
@@ -598,4 +606,99 @@ export function conciliarExtratoPilotis(
 
 export function calculateInstallmentProgress(installments: Installment[], projectId: string) {
   return installmentProgress(toDomainInstallments(installments), projectId);
+}
+
+export function calculateTeamPayroll(data: Pick<PilotisDataState, 'employees' | 'allocations' | 'projects' | 'settings'>, month: string) {
+  return planMonthlyPayroll(data, month, toDomainTaxParams(data.settings, month + '-01'));
+}
+
+export function getWorkPackageBudget(stages: Pick<ProjectStage, 'budgetedCost'>[]): number {
+  return roundCents(stages.reduce((sum, stage) => sum + (stage.budgetedCost ?? 0), 0));
+}
+
+export function describeScheduleCycle(stages: ProjectStage[], schedule = calcularCaminhoCriticoObra(stages)): string | null {
+  if (!schedule.cicloDetectado) return null;
+  const byId = new Map(stages.map((stage) => [stage.id, stage]));
+  const cycle = (schedule.primeiroCiclo ?? schedule.nosEmCiclo).map((id) => {
+    const stage = byId.get(id);
+    return stage ? `${stage.wbsCode} ${stage.name}` : id;
+  });
+  return `Dependência circular: ${cycle.join(' → ')}. Remova uma das ligações para salvar.`;
+}
+
+const planningDateFormatter = new Intl.DateTimeFormat('sv-SE', {
+  timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+
+export function planningTodayISO(date = new Date()): string {
+  return planningDateFormatter.format(date);
+}
+
+export function getProjectSchedule(project: Project, stages: ProjectStage[], referenceDate = planningTodayISO()) {
+  const criticalPath = calcularCaminhoCriticoObra(stages);
+  const details = new Map(criticalPath.detalhes.map((detail) => [detail.etapaId, detail]));
+  const ordered = [...stages].sort((a, b) =>
+    (details.get(a.id)?.inicioMaisCedo ?? a.startWeek) - (details.get(b.id)?.inicioMaisCedo ?? b.startWeek)
+    || a.wbsCode.localeCompare(b.wbsCode, 'pt-BR', { numeric: true }));
+  const pending = ordered.filter((stage) => stage.status !== 'Concluída');
+  const byId = new Map(stages.map((stage) => [stage.id, stage]));
+  const nextStage = pending.find((stage) => stage.status === 'Em andamento')
+    ?? pending.find((stage) => (stage.dependsOn ?? []).every((id) => byId.get(id)?.status === 'Concluída'))
+    ?? pending[0];
+  const elapsedDays = diffDaysISO(referenceDate, project.startDate);
+  const forecastEndDate = stages.length && !criticalPath.cicloDetectado && elapsedDays !== null
+    ? addDaysISO(project.startDate, Math.ceil(criticalPath.duracaoTotal * 7))
+    : null;
+  const milestones = pending.filter((stage) => stage.isMilestone && details.has(stage.id)).map((stage) => ({
+    stage,
+    date: elapsedDays === null ? null : addDaysISO(project.startDate, Math.ceil(details.get(stage.id)!.terminoMaisCedo * 7)),
+  })).sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''));
+  const todayWeek = elapsedDays === null ? null : elapsedDays / 7;
+  return { criticalPath, details, nextStage, milestones, forecastEndDate, todayWeek, referenceWeek: Math.max(0, todayWeek ?? 0) };
+}
+
+export function getScheduleBaselineStages(
+  stages: ProjectStage[],
+  schedule?: ReturnType<typeof getProjectSchedule>,
+): ScheduleBaselineStage[] {
+  return stages.map((stage) => {
+    const detail = schedule?.details.get(stage.id);
+    return {
+      stageId: stage.id,
+      startWeek: detail?.inicioMaisCedo ?? stage.baselineStartWeek ?? stage.startWeek,
+      durationWeeks: detail?.duracaoSemanas ?? stage.baselineDurationWeeks ?? stage.durationWeeks,
+      budgetedCost: (schedule ? stage.budgetedCost : (stage.baselineBudgetedCost ?? stage.budgetedCost)) ?? 0,
+    };
+  });
+}
+
+export function validateReplanJustification(value: string): string {
+  const justification = value.trim();
+  if (!justification) throw new Error('Informe a justificativa para registrar o replanejamento.');
+  if (justification.length > 500) throw new Error('A justificativa pode ter até 500 caracteres.');
+  return justification;
+}
+
+export function scheduleDeliveryVariance(endDate: string, baselineEndDate: string): number | null {
+  return diffDaysISO(endDate, baselineEndDate);
+}
+
+export function getRecordedScheduleProgress(
+  project: Project,
+  records: ScheduleProgress[],
+  referenceDate: string,
+  progressToday: number,
+) {
+  const byDate = new Map<string, ScheduleProgress>();
+  for (const record of records) {
+    if (record.projectId !== project.id || record.date >= referenceDate) continue;
+    if ((byDate.get(record.date)?.scheduleRevision ?? -1) < record.scheduleRevision) byDate.set(record.date, record);
+  }
+  return [
+    ...[...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)),
+    { date: referenceDate, progressPct: progressToday },
+  ].flatMap(({ date, progressPct }) => {
+    const days = diffDaysISO(date, project.startDate);
+    return days === null || days < 0 ? [] : [{ week: days / 7, progressPct, date }];
+  });
 }

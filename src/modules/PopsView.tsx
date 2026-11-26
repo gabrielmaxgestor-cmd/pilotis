@@ -1,608 +1,388 @@
-import { useState } from 'react';
-import { Printer, Search } from 'lucide-react';
-import { CompanyPdfHeader } from '../components/ui/CompanyPdfHeader';
-import {
-  AlertNote,
-  EmptySection,
-  Modal,
-  PageHeader,
-  RegisteredBySelect,
-  SegmentedControl,
-  StatusBadge,
-} from '../components/ui/PilotisUI';
-import { createRecord, updateRecord } from '../services/pilotisService';
-import type { ActorRole, PilotisDataState, Pop, PopStatus } from '../types/pilotis';
-import { clampStr, formatTimestampBR } from '../domain';
+import { useEffect, useState } from 'react';
+import { AlertNote, EmptySection, Modal, PageHeader, RegisteredBySelect, SegmentedControl, StatusBadge } from '../components/ui/PilotisUI';
+import { formatDateBR, isPublishedPop, nextPopVersion, POP_ATTACHMENT_LIMIT, POP_MEDIA_TOTAL_BYTES, readPopContent } from '../domain';
+import { saveProjectStage } from '../services/pilotisService';
+import { downloadPopPdf } from '../services/popPdfExport';
+import { preparePopAttachment, readPopAttachment, savePop, type NewPopFile } from '../services/popService';
+import type { ActorRole, PilotisDataState, Pop, PopAttachment, PopContent, PopVersion } from '../types/pilotis';
 
-function incrementVersion(v: string): string {
-  const m = /^v?(\d+)\.(\d+)$/.exec(v.trim());
-  if (!m) return 'v1.1';
-  return `v${m[1]}.${Number(m[2]) + 1}`;
+const panel = 'grid min-w-0 gap-4 rounded-xl border border-[#E4E1DA] bg-white p-4 sm:p-5';
+const primary = 'rounded-lg bg-[#1F3A5F] px-3 py-2 text-sm font-semibold text-white focus-visible:ring-2 focus-visible:ring-[#1F3A5F] disabled:opacity-50';
+const secondary = 'rounded-lg border border-[#E4E1DA] bg-white px-3 py-2 text-sm font-semibold text-[#1F3A5F] focus-visible:ring-2 focus-visible:ring-[#1F3A5F] disabled:opacity-50';
+const field = 'w-full rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm font-normal focus-visible:ring-2 focus-visible:ring-[#1F3A5F]';
+const label = 'grid min-w-0 gap-1 text-sm font-semibold';
+const plain = 'whitespace-pre-wrap break-words text-sm leading-relaxed text-[#424B5A]';
+
+const emptyContent: PopContent = {
+  title: '', serviceType: '', linkedStagePhase: '', objective: '', materialsAndEpi: '', tools: '',
+  protectiveEquipment: '', steps: [], acceptanceCriteria: [], attachments: [], usedInOnboarding: false,
+};
+
+function AttachmentPreview({ popId, attachment }: { popId: string; attachment: PopAttachment }) {
+  const [requested, setRequested] = useState(false);
+  const [url, setUrl] = useState('');
+  const [error, setError] = useState(false);
+  useEffect(() => {
+    if (!requested) return;
+    let active = true;
+    let localUrl = '';
+    setUrl(''); setError(false);
+    void readPopAttachment(popId, attachment).then((blob) => {
+      if (!active) return;
+      localUrl = URL.createObjectURL(blob);
+      setUrl(localUrl);
+    }).catch(() => { if (active) setError(true); });
+    return () => { active = false; if (localUrl) URL.revokeObjectURL(localUrl); };
+  }, [popId, attachment, requested]);
+  const isPhoto = attachment.contentType.startsWith('image/');
+  return (
+    <li className="grid gap-2 rounded-lg border border-[#E4E1DA] p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="min-w-0 break-words text-sm">{isPhoto ? 'Foto' : 'Vídeo'} · {attachment.name}</span>
+        <button type="button" className={secondary} onClick={() => setRequested(!requested)}>{requested ? 'Fechar anexo' : 'Abrir anexo'}</button>
+      </div>
+      {requested && (error ? <p role="alert" className="text-sm text-[#B42318]">Anexo indisponível. Confira a conexão e abra novamente.</p>
+        : url ? <>
+          {isPhoto ? <img src={url} alt={attachment.name} className="max-h-96 w-full rounded-lg object-contain" />
+            : <video controls playsInline src={url} aria-label={attachment.name} className="max-h-96 w-full rounded-lg bg-[#14181F]" />}
+          <a className="justify-self-start rounded text-sm font-semibold text-[#1F3A5F] focus-visible:ring-2 focus-visible:ring-[#1F3A5F]" href={url} download={attachment.name}>Baixar arquivo</a>
+        </> : <p role="status" className="text-sm text-[#5B6472]">Carregando anexo...</p>)}
+    </li>
+  );
 }
 
-export function PopsView({
-  uid,
-  data,
-  companyEmail,
-}: {
-  uid: string;
-  data: PilotisDataState;
-  companyEmail?: string | null;
-}) {
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('Todos');
-  const [selectedPopId, setSelectedPopId] = useState<string>('');
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [pdfPreviewOpen, setPdfPreviewOpen] = useState(false);
-  const [editingPop, setEditingPop] = useState<Pop | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [feedback, setFeedback] = useState<{ tone: 'ok' | 'bad'; title: string; text: string } | null>(null);
-
-  // Editor state
-  const [title, setTitle] = useState('');
-  const [serviceType, setServiceType] = useState('');
-  const [version, setVersion] = useState('v1.0');
-  const [linkedStagePhase, setLinkedStagePhase] = useState('');
-  const [objective, setObjective] = useState('');
-  const [materialsAndEpi, setMaterialsAndEpi] = useState('');
-  const [stepsText, setStepsText] = useState('');
-  const [criteriaText, setCriteriaText] = useState('');
-  const [popStatus, setPopStatus] = useState<PopStatus>('Vigente');
-  const [usedInOnboarding, setUsedInOnboarding] = useState(true);
-  const [actor, setActor] = useState<ActorRole>('Sócio');
-
-  const filteredPops = data.pops.filter((p) => {
-    const matchStatus =
-      statusFilter === 'Todos'
-        ? true
-        : statusFilter === 'Vigentes'
-        ? p.status === 'Vigente'
-        : p.status === 'Em revisão';
-    const q = search.trim().toLowerCase();
-    const matchQuery =
-      !q ||
-      p.title.toLowerCase().includes(q) ||
-      p.serviceType.toLowerCase().includes(q) ||
-      p.linkedStagePhase.toLowerCase().includes(q);
-    return matchStatus && matchQuery;
-  });
-
-  const activePop =
-    data.pops.find((p) => p.id === selectedPopId) || filteredPops[0] || data.pops[0] || null;
-
-  function openNewPop() {
-    setEditingPop(null);
-    setTitle('');
-    setServiceType('');
-    setVersion('v1.0');
-    setLinkedStagePhase('');
-    setObjective('');
-    setMaterialsAndEpi('');
-    setStepsText('');
-    setCriteriaText('');
-    setPopStatus('Vigente');
-    setUsedInOnboarding(true);
-    setActor('Sócio');
-    setEditorOpen(true);
-  }
-
-  function openEditPop(pop: Pop, asNewVersion = false) {
-    setEditingPop(pop);
-    setTitle(pop.title);
-    setServiceType(pop.serviceType);
-    setVersion(asNewVersion ? incrementVersion(pop.version) : pop.version);
-    setLinkedStagePhase(pop.linkedStagePhase || '');
-    setObjective(pop.objective || '');
-    setMaterialsAndEpi(pop.materialsAndEpi || '');
-    setStepsText((pop.steps || []).join('\n'));
-    setCriteriaText((pop.acceptanceCriteria || []).join('\n'));
-    setPopStatus(pop.status);
-    setUsedInOnboarding(Boolean(pop.usedInOnboarding));
-    setActor('Sócio');
-    setEditorOpen(true);
-  }
-
-  async function handleSavePop(e: React.FormEvent) {
-    e.preventDefault();
-    if (!title.trim() || !serviceType.trim()) return;
-    setSaving(true);
-    try {
-      const steps = stepsText
-        .split('\n')
-        .map((s) => clampStr(s, 300))
-        .filter(Boolean)
-        .slice(0, 20);
-      const acceptanceCriteria = criteriaText
-        .split('\n')
-        .map((s) => clampStr(s, 200))
-        .filter(Boolean)
-        .slice(0, 20);
-
-      const payload = {
-        title: clampStr(title, 160),
-        serviceType: clampStr(serviceType, 80),
-        version: clampStr(version || 'v1.0', 20),
-        linkedStagePhase: clampStr(linkedStagePhase, 80),
-        objective: clampStr(objective, 1000),
-        materialsAndEpi: clampStr(materialsAndEpi, 1000),
-        steps,
-        acceptanceCriteria,
-        status: popStatus,
-        usedInOnboarding,
-      };
-
-      if (editingPop) {
-        await updateRecord(
-          'pops',
-          editingPop.id,
-          uid,
-          actor,
-          payload,
-          `POP atualizado: ${payload.title} (${payload.version})`,
-          editingPop.version,
-          payload.version
-        );
-        setSelectedPopId(editingPop.id);
-        setFeedback({
-          tone: 'ok',
-          title: 'POP salvo',
-          text: `${payload.title} (${payload.version}) atualizado com sucesso.`,
-        });
-      } else {
-        const newId = await createRecord(
-          'pops',
-          uid,
-          actor,
-          payload,
-          `POP publicado: ${payload.title} (${payload.version})`
-        );
-        setSelectedPopId(newId);
-        setFeedback({
-          tone: 'ok',
-          title: 'POP criado',
-          text: `${payload.title} foi adicionado à biblioteca e já pode ser vinculado às etapas da obra.`,
-        });
-      }
-      setEditorOpen(false);
-    } finally {
-      setSaving(false);
-    }
-  }
-
+function ProcedureContent({ popId, source }: { popId: string; source: PopContent }) {
   return (
-    <div className="flex flex-col gap-6">
-      <PageHeader
-        title="POPs"
-        subtitle="Procedimentos Operacionais Padrão por tipo de serviço"
-        companyEmail={companyEmail}
-        actions={
-          <>
-            {activePop && (
-              <button
-                type="button"
-                onClick={() => setPdfPreviewOpen(true)}
-                className="px-4 py-2.5 rounded-lg border border-[#E4E1DA] bg-white text-sm font-semibold text-[#14181F] hover:bg-[#F0EEE9] cursor-pointer inline-flex items-center gap-2"
-              >
-                <Printer className="w-4 h-4" /> Exportar PDF da empresa
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={openNewPop}
-              className="px-4 py-2.5 rounded-lg bg-[#1F3A5F] text-white text-sm font-semibold hover:bg-[#182E4C] cursor-pointer"
-            >
-              Novo POP
-            </button>
-          </>
-        }
-      />
+    <div className="grid gap-4">
+      {([
+        ['Objetivo', source.objective],
+        ['Materiais e EPIs', source.materialsAndEpi],
+        ['Ferramentas', source.tools],
+        ['Equipamentos de proteção', source.protectiveEquipment],
+      ]).map(([title, content]) => content && <section key={title} className="grid gap-1">
+        <h3 className="text-sm font-semibold">{title}</h3><p className={plain}>{content}</p>
+      </section>)}
+      <section className="grid gap-2">
+        <h3 className="text-sm font-semibold">Passo a passo</h3>
+        {source.steps?.length ? <ol className="grid list-decimal gap-2 pl-6 text-sm leading-relaxed">
+          {source.steps.map((step, index) => <li key={index} className="rounded-lg bg-[#F6F5F2] p-2 break-words">{step}</li>)}
+        </ol> : <p className={plain}>Sem passos registrados.</p>}
+      </section>
+      <section className="grid gap-2">
+        <h3 className="text-sm font-semibold">Critérios de aceite</h3>
+        {source.acceptanceCriteria?.length ? <ul className="grid gap-2 text-sm">
+          {source.acceptanceCriteria.map((item, index) => <li key={index} className="flex items-start gap-2 rounded-lg border border-[#E4E1DA] p-2">
+            <span aria-hidden="true">□</span><span className="break-words">{item}</span>
+          </li>)}
+        </ul> : <p className={plain}>Sem critérios registrados.</p>}
+      </section>
+      {!!source.attachments?.length && <section className="grid gap-2">
+        <h3 className="text-sm font-semibold">Fotos e vídeos</h3>
+        <ul className="grid gap-2">{source.attachments.map((item) => <AttachmentPreview key={item.id} popId={popId} attachment={item} />)}</ul>
+      </section>}
+    </div>
+  );
+}
 
-      {feedback && (
-        <AlertNote tone={feedback.tone} title={feedback.title}>
-          {feedback.text}
-        </AlertNote>
-      )}
+function EditableList({ items, onChange, title, singular, limit }: {
+  items: string[]; onChange: (items: string[]) => void; title: string; singular: string; limit: number;
+}) {
+  return (
+    <fieldset className="grid gap-2 rounded-lg border border-[#E4E1DA] p-3">
+      <legend className="px-1 text-sm font-semibold">{title}</legend>
+      {items.map((item, index) => <div key={index} className="flex items-end gap-2">
+        <label className={label + ' flex-1'}>{singular} {index + 1}
+          <textarea className={field} rows={2} maxLength={limit} value={item}
+            onChange={(event) => onChange(items.map((value, position) => position === index ? event.target.value : value))} />
+        </label>
+        <button type="button" className={secondary} onClick={() => onChange(items.filter((_, position) => position !== index))}
+          aria-label={'Remover ' + singular.toLowerCase() + ' ' + (index + 1)}>Remover</button>
+      </div>)}
+      <button type="button" className={secondary + ' justify-self-start'} disabled={items.length >= 20}
+        onClick={() => onChange([...items, ''])}>Adicionar {singular.toLowerCase()}</button>
+    </fieldset>
+  );
+}
 
-      {data.pops.length === 0 ? (
-        <EmptySection
-          title="Nenhum POP cadastrado"
-          description="Crie os Procedimentos Operacionais Padrão da construtora (fundação, revestimentos, pintura, elétrica, EPS). Eles alimentam os checklists das etapas e o onboarding."
-          actionLabel="Criar primeiro POP"
-          onAction={openNewPop}
-        />
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
-          {/* Biblioteca */}
-          <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-base font-semibold text-[#14181F]">Biblioteca ({filteredPops.length})</h2>
-            </div>
+export function PopsView({ uid, data, companyEmail }: { uid: string; data: PilotisDataState; companyEmail?: string | null }) {
+  const [activeId, setActiveId] = useState(() => new URLSearchParams(window.location.search).get('pop') ?? '');
+  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState('Todos');
+  const [editor, setEditor] = useState<Pop | 'new' | null>(null);
+  const [draft, setDraft] = useState<PopContent>(emptyContent);
+  const [files, setFiles] = useState<NewPopFile[]>([]);
+  const [summary, setSummary] = useState('');
+  const [actor, setActor] = useState<ActorRole>('Sócio');
+  const [preparing, setPreparing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [error, setError] = useState('');
+  const [feedback, setFeedback] = useState('');
+  const [versionPreview, setVersionPreview] = useState<PopVersion | null>(null);
+  const [restoration, setRestoration] = useState<{ pop: Pop; version: PopVersion } | null>(null);
+  const [linking, setLinking] = useState<Pop | null>(null);
+  const [projectId, setProjectId] = useState('');
+  const [stageId, setStageId] = useState('');
 
-            <SegmentedControl
-              items={['Todos', 'Vigentes', 'Em revisão']}
-              active={statusFilter}
-              onChange={setStatusFilter}
-            />
+  const filtered = data.pops.filter((pop) => {
+    const content = !isPublishedPop(pop) ? (pop.draft ?? pop) : pop;
+    const term = search.trim().toLocaleLowerCase('pt-BR');
+    return (status === 'Todos' || status === pop.status) &&
+      [content.title, content.serviceType, content.linkedStagePhase].some((value) => (value ?? '').toLocaleLowerCase('pt-BR').includes(term));
+  });
+  const active = filtered.find((pop) => pop.id === activeId) ?? filtered[0];
+  const published = active && isPublishedPop(active);
+  const current = active ? (published ? active : active.draft ?? active) : null;
+  const history = (data.popVersions ?? []).filter((version) => version.popId === active?.id).sort((a, b) => b.publicationNumber - a.publicationNumber);
+  const linkedStages = data.stages.filter((stage) => stage.popId === active?.id);
+  const allowedProjects = data.projects.filter((project) => project.status !== 'Concluída');
+  const candidateStages = data.stages.filter((stage) => stage.projectId === projectId && stage.status !== 'Concluída');
+  const setDraftValue = <K extends keyof PopContent,>(key: K, value: PopContent[K]) => setDraft((previous) => ({ ...previous, [key]: value }));
 
-            <div className="relative">
-              <Search className="w-4 h-4 text-[#5B6472] absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="search"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Buscar POP ou serviço..."
-                className="w-full rounded-lg border border-[#E4E1DA] pl-9 pr-3 py-2 text-sm"
-              />
-            </div>
+  function openEditor(pop?: Pop) {
+    setEditor(pop ?? 'new'); setDraft(pop ? readPopContent(pop.draft ?? pop) : emptyContent);
+    setFiles([]); setSummary(''); setError(''); setFeedback('');
+  }
 
-            <div className="flex flex-col gap-2">
-              {filteredPops.length === 0 ? (
-                <p className="text-xs text-[#5B6472] py-4 text-center">
-                  Nenhum procedimento corresponde ao filtro.
-                </p>
-              ) : (
-                filteredPops.map((pop) => {
-                  const isActive = activePop?.id === pop.id;
-                  return (
-                    <button
-                      key={pop.id}
-                      type="button"
-                      onClick={() => setSelectedPopId(pop.id)}
-                      className={`text-left border rounded-xl p-3.5 transition-colors cursor-pointer ${
-                        isActive
-                          ? 'border-[#1F3A5F] bg-[#E6EEFB]/50'
-                          : 'border-[#E4E1DA] bg-white hover:bg-[#F6F5F2]'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-2 mb-1">
-                        <strong className="text-sm font-semibold text-[#14181F] truncate">
-                          {pop.title}
-                        </strong>
-                        <StatusBadge label={pop.status} />
-                      </div>
-                      <span className="text-xs text-[#5B6472] block">
-                        {pop.serviceType} · {pop.version}
-                        {pop.linkedStagePhase ? ` · Etapa: ${pop.linkedStagePhase}` : ''}
-                      </span>
-                    </button>
-                  );
-                })
-              )}
-            </div>
+  async function addAttachments(picks: File[]) {
+    if ((draft.attachments?.length ?? 0) + picks.length > POP_ATTACHMENT_LIMIT) {
+      setError('Selecione até oito anexos por POP.'); return;
+    }
+    setPreparing(true); setError('');
+    try {
+      const prepared = [];
+      for (const file of picks) prepared.push(await preparePopAttachment(file));
+      const attachments = [...(draft.attachments ?? []), ...prepared.map((file) => file.attachment)];
+      if (attachments.reduce((total, item) => total + item.size, 0) > POP_MEDIA_TOTAL_BYTES) {
+        throw new Error('Os anexos do POP podem somar até 5 MB.');
+      }
+      setDraftValue('attachments', attachments); setFiles((previous) => [...previous, ...prepared]);
+    } catch (err) { setError(err instanceof Error ? err.message : 'Não foi possível preparar os anexos.'); }
+    finally { setPreparing(false); }
+  }
+
+  async function save(action: 'draft' | 'publish') {
+    if (!editor || saving || preparing) return;
+    setSaving(true); setError('');
+    const pop = editor === 'new' ? undefined : editor;
+    try {
+      const id = await savePop({
+        action, uid, actor, popId: pop?.id, expectedRevision: pop?.revision, files,
+        content: { ...draft, steps: draft.steps.map((item) => item.trim()).filter(Boolean),
+          acceptanceCriteria: draft.acceptanceCriteria.map((item) => item.trim()).filter(Boolean) },
+        changeSummary: summary,
+      });
+      setActiveId(id); setStatus('Todos'); setSearch(''); setEditor(null);
+      setFeedback(action === 'draft' ? 'Revisão salva.' : 'Versão publicada.');
+    } catch (err) { setError(err instanceof Error ? err.message : 'Não foi possível salvar o POP.'); }
+    finally { setSaving(false); }
+  }
+
+  async function exportPdf(pop: Pop) {
+    setDownloading(true); setError('');
+    try { await downloadPopPdf(pop, data.settings); }
+    catch (err) { setError(err instanceof Error ? err.message : 'Não foi possível exportar o PDF.'); }
+    finally { setDownloading(false); }
+  }
+  const formError = error && <p role="alert" className="text-sm text-[#B42318]">{error}</p>;
+  return (
+    <div className="grid gap-5">
+      <PageHeader title="POPs" subtitle="Procedimentos operacionais para obras e integração"
+        companyEmail={companyEmail} actions={<button type="button" className={primary} onClick={() => openEditor()}>Novo POP</button>} />
+      {feedback && <AlertNote tone="ok" title="POPs">{feedback}</AlertNote>}
+      {!editor && !restoration && !linking && formError}
+
+      {!data.pops.length ? <EmptySection title="Nenhum POP cadastrado" description="Cadastre um procedimento para usar nas obras e na integração." actionLabel="Criar POP" onAction={() => openEditor()} /> : (
+        <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+          <section className={panel}>
+            <h2 className="text-base font-semibold">Biblioteca</h2>
+            <SegmentedControl items={['Todos', 'Vigente', 'Em revisão']} active={status} onChange={setStatus} />
+            <label className={label}>Buscar POP
+              <input className={field} type="search" value={search} onChange={(event) => setSearch(event.target.value)} />
+            </label>
+            {filtered.length ? <ul className="grid gap-2">{filtered.map((pop) => (
+              <li key={pop.id}><button type="button" aria-pressed={active?.id === pop.id}
+                onClick={() => {
+                  setActiveId(pop.id);
+                  if (window.matchMedia('(max-width: 767px)').matches) document.getElementById('pop-reading')?.scrollIntoView({ block: 'start' });
+                }} className="grid w-full gap-1 rounded-lg border border-[#E4E1DA] p-3 text-left focus-visible:ring-2 focus-visible:ring-[#1F3A5F] aria-pressed:border-[#1F3A5F] aria-pressed:bg-[#E6EEFB]">
+                <span className="flex flex-wrap items-center gap-2"><strong className="break-words text-sm">{pop.title}</strong><StatusBadge label={pop.status} /></span>
+                <span className="text-xs text-[#5B6472]">{pop.serviceType}{isPublishedPop(pop) && ' · ' + pop.version}</span>
+              </button></li>
+            ))}</ul> : <p className={plain}>Sem procedimentos neste filtro.</p>}
           </section>
-
-          {/* Detalhe do POP */}
-          <section className="lg:col-span-2 bg-white border border-[#E4E1DA] rounded-xl p-6 flex flex-col gap-5">
-            {!activePop ? (
-              <p className="text-sm text-[#5B6472]">Selecione um procedimento na biblioteca.</p>
-            ) : (
-              <>
-                <div className="flex flex-wrap items-start justify-between gap-3 pb-4 border-b border-[#E4E1DA]">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2 mb-1">
-                      <h2 className="text-xl font-bold text-[#14181F]">{activePop.title}</h2>
-                      <StatusBadge label={activePop.version} tone="info" />
-                      <StatusBadge label={activePop.status} />
-                    </div>
-                    <p className="text-xs text-[#5B6472]">
-                      Serviço: {activePop.serviceType}
-                      {activePop.linkedStagePhase ? ` · Etapa vinculada: ${activePop.linkedStagePhase}` : ''}
-                      {activePop.usedInOnboarding ? ' · Usado no onboarding' : ''}
-                      {` · Atualizado por ${activePop.updatedBy} (${formatTimestampBR(activePop.updatedAt)})`}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => openEditPop(activePop, false)}
-                      className="px-3.5 py-2 rounded-lg border border-[#E4E1DA] text-xs font-semibold text-[#14181F] hover:bg-[#F0EEE9] cursor-pointer"
-                    >
-                      Editar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openEditPop(activePop, true)}
-                      className="px-3.5 py-2 rounded-lg bg-[#1F3A5F] text-white text-xs font-semibold hover:bg-[#182E4C] cursor-pointer"
-                    >
-                      Nova versão ({incrementVersion(activePop.version)})
-                    </button>
-                  </div>
+          {active && current && <section id="pop-reading" className={panel + ' scroll-mt-24'}>
+            <header className="grid gap-2 border-b border-[#E4E1DA] pb-3">
+              <div className="flex flex-wrap items-center gap-2"><h2 className="break-words text-lg font-bold">{current.title}</h2>
+                <StatusBadge label={published ? active.version : 'Aguardando publicação'} tone="info" />
+              </div>
+              <p className="text-xs text-[#5B6472]">
+                {current.serviceType}{active.publishedOn && ' · Publicado em ' + formatDateBR(active.publishedOn)}
+                {active.approvedBy && ' · Aprovado por ' + active.approvedBy}
+              </p>
+              {active.changeSummary && <p className={plain}>{active.changeSummary}</p>}
+              {active.draft && published && <p className="text-xs text-[#5B6472]">Há uma revisão salva. O conteúdo exibido é o publicado.</p>}
+              <div className="flex flex-wrap gap-2">
+                <button type="button" className={secondary} onClick={() => openEditor(active)}>{active.draft ? 'Editar revisão' : 'Nova revisão'}</button>
+                {published && <button type="button" className={primary} onClick={() => void exportPdf(active)} disabled={downloading}>
+                  {downloading ? 'Gerando PDF...' : 'Exportar PDF'}
+                </button>}
+              </div>
+            </header>
+            <ProcedureContent popId={active.id} source={current} />
+            <section className="grid gap-2 border-t border-[#E4E1DA] pt-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold">Vínculos</h3>
+                {published && <button type="button" className={secondary} onClick={() => {
+                  setLinking(active); setProjectId(''); setStageId(''); setError(''); setFeedback('');
+                }}>Vincular etapa</button>}
+              </div>
+              {current.linkedStagePhase && <p className={plain}>Fase sugerida · {current.linkedStagePhase}</p>}
+              {current.usedInOnboarding && <p className={plain}>{published ? 'Disponível no treinamento de integração da Equipe.' : 'Vínculo com integração aguardando a publicação.'}</p>}
+              {linkedStages.length ? <ul className="grid gap-1 text-sm">
+                {linkedStages.map((stage) => <li key={stage.id}>{data.projects.find((item) => item.id === stage.projectId)?.name ?? 'Obra'} · {stage.name}</li>)}
+              </ul> : <p className={plain}>Sem etapas vinculadas.</p>}
+            </section>
+            <section className="grid gap-2 border-t border-[#E4E1DA] pt-3">
+              <h3 className="text-sm font-semibold">Histórico de versões</h3>
+              {history.length ? <ul className="grid gap-2">{history.map((item) => <li key={item.id} className="grid gap-2 rounded-lg border border-[#E4E1DA] p-3">
+                <div className="flex flex-wrap gap-2 text-sm"><strong>{item.version}</strong>
+                  <span>{item.publishedOn ? formatDateBR(item.publishedOn) : 'Data de publicação sem registro'}</span>
+                  <span>{item.approvedBy ? 'Aprovação · ' + item.approvedBy : 'Aprovação sem registro'}</span>
                 </div>
-
-                {activePop.objective && (
-                  <div>
-                    <h3 className="text-sm font-semibold text-[#14181F] mb-1">Objetivo</h3>
-                    <p className="text-sm text-[#5B6472] leading-relaxed">{activePop.objective}</p>
-                  </div>
-                )}
-
-                {activePop.materialsAndEpi && (
-                  <div>
-                    <h3 className="text-sm font-semibold text-[#14181F] mb-1">Materiais e EPIs obrigatórios</h3>
-                    <p className="text-sm text-[#5B6472] leading-relaxed">{activePop.materialsAndEpi}</p>
-                  </div>
-                )}
-
-                <div>
-                  <h3 className="text-sm font-semibold text-[#14181F] mb-2">Passo a passo</h3>
-                  {activePop.steps.length === 0 ? (
-                    <p className="text-sm text-[#5B6472]">Nenhum passo cadastrado.</p>
-                  ) : (
-                    <ol className="flex flex-col gap-2">
-                      {activePop.steps.map((step, i) => (
-                        <li
-                          key={i}
-                          className="flex items-start gap-3 bg-[#F6F5F2] border border-[#E4E1DA] rounded-lg px-3.5 py-2.5 text-sm text-[#14181F]"
-                        >
-                          <span className="w-6 h-6 rounded-full bg-[#1F3A5F] text-white text-xs font-bold grid place-items-center shrink-0">
-                            {i + 1}
-                          </span>
-                          <span>{step}</span>
-                        </li>
-                      ))}
-                    </ol>
-                  )}
+                {item.changeSummary && <p className={plain}>{item.changeSummary}</p>}
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" className={secondary} onClick={() => setVersionPreview(item)}>Consultar versão</button>
+                  <button type="button" className={secondary} onClick={() => {
+                    setRestoration({ pop: active, version: item }); setError(''); setSummary('Restauração da versão ' + item.version);
+                  }}>Restaurar como nova versão</button>
                 </div>
-
-                <div>
-                  <h3 className="text-sm font-semibold text-[#14181F] mb-2">
-                    Critérios de aceite (checklist de conferência)
-                  </h3>
-                  {activePop.acceptanceCriteria.length === 0 ? (
-                    <p className="text-sm text-[#5B6472]">Nenhum critério de aceite cadastrado.</p>
-                  ) : (
-                    <ul className="flex flex-col gap-2">
-                      {activePop.acceptanceCriteria.map((crit, i) => (
-                        <li
-                          key={i}
-                          className="flex items-center gap-2.5 border border-[#E4E1DA] rounded-lg px-3.5 py-2 text-sm text-[#14181F]"
-                        >
-                          <span className="text-[#1E7F5C] font-bold">✓</span>
-                          <span>{crit}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              </>
-            )}
-          </section>
+              </li>)}</ul> : <p className={plain}>Sem versões anteriores.</p>}
+            </section>
+          </section>}
         </div>
       )}
 
-      {/* Editor Modal */}
-      <Modal
-        open={editorOpen}
-        onClose={() => setEditorOpen(false)}
-        title={editingPop ? `Editar POP · ${version}` : 'Novo POP'}
-        maxWidth="max-w-2xl"
-      >
-        <form onSubmit={handleSavePop} className="flex flex-col gap-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="pop-title" className="text-[13px] font-semibold text-[#14181F]">
-                Título do procedimento
-              </label>
-              <input
-                id="pop-title"
-                required
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="Ex.: Assentamento de revestimento cerâmico"
-                className="w-full rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="pop-svc" className="text-[13px] font-semibold text-[#14181F]">
-                Tipo de serviço
-              </label>
-              <input
-                id="pop-svc"
-                required
-                value={serviceType}
-                onChange={(e) => setServiceType(e.target.value)}
-                placeholder="Revestimentos, Fundação, Pintura, EPS..."
-                className="w-full rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="pop-ver" className="text-[13px] font-semibold text-[#14181F]">
-                Versão
-              </label>
-              <input
-                id="pop-ver"
-                required
-                value={version}
-                onChange={(e) => setVersion(e.target.value)}
-                className="w-full rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="pop-phase" className="text-[13px] font-semibold text-[#14181F]">
-                Etapa vinculada no planejamento
-              </label>
-              <input
-                id="pop-phase"
-                value={linkedStagePhase}
-                onChange={(e) => setLinkedStagePhase(e.target.value)}
-                placeholder="Ex.: Revestimentos, Cobertura"
-                className="w-full rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="pop-status" className="text-[13px] font-semibold text-[#14181F]">
-                Status
-              </label>
-              <select
-                id="pop-status"
-                value={popStatus}
-                onChange={(e) => setPopStatus(e.target.value as PopStatus)}
-                className="w-full rounded-lg border border-[#E4E1DA] bg-white px-3.5 py-2.5 text-sm"
-              >
-                <option value="Vigente">Vigente</option>
-                <option value="Em revisão">Em revisão</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="pop-obj" className="text-[13px] font-semibold text-[#14181F]">
-              Objetivo
+      <Modal open={Boolean(editor)} onClose={() => { if (!saving && !preparing) setEditor(null); }}
+        title={editor === 'new' ? 'Novo POP' : 'Editar revisão'} maxWidth="max-w-2xl">
+        <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); void save('publish'); }}>
+          <fieldset className="grid gap-2 rounded-lg border border-[#E4E1DA] p-3">
+            <legend className="px-1 text-sm font-semibold">Identificação</legend>
+            <label className={label}>Título
+              <input className={field} required maxLength={160} value={draft.title} onChange={(event) => setDraftValue('title', event.target.value)} />
             </label>
-            <textarea
-              id="pop-obj"
-              rows={2}
-              value={objective}
-              onChange={(e) => setObjective(e.target.value)}
-              placeholder="Garantir alinhamento, nivelamento e padrão técnico da entrega."
-              className="w-full rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="pop-mat" className="text-[13px] font-semibold text-[#14181F]">
-              Materiais, ferramentas e EPIs
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className={label}>Tipo de serviço
+                <input className={field} required maxLength={80} value={draft.serviceType} onChange={(event) => setDraftValue('serviceType', event.target.value)} />
+              </label>
+              <label className={label}>Fase sugerida no planejamento
+                <input className={field} maxLength={80} value={draft.linkedStagePhase} onChange={(event) => setDraftValue('linkedStagePhase', event.target.value)} />
+              </label>
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={draft.usedInOnboarding} onChange={(event) => setDraftValue('usedInOnboarding', event.target.checked)} />
+              Incluir no treinamento de integração
             </label>
-            <input
-              id="pop-mat"
-              value={materialsAndEpi}
-              onChange={(e) => setMaterialsAndEpi(e.target.value)}
-              placeholder="Argamassa colante, nível a laser; luvas, óculos e botina."
-              className="w-full rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
-            />
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="pop-steps" className="text-[13px] font-semibold text-[#14181F]">
-                Passo a passo (1 passo por linha)
-              </label>
-              <textarea
-                id="pop-steps"
-                rows={4}
-                value={stepsText}
-                onChange={(e) => setStepsText(e.target.value)}
-                placeholder={'Conferir nivelamento do contrapiso\nAplicar argamassa\nAssentar e alinhar'}
-                className="w-full rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="pop-crit" className="text-[13px] font-semibold text-[#14181F]">
-                Critérios de aceite (1 por linha)
-              </label>
-              <textarea
-                id="pop-crit"
-                rows={4}
-                value={criteriaText}
-                onChange={(e) => setCriteriaText(e.target.value)}
-                placeholder={'Alinhamento e nível conferidos\nTeste de percussão aprovado\nFotos anexadas'}
-                className="w-full rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
-              />
-            </div>
-          </div>
-
-          <label className="flex items-center gap-2 text-sm text-[#14181F] cursor-pointer">
-            <input
-              type="checkbox"
-              checked={usedInOnboarding}
-              onChange={(e) => setUsedInOnboarding(e.target.checked)}
-              className="w-4 h-4 rounded border-[#E4E1DA]"
-            />
-            Usar este POP na integração (onboarding) da equipe
+          </fieldset>
+          {([
+            ['objective', 'Objetivo'], ['materialsAndEpi', 'Materiais'], ['tools', 'Ferramentas'],
+            ['protectiveEquipment', 'Equipamentos de proteção'],
+          ] as const).map(([key, title]) => <label className={label} key={key}>{title}
+            <textarea className={field} rows={2} maxLength={1000} value={draft[key] ?? ''} onChange={(event) => setDraftValue(key, event.target.value)} />
+          </label>)}
+          <EditableList title="Passo a passo" singular="Passo" limit={300} items={draft.steps} onChange={(items) => setDraftValue('steps', items)} />
+          <EditableList title="Checklist de critérios de aceite" singular="Critério" limit={200} items={draft.acceptanceCriteria} onChange={(items) => setDraftValue('acceptanceCriteria', items)} />
+          <fieldset className="grid gap-2 rounded-lg border border-[#E4E1DA] p-3">
+            <legend className="px-1 text-sm font-semibold">Fotos e vídeos</legend>
+            <label className={label}>Anexar arquivos
+              <input className={field} type="file" accept="image/*,video/mp4,video/webm,video/quicktime" multiple disabled={preparing || saving}
+                onChange={(event) => { const picked = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ''; if (picked.length) void addAttachments(picked); }} />
+            </label>
+            <p className="text-xs text-[#5B6472]">Até oito arquivos e 5 MB no total. Vídeos em MP4, WebM ou MOV.</p>
+            {preparing && <p role="status" className={plain}>Preparando arquivos...</p>}
+            {draft.attachments?.map((item) => <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+              <span className="break-words">{item.name}</span>
+              <button type="button" className={secondary} disabled={saving || preparing} onClick={() => {
+                setDraftValue('attachments', draft.attachments?.filter((asset) => asset.id !== item.id) ?? []);
+                setFiles((saved) => saved.filter((file) => file.attachment.id !== item.id));
+              }}>Remover</button>
+            </div>)}
+          </fieldset>
+          <label className={label}>O que mudou nesta publicação
+            <textarea className={field} rows={2} maxLength={500} value={summary} onChange={(event) => setSummary(event.target.value)} />
           </label>
-
-          <RegisteredBySelect value={actor} onChange={setActor} id="pop-actor" />
-
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={() => setEditorOpen(false)}
-              className="px-4 py-2 rounded-lg border border-[#E4E1DA] text-sm font-semibold text-[#14181F] cursor-pointer"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="px-4 py-2 rounded-lg bg-[#1F3A5F] text-white text-sm font-semibold cursor-pointer disabled:opacity-50"
-            >
-              {saving ? 'Salvando...' : 'Publicar POP'}
+          <RegisteredBySelect id="pop-actor" value={actor} onChange={setActor} />
+          <p className="text-xs text-[#5B6472]">Ao publicar, a pessoa registrada fica como aprovadora da versão.</p>
+          {formError}
+          <div className="flex flex-wrap justify-end gap-2">
+            <button type="button" className={secondary} disabled={saving || preparing} onClick={() => void save('draft')}>Salvar revisão</button>
+            <button type="submit" className={primary} disabled={saving || preparing}>
+              {saving ? 'Salvando...' : 'Publicar ' + nextPopVersion(editor && editor !== 'new' ? editor : undefined)}
             </button>
           </div>
         </form>
       </Modal>
 
-      {/* PDF Export Modal */}
-      {activePop && (
-        <Modal
-          open={pdfPreviewOpen}
-          onClose={() => setPdfPreviewOpen(false)}
-          title="Exportar POP em PDF com identidade da empresa"
-          maxWidth="max-w-3xl"
-        >
-          <div className="flex flex-col gap-4">
-            <div className="bg-white border border-[#E4E1DA] rounded-xl p-8 flex flex-col gap-4 shadow-sm print-sheet">
-              <CompanyPdfHeader
-                settings={data.settings}
-                subtitle={`Procedimento Operacional Padrão · ${activePop.version} · ${activePop.serviceType}`}
-              />
+      <Modal open={Boolean(versionPreview)} onClose={() => setVersionPreview(null)} title={versionPreview?.version ?? 'Versão anterior'} maxWidth="max-w-2xl">
+        {versionPreview && <div className="grid gap-3"><h2 className="text-lg font-bold">{versionPreview.title}</h2>
+          <ProcedureContent popId={versionPreview.popId} source={versionPreview} />
+        </div>}
+      </Modal>
 
-              <h3 className="text-xl font-bold text-[#14181F]">{activePop.title}</h3>
+      <Modal open={Boolean(restoration)} onClose={() => { if (!saving) setRestoration(null); }} title="Restaurar versão">
+        <form className="grid gap-3" onSubmit={async (event) => {
+          event.preventDefault(); if (!restoration) return;
+          setSaving(true); setError('');
+          try {
+            await savePop({ action: 'restore', uid, actor, popId: restoration.pop.id, expectedRevision: restoration.pop.revision,
+              versionId: restoration.version.id, changeSummary: summary });
+            setRestoration(null); setStatus('Todos'); setFeedback('A versão anterior foi restaurada como uma nova publicação.');
+          } catch (err) { setError(err instanceof Error ? err.message : 'Não foi possível restaurar a versão.'); }
+          finally { setSaving(false); }
+        }}>
+          {restoration && <p className={plain}>O conteúdo da {restoration.version.version} será publicado como {nextPopVersion(restoration.pop)}.</p>}
+          <label className={label}>Registro da mudança
+            <textarea required rows={2} maxLength={500} className={field} value={summary} onChange={(event) => setSummary(event.target.value)} />
+          </label>
+          <RegisteredBySelect id="pop-restore-actor" value={actor} onChange={setActor} />
+          {formError}
+          <button className={primary + ' justify-self-end'} type="submit" disabled={saving}>{saving ? 'Restaurando...' : 'Publicar restauração'}</button>
+        </form>
+      </Modal>
 
-              {activePop.objective && (
-                <p className="text-sm text-[#14181F]">
-                  <strong>Objetivo:</strong> {activePop.objective}
-                </p>
-              )}
-              {activePop.materialsAndEpi && (
-                <p className="text-sm text-[#14181F]">
-                  <strong>Materiais e EPIs:</strong> {activePop.materialsAndEpi}
-                </p>
-              )}
-              {activePop.steps.length > 0 && (
-                <div>
-                  <strong className="text-sm text-[#14181F] block mb-1">Passo a passo:</strong>
-                  <ol className="list-decimal pl-5 text-sm text-[#14181F] space-y-1">
-                    {activePop.steps.map((s, idx) => (
-                      <li key={idx}>{s}</li>
-                    ))}
-                  </ol>
-                </div>
-              )}
-              {activePop.acceptanceCriteria.length > 0 && (
-                <div>
-                  <strong className="text-sm text-[#14181F] block mb-1">Critérios de aceite:</strong>
-                  <ul className="list-disc pl-5 text-sm text-[#14181F] space-y-1">
-                    {activePop.acceptanceCriteria.map((c, idx) => (
-                      <li key={idx}>{c}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-
-            <div className="flex justify-end gap-2 no-print">
-              <button
-                type="button"
-                onClick={() => setPdfPreviewOpen(false)}
-                className="px-4 py-2 rounded-lg border border-[#E4E1DA] text-sm font-semibold text-[#14181F] cursor-pointer"
-              >
-                Fechar
-              </button>
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="px-4 py-2 rounded-lg bg-[#1F3A5F] text-white text-sm font-semibold hover:bg-[#182E4C] cursor-pointer inline-flex items-center gap-2"
-              >
-                <Printer className="w-4 h-4" /> Imprimir / Salvar PDF
-              </button>
-            </div>
-          </div>
-        </Modal>
-      )}
+      <Modal open={Boolean(linking)} onClose={() => { if (!saving) setLinking(null); }} title="Vincular etapa da obra">
+        <form className="grid gap-3" onSubmit={async (event) => {
+          event.preventDefault(); if (!linking) return;
+          const project = allowedProjects.find((item) => item.id === projectId);
+          const stage = candidateStages.find((item) => item.id === stageId);
+          if (!project || !stage) return;
+          setSaving(true); setError('');
+          try {
+            const { id, ownerUid, createdBy, updatedBy, createdAt, updatedAt, ...fields } = stage;
+            await saveProjectStage({
+              uid, actor, project, knownStages: data.stages.filter((item) => item.projectId === projectId),
+              stageId: id, payload: { ...fields, popId: linking.id,
+                checklistCompleted: stage.popId === linking.id ? stage.checklistCompleted : [] },
+            });
+            setLinking(null); setFeedback('POP vinculado à etapa.');
+          } catch (err) { setError(err instanceof Error ? err.message : 'Não foi possível vincular a etapa.'); }
+          finally { setSaving(false); }
+        }}>
+          <label className={label}>Obra
+            <select className={field} required value={projectId} onChange={(event) => { setProjectId(event.target.value); setStageId(''); }}>
+              <option value="">Selecione a obra</option>{allowedProjects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+            </select>
+          </label>
+          <label className={label}>Etapa
+            <select className={field} required value={stageId} onChange={(event) => setStageId(event.target.value)}>
+              <option value="">Selecione a etapa</option>{candidateStages.map((stage) => <option key={stage.id} value={stage.id}>{stage.wbsCode} · {stage.name}</option>)}
+            </select>
+          </label>
+          <RegisteredBySelect id="pop-link-actor" value={actor} onChange={setActor} />
+          {formError}
+          <button type="submit" className={primary + ' justify-self-end'} disabled={saving || !stageId}>Vincular POP</button>
+        </form>
+      </Modal>
     </div>
   );
 }

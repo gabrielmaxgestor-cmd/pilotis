@@ -1,6 +1,11 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // AI conversations are accessible only through the authenticated Node backend.
+    match /conversasIA/{uid}/{document=**} {
+      allow read, write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }
@@ -28,6 +33,10 @@ service cloud.firestore {
         && request.auth.token.email_verified == true
         && request.auth.token.email is string
         && request.auth.token.email.lower() == companyEmail();
+    }
+
+    function isBoundedList() {
+      return request.query.limit != null && request.query.limit <= 201;
     }
 
     function isOwner(uid) {
@@ -71,7 +80,7 @@ service cloud.firestore {
       return data.keys().hasAll(['ownerUid', 'companyName', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
         && data.keys().hasOnly([
           'ownerUid', 'companyName', 'cnpj', 'fiscalAddress', 'city', 'email', 'phone',
-          'accentColor', 'logoDataUrl', 'pdfShowLogo', 'inssRate', 'fgtsRate', 'vacationRate',
+          'accentColor', 'logoDataUrl', 'pdfShowLogo', 'popPdfHeader', 'popPdfFooter', 'inssRate', 'fgtsRate', 'vacationRate',
           'thirteenthRate', 'targetMarginPct', 'taxParamsEffectiveDate', 'taxParamsSource',
           'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
         ])
@@ -85,6 +94,8 @@ service cloud.firestore {
         && (!('accentColor' in data) || isValidStr(data.accentColor, 20))
         && (!('logoDataUrl' in data) || isValidStr(data.logoDataUrl, 200000))
         && (!('pdfShowLogo' in data) || data.pdfShowLogo is bool)
+        && (!('popPdfHeader' in data) || isValidStr(data.popPdfHeader, 120))
+        && (!('popPdfFooter' in data) || isValidStr(data.popPdfFooter, 120))
         && (!('inssRate' in data) || isValidNonNegNum(data.inssRate))
         && (!('fgtsRate' in data) || isValidNonNegNum(data.fgtsRate))
         && (!('vacationRate' in data) || isValidNonNegNum(data.vacationRate))
@@ -165,17 +176,21 @@ service cloud.firestore {
         'ownerUid', 'name', 'type', 'contractValue', 'status', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
       ])
         && data.keys().hasOnly([
-          'ownerUid', 'name', 'quoteId', 'clientId', 'clientName', 'type', 'contractKind', 'planningStatus',
+          'ownerUid', 'name', 'quoteId', 'clientId', 'clientName', 'type', 'contractKind', 'planningStatus', 'scheduleRevision', 'scheduleBaselineVersion', 'scheduleStageIds', 'workInProgressLimit',
           'contractValue', 'contractPdf', 'downPaymentPct', 'installmentsCount', 'addendaTotalValue',
           'budgetedLabor', 'budgetedSubcontract', 'budgetedEquipment', 'budgetedBdi', 'budgetedTax',
           'startDate', 'baselineEndDate', 'forecastEndDate', 'status', 'contractSigned',
-          'warrantyStartDate', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+          'warrantyStartDate', 'closureDate', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
         ])
         && hasAuditFields(data)
         && isValidNonEmptyStr(data.name, 160)
         && data.type in ['Casa residencial', 'Reforma', 'Obra satélite']
         && (!('contractKind' in data) || data.contractKind in ['Principal', 'Satélite'])
         && (!('planningStatus' in data) || data.planningStatus in ['Aguardando modelo de cronograma', 'Cronograma criado'])
+        && (!('scheduleStageIds' in data) || data.scheduleStageIds is list)
+        && (!('scheduleBaselineVersion' in data) || (data.scheduleBaselineVersion is int && data.scheduleBaselineVersion >= 1))
+        && (!('workInProgressLimit' in data) || (data.workInProgressLimit is int && data.workInProgressLimit >= 1 && data.workInProgressLimit <= 100))
+        && (!('scheduleRevision' in data) || (data.scheduleRevision is int && data.scheduleRevision >= 0))
         && isValidNonNegNum(data.contractValue)
         && (!('contractPdf' in data) || (data.contractPdf is bytes && data.contractPdf.size() > 0 && data.contractPdf.size() <= 65536))
         && (!('downPaymentPct' in data) || (isValidNonNegNum(data.downPaymentPct) && data.downPaymentPct <= 100))
@@ -194,7 +209,8 @@ service cloud.firestore {
         && (!('baselineEndDate' in data) || isValidStr(data.baselineEndDate, 20))
         && (!('forecastEndDate' in data) || isValidStr(data.forecastEndDate, 20))
         && (!('contractSigned' in data) || data.contractSigned is bool)
-        && (!('warrantyStartDate' in data) || isValidStr(data.warrantyStartDate, 20));
+        && (!('warrantyStartDate' in data) || isValidStr(data.warrantyStartDate, 20))
+        && (!('closureDate' in data) || isValidNonEmptyStr(data.closureDate, 10));
     }
 
     function isValidInstallment(data) {
@@ -228,10 +244,10 @@ service cloud.firestore {
         'ownerUid', 'projectId', 'wbsCode', 'phase', 'name', 'status', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
       ])
         && data.keys().hasOnly([
-          'ownerUid', 'projectId', 'wbsCode', 'phase', 'name', 'responsible', 'durationWeeks',
-          'startWeek', 'baselineStartWeek', 'baselineDurationWeeks', 'progressPct', 'budgetedCost',
+          'ownerUid', 'projectId', 'wbsCode', 'phase', 'deliverable', 'name', 'responsible', 'durationWeeks',
+          'startWeek', 'baselineStartWeek', 'baselineDurationWeeks', 'baselineBudgetedCost', 'progressPct', 'budgetedCost',
           'popId', 'dependsOn', 'isMilestone', 'status', 'materialExpectedDate', 'delayCategory',
-          'delayJustification', 'checklistCompleted', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+          'delayJustification', 'checklistCompleted', 'popReview', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
         ])
         && hasAuditFields(data)
         && isValidId(data.projectId)
@@ -243,6 +259,8 @@ service cloud.firestore {
         && (!('durationWeeks' in data) || isValidNonNegNum(data.durationWeeks))
         && (!('startWeek' in data) || isValidNonNegNum(data.startWeek))
         && (!('baselineStartWeek' in data) || isValidNonNegNum(data.baselineStartWeek))
+        && (!('deliverable' in data) || isValidStr(data.deliverable, 120))
+        && (!('baselineBudgetedCost' in data) || isValidNonNegNum(data.baselineBudgetedCost))
         && (!('baselineDurationWeeks' in data) || isValidNonNegNum(data.baselineDurationWeeks))
         && (!('progressPct' in data) || (isValidNonNegNum(data.progressPct) && data.progressPct <= 100))
         && (!('budgetedCost' in data) || isValidNonNegNum(data.budgetedCost))
@@ -252,7 +270,14 @@ service cloud.firestore {
         && (!('materialExpectedDate' in data) || isValidStr(data.materialExpectedDate, 20))
         && (!('delayCategory' in data) || isValidStr(data.delayCategory, 60))
         && (!('delayJustification' in data) || isValidStr(data.delayJustification, 500))
-        && (!('checklistCompleted' in data) || isValidStringList(data.checklistCompleted, 20, 200));
+        && (!('checklistCompleted' in data) || isValidStringList(data.checklistCompleted, 20, 200))
+        && (data.get('popReview', null) == null || (
+          data.status == 'Concluída' && data.popReview is map
+          && data.popReview.keys().hasOnly(['popId', 'version', 'acceptanceCriteria'])
+          && data.popReview.popId == data.popId && isValidId(data.popReview.popId)
+          && isValidNonEmptyStr(data.popReview.version, 20)
+          && isValidStringList(data.popReview.acceptanceCriteria, 20, 200)
+        ));
     }
 
     function isValidDailyLog(data) {
@@ -261,7 +286,7 @@ service cloud.firestore {
       ])
         && data.keys().hasOnly([
           'ownerUid', 'projectId', 'date', 'presentCount', 'weather', 'activities',
-          'occurrences', 'photoNotes', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+          'occurrences', 'photoNotes', 'presentTeam', 'photoIds', 'photoBackend', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
         ])
         && hasAuditFields(data)
         && isValidId(data.projectId)
@@ -270,7 +295,10 @@ service cloud.firestore {
         && isValidNonEmptyStr(data.activities, 1500)
         && (!('presentCount' in data) || isValidNonNegNum(data.presentCount))
         && (!('occurrences' in data) || isValidStr(data.occurrences, 1000))
-        && (!('photoNotes' in data) || isValidStringList(data.photoNotes, 10, 200));
+        && (!('photoNotes' in data) || isValidStringList(data.photoNotes, 10, 200))
+        && (!('presentTeam' in data) || isValidStr(data.presentTeam, 500))
+        && (!('photoIds' in data) || isValidStringList(data.photoIds, 6, 128))
+        && (!('photoBackend' in data) || data.photoBackend in ['firestore', 'storage']);
     }
 
     function isValidTransaction(data) {
@@ -281,7 +309,8 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'ownerUid', 'date', 'dueDate', 'description', 'entryKind', 'category', 'projectId', 'projectName',
           'amount', 'isForecast', 'wasForecast', 'statementKey', 'status', 'invoiceStatus', 'paymentMethod', 'receiptRef', 'receiptFile', 'installmentLabel',
-          'installmentId', 'quoteId', 'debtId', 'source', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+          'installmentId', 'quoteId', 'debtId', 'source', 'payrollEmployeeId', 'payrollPeriod',
+          'payrollBase', 'payrollCharges', 'payrollProvisions', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
         ])
         && hasAuditFields(data)
         && isValidNonEmptyStr(data.date, 20)
@@ -299,6 +328,11 @@ service cloud.firestore {
         && (!('paymentMethod' in data) || isValidStr(data.paymentMethod, 60))
         && (!('receiptRef' in data) || isValidStr(data.receiptRef, 160))
         && (!('wasForecast' in data) || data.wasForecast is bool)
+        && (!('payrollEmployeeId' in data) || isValidId(data.payrollEmployeeId))
+        && (!('payrollPeriod' in data) || (data.payrollPeriod is string && data.payrollPeriod.matches('^[0-9]{4}-(0[1-9]|1[0-2])$')))
+        && (!('payrollBase' in data) || isValidNonNegNum(data.payrollBase))
+        && (!('payrollCharges' in data) || isValidNonNegNum(data.payrollCharges))
+        && (!('payrollProvisions' in data) || isValidNonNegNum(data.payrollProvisions))
         && (!('statementKey' in data) || isValidNonEmptyStr(data.statementKey, 512))
         && (!('receiptFile' in data) || (
           data.receiptFile is map
@@ -342,13 +376,14 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'ownerUid', 'name', 'role', 'employmentType', 'baseSalary', 'paymentMethod', 'startDate',
           'currentProjectId', 'currentProjectName', 'asoExpiry', 'nr18Expiry', 'nr35Expiry',
-          'epiStatus', 'onboardingStatus', 'vacationPeriod', 'vacationScheduled', 'occurrencesNote',
+          'epiStatus', 'epiExpiry', 'onboardingStatus', 'onboardingStart', 'vacationPeriod', 'vacationScheduled',
+          'vacationStart', 'vacationEnd', 'paymentMonth', 'paymentFrequency', 'occurrencesNote',
           'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
         ])
         && hasAuditFields(data)
         && isValidNonEmptyStr(data.name, 140)
         && isValidNonEmptyStr(data.role, 80)
-        && data.employmentType in ['CLT', 'Autônomo', 'Diarista']
+        && data.employmentType in ['CLT', 'PJ', 'Autônomo', 'Freelancer', 'Diarista', 'Informal', 'Sócio']
         && isValidNonNegNum(data.baseSalary)
         && (!('paymentMethod' in data) || isValidStr(data.paymentMethod, 60))
         && (!('startDate' in data) || isValidStr(data.startDate, 20))
@@ -361,6 +396,12 @@ service cloud.firestore {
         && (!('onboardingStatus' in data) || data.onboardingStatus in ['Concluída', 'Em andamento', 'Pendente'])
         && (!('vacationPeriod' in data) || isValidStr(data.vacationPeriod, 60))
         && (!('vacationScheduled' in data) || isValidStr(data.vacationScheduled, 60))
+        && (!('paymentFrequency' in data) || data.paymentFrequency in ['monthly', 'oneOff'])
+        && (!('paymentMonth' in data) || isValidStr(data.paymentMonth, 7))
+        && (!('vacationStart' in data) || isValidStr(data.vacationStart, 10))
+        && (!('vacationEnd' in data) || isValidStr(data.vacationEnd, 10))
+        && (!('onboardingStart' in data) || isValidStr(data.onboardingStart, 10))
+        && (!('epiExpiry' in data) || isValidStr(data.epiExpiry, 10))
         && (!('occurrencesNote' in data) || isValidStr(data.occurrencesNote, 1000));
     }
 
@@ -369,47 +410,68 @@ service cloud.firestore {
         'ownerUid', 'employeeId', 'projectId', 'weekStart', 'status', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
       ])
         && data.keys().hasOnly([
-          'ownerUid', 'employeeId', 'employeeName', 'projectId', 'projectName', 'weekStart', 'status',
+          'ownerUid', 'employeeId', 'employeeName', 'projectId', 'projectName', 'weekStart', 'stageId', 'effectiveFrom', 'status',
           'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
         ])
         && hasAuditFields(data)
         && isValidId(data.employeeId)
         && isValidNonEmptyStr(data.projectId, 128)
         && isValidNonEmptyStr(data.weekStart, 20)
+        && (!('effectiveFrom' in data) || isValidNonEmptyStr(data.effectiveFrom, 10))
         && data.status in ['Obra', 'Férias']
+        && (data.get('stageId', '') == '' || (
+          data.status == 'Obra' && isValidId(data.stageId)
+          && get(/databases/$(database)/documents/stages/$(data.stageId)).data.projectId == data.projectId
+          && get(/databases/$(database)/documents/stages/$(data.stageId)).data.ownerUid == request.auth.uid
+        ))
         && (!('employeeName' in data) || isValidStr(data.employeeName, 140))
         && (!('projectName' in data) || isValidStr(data.projectName, 160));
     }
 
-    function isValidPop(data) {
-      return data.keys().hasAll([
-        'ownerUid', 'title', 'serviceType', 'version', 'status', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
-      ])
-        && data.keys().hasOnly([
-          'ownerUid', 'title', 'serviceType', 'version', 'linkedStagePhase', 'objective',
-          'materialsAndEpi', 'steps', 'acceptanceCriteria', 'status', 'usedInOnboarding',
-          'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
-        ])
-        && hasAuditFields(data)
-        && isValidNonEmptyStr(data.title, 160)
+    function hasPopContent(data) {
+      return isValidNonEmptyStr(data.title, 160)
         && isValidNonEmptyStr(data.serviceType, 80)
-        && isValidNonEmptyStr(data.version, 20)
-        && data.status in ['Vigente', 'Em revisão']
         && (!('linkedStagePhase' in data) || isValidStr(data.linkedStagePhase, 80))
         && (!('objective' in data) || isValidStr(data.objective, 1000))
         && (!('materialsAndEpi' in data) || isValidStr(data.materialsAndEpi, 1000))
+        && (!('tools' in data) || isValidStr(data.tools, 1000))
+        && (!('protectiveEquipment' in data) || isValidStr(data.protectiveEquipment, 1000))
         && (!('steps' in data) || isValidStringList(data.steps, 20, 300))
         && (!('acceptanceCriteria' in data) || isValidStringList(data.acceptanceCriteria, 20, 200))
-        && (!('usedInOnboarding' in data) || data.usedInOnboarding is bool);
+        && (!('usedInOnboarding' in data) || data.usedInOnboarding is bool)
+        && (!('attachments' in data) || (data.attachments is list && data.attachments.size() <= 8));
     }
 
-    function isValidComplianceItem(data) {
+    function hasPopApproval(data) {
+      return (!('approvedBy' in data) || isValidActor(data.approvedBy))
+        && (!('publishedOn' in data) || isValidNonEmptyStr(data.publishedOn, 10))
+        && (!('changeSummary' in data) || isValidNonEmptyStr(data.changeSummary, 500));
+    }
+
+    function isValidPop(data) {
+      return data.keys().hasOnly([
+          'ownerUid', 'title', 'serviceType', 'version', 'linkedStagePhase', 'objective', 'materialsAndEpi',
+          'tools', 'protectiveEquipment', 'steps', 'acceptanceCriteria', 'status', 'usedInOnboarding', 'attachments',
+          'revision', 'publicationNumber', 'approvedBy', 'publishedOn', 'changeSummary', 'draft',
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+        ])
+        && hasAuditFields(data) && hasPopContent(data) && hasPopApproval(data)
+        && isValidNonEmptyStr(data.version, 20) && data.status in ['Vigente', 'Em revisão']
+        && (!('revision' in data) || (data.revision is int && data.revision > 0))
+        && (!('publicationNumber' in data) || (data.publicationNumber is int && data.publicationNumber >= 0))
+        && (data.get('draft', null) == null || (data.status == 'Em revisão' && data.draft is map
+          && data.draft.keys().hasOnly(['title', 'serviceType', 'linkedStagePhase', 'objective', 'materialsAndEpi',
+             'tools', 'protectiveEquipment', 'steps', 'acceptanceCriteria', 'usedInOnboarding', 'attachments'])
+          && hasPopContent(data.draft)));
+    }
+
+    function isValidComplianceItem(data, itemId) {
       return data.keys().hasAll([
         'ownerUid', 'kind', 'title', 'status', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
       ])
         && data.keys().hasOnly([
           'ownerUid', 'kind', 'title', 'category', 'projectId', 'projectName', 'competence',
-          'dueDate', 'issuedDate', 'fileName', 'mandatory', 'status', 'notes',
+          'dueDate', 'issuedDate', 'fileName', 'attachmentId', 'mandatory', 'status', 'notes',
           'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
         ])
         && hasAuditFields(data)
@@ -423,6 +485,9 @@ service cloud.firestore {
         && (!('dueDate' in data) || isValidStr(data.dueDate, 20))
         && (!('issuedDate' in data) || isValidStr(data.issuedDate, 20))
         && (!('fileName' in data) || isValidStr(data.fileName, 160))
+        && (!('attachmentId' in data) || (isValidId(data.attachmentId)
+          && getAfter(/databases/$(database)/documents/complianceFiles/$(data.attachmentId)).data.ownerUid == request.auth.uid
+          && getAfter(/databases/$(database)/documents/complianceFiles/$(data.attachmentId)).data.itemId == itemId))
         && (!('mandatory' in data) || data.mandatory is bool)
         && (!('notes' in data) || isValidStr(data.notes, 500));
     }
@@ -482,7 +547,7 @@ service cloud.firestore {
 
     match /companySettings/{userId} {
       allow get: if isValidId(userId) && isOwner(userId);
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if false;
       allow create: if isValidId(userId) && isOwner(userId) && isValidCompanySettings(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(userId) && isOwner(userId) && isValidCompanySettings(incoming())
@@ -496,7 +561,7 @@ service cloud.firestore {
 
     match /clients/{clientId} {
       allow get: if isValidId(clientId) && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(clientId) && isSignedIn() && isValidClient(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(clientId) && isSignedIn() && isValidClient(incoming())
@@ -521,7 +586,7 @@ service cloud.firestore {
 
     match /quotes/{quoteId} {
       allow get: if isValidId(quoteId) && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(quoteId) && isSignedIn() && isValidQuote(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time
         && exists(/databases/$(database)/documents/clients/$(incoming().clientId))
@@ -562,8 +627,8 @@ service cloud.firestore {
     }
 
     match /projects/{projectId} {
-      allow get: if isValidId(projectId) && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow get: if isValidId(projectId) && isSignedIn() && (resource == null || existing().ownerUid == request.auth.uid);
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(projectId) && isSignedIn() && isValidProject(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(projectId) && isSignedIn() && isValidProject(incoming())
@@ -572,13 +637,23 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().createdBy == existing().createdBy
         && incoming().updatedAt == request.time
-        && incoming().get('contractPdf', null) == existing().get('contractPdf', null);
+        && incoming().get('contractPdf', null) == existing().get('contractPdf', null)
+        && (existing().get('planningStatus', '') != 'Cronograma criado'
+          || incoming().get('baselineEndDate', null) == existing().get('baselineEndDate', null))
+        && (existing().status != 'Concluída' || (incoming().status == 'Concluída'
+          && incoming().get('closureDate', '') == existing().get('closureDate', '')
+          && incoming().get('warrantyStartDate', '') == existing().get('warrantyStartDate', '')))
+        && (incoming().status != 'Concluída' || existing().status == 'Concluída' || (
+          isValidNonEmptyStr(incoming().closureDate, 10) && incoming().closureDate == incoming().warrantyStartDate
+          && getAfter(/databases/$(database)/documents/projectClosures/$(projectId)).data.date == incoming().closureDate
+          && getAfter(/databases/$(database)/documents/projectFollowUps/$(projectId)).data.ownerUid == request.auth.uid
+        ));
       allow delete: if isValidId(projectId) && isSignedIn() && existing().ownerUid == request.auth.uid;
     }
 
     match /parcelas/{installmentId} {
       allow get: if isValidId(installmentId) && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(installmentId) && isSignedIn() && isValidInstallment(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time
         && existsAfter(/databases/$(database)/documents/projects/$(incoming().projectId))
@@ -595,12 +670,82 @@ service cloud.firestore {
       allow delete: if isValidId(installmentId) && isSignedIn() && existing().ownerUid == request.auth.uid;
     }
 
+    function isValidScheduleBaseline(data) {
+      return data.keys().hasOnly([
+        'ownerUid', 'projectId', 'version', 'recordedDate', 'endDate', 'justification', 'stages',
+        'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+      ])
+        && hasAuditFields(data)
+        && isValidId(data.projectId)
+        && data.version is int && data.version >= 1
+        && isValidNonEmptyStr(data.recordedDate, 10) && isValidNonEmptyStr(data.endDate, 10)
+        && isValidStr(data.justification, 500)
+        && (data.version == 1 || !data.justification.matches('^\\s*$'))
+        && data.stages is list && data.stages.size() > 0;
+    }
+
+    function isValidScheduleProgress(data) {
+      return data.keys().hasOnly([
+        'ownerUid', 'projectId', 'scheduleRevision', 'date', 'progressPct',
+        'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+      ])
+        && hasAuditFields(data)
+        && isValidId(data.projectId)
+        && data.scheduleRevision is int && data.scheduleRevision >= 1
+        && isValidNonEmptyStr(data.date, 10)
+        && isValidNonNegNum(data.progressPct) && data.progressPct <= 100;
+    }
+
+    match /baselines/{baselineId} {
+      allow get: if isValidId(baselineId) && isOwner(existing().ownerUid);
+      allow list: if isBoundedList() && isOwner(existing().ownerUid);
+      allow create: if isValidId(baselineId) && isSignedIn() && isValidScheduleBaseline(incoming())
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.ownerUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /scheduleProgress/{progressId} {
+      allow get: if isValidId(progressId) && isOwner(existing().ownerUid);
+      allow list: if isBoundedList() && isOwner(existing().ownerUid);
+      allow create: if isValidId(progressId) && isSignedIn() && isValidScheduleProgress(incoming())
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.ownerUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    function isValidProjectRisk(data) {
+      return data.keys().hasOnly([
+        'ownerUid', 'projectId', 'stageId', 'category', 'description', 'impact', 'status',
+        'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+      ])
+        && hasAuditFields(data)
+        && isValidId(data.projectId) && isValidId(data.stageId)
+        && data.category in ['Chuva', 'Material do cliente', 'Equipe', 'Retrabalho', 'Projeto', 'Dependência', 'Outros']
+        && isValidNonEmptyStr(data.description, 500) && !data.description.matches('^\\s*$')
+        && data.impact in ['Baixo', 'Médio', 'Alto']
+        && data.status in ['Aberto', 'Monitorado', 'Resolvido']
+        && get(/databases/$(database)/documents/stages/$(data.stageId)).data.ownerUid == request.auth.uid
+        && get(/databases/$(database)/documents/stages/$(data.stageId)).data.projectId == data.projectId;
+    }
+
+    match /projectRisks/{riskId} {
+      allow get: if isValidId(riskId) && isOwner(existing().ownerUid);
+      allow list: if isBoundedList() && isOwner(existing().ownerUid);
+      allow create: if isValidId(riskId) && isSignedIn() && isValidProjectRisk(incoming())
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(riskId) && isOwner(existing().ownerUid) && isValidProjectRisk(incoming())
+        && incoming().projectId == existing().projectId
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time;
+    }
+
     match /stages/{stageId} {
       allow get: if isValidId(stageId) && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(stageId) && isSignedIn() && isValidStage(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time
-        && existsAfter(/databases/$(database)/documents/projects/$(incoming().projectId))
         && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.ownerUid == request.auth.uid;
       allow update: if isValidId(stageId) && isSignedIn() && isValidStage(incoming())
         && existing().ownerUid == request.auth.uid
@@ -608,13 +753,16 @@ service cloud.firestore {
         && incoming().projectId == existing().projectId
         && incoming().createdAt == existing().createdAt
         && incoming().createdBy == existing().createdBy
-        && incoming().updatedAt == request.time;
+        && incoming().updatedAt == request.time
+        && incoming().get('baselineStartWeek', null) == existing().get('baselineStartWeek', incoming().get('baselineStartWeek', null))
+        && incoming().get('baselineDurationWeeks', null) == existing().get('baselineDurationWeeks', incoming().get('baselineDurationWeeks', null))
+        && incoming().get('baselineBudgetedCost', null) == existing().get('baselineBudgetedCost', incoming().get('baselineBudgetedCost', null));
       allow delete: if isValidId(stageId) && isSignedIn() && existing().ownerUid == request.auth.uid;
     }
 
     match /dailyLogs/{logId} {
-      allow get: if isValidId(logId) && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow get: if isValidId(logId) && isSignedIn() && (resource == null || existing().ownerUid == request.auth.uid);
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(logId) && isSignedIn() && isValidDailyLog(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time
         && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
@@ -627,11 +775,34 @@ service cloud.firestore {
         && incoming().createdBy == existing().createdBy
         && incoming().updatedAt == request.time;
       allow delete: if isValidId(logId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+
+      match /photos/{photoId} {
+        allow get: if isValidId(photoId) && isOwner(existing().ownerUid)
+          && get(/databases/$(database)/documents/dailyLogs/$(logId)).data.ownerUid == request.auth.uid;
+        allow create: if isValidId(photoId) && isSignedIn()
+          && incoming().keys().hasOnly(['ownerUid', 'mimeType', 'content', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+          && hasAuditFields(incoming()) && incoming().createdAt == request.time && incoming().updatedAt == request.time
+          && incoming().mimeType == 'image/jpeg' && incoming().content is bytes
+          && incoming().content.size() > 0 && incoming().content.size() <= 393216
+          && getAfter(/databases/$(database)/documents/dailyLogs/$(logId)).data.ownerUid == request.auth.uid
+          && getAfter(/databases/$(database)/documents/dailyLogs/$(logId)).data.photoBackend == 'firestore'
+          && photoId in getAfter(/databases/$(database)/documents/dailyLogs/$(logId)).data.photoIds;
+      }
+    }
+
+    match /fieldSync/{operationId} {
+      allow get: if isValidId(operationId) && isSignedIn() && (resource == null || existing().ownerUid == request.auth.uid);
+      allow create: if isValidId(operationId) && isSignedIn()
+        && incoming().keys().hasOnly(['ownerUid', 'projectId', 'stageId', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+        && hasAuditFields(incoming()) && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && isValidId(incoming().projectId) && isValidId(incoming().stageId)
+        && getAfter(/databases/$(database)/documents/stages/$(incoming().stageId)).data.projectId == incoming().projectId
+        && getAfter(/databases/$(database)/documents/stages/$(incoming().stageId)).data.ownerUid == request.auth.uid;
     }
 
     match /transactions/{txId} {
       allow get: if isValidId(txId) && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(txId) && isSignedIn() && isValidTransaction(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(txId) && isSignedIn() && isValidTransaction(incoming())
@@ -645,7 +816,7 @@ service cloud.firestore {
 
     match /debts/{debtId} {
       allow get: if isValidId(debtId) && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(debtId) && isSignedIn() && isValidDebt(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(debtId) && isSignedIn() && isValidDebt(incoming())
@@ -659,7 +830,7 @@ service cloud.firestore {
 
     match /employees/{employeeId} {
       allow get: if isValidId(employeeId) && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(employeeId) && isSignedIn() && isValidEmployee(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(employeeId) && isSignedIn() && isValidEmployee(incoming())
@@ -671,9 +842,22 @@ service cloud.firestore {
       allow delete: if isValidId(employeeId) && isSignedIn() && existing().ownerUid == request.auth.uid;
     }
 
+    match /employees/{employeeId}/occurrences/{occurrenceId} {
+      allow get: if isOwner(existing().ownerUid);
+      allow list: if isBoundedList() && isOwner(existing().ownerUid);
+      allow create: if isSignedIn() && isValidId(occurrenceId)
+        && get(/databases/$(database)/documents/employees/$(employeeId)).data.ownerUid == request.auth.uid
+        && incoming().keys().hasOnly(['ownerUid', 'kind', 'date', 'description', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+        && hasAuditFields(incoming())
+        && incoming().kind in ['Elogio', 'Registro', 'Advertência', 'Acidente', 'Quase acidente']
+        && isValidNonEmptyStr(incoming().date, 10)
+        && isValidNonEmptyStr(incoming().description, 1000)
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+    }
+
     match /allocations/{allocationId} {
-      allow get: if isValidId(allocationId) && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow get: if isValidId(allocationId) && isSignedIn() && (resource == null || existing().ownerUid == request.auth.uid);
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(allocationId) && isSignedIn() && isValidAllocation(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time
         && exists(/databases/$(database)/documents/employees/$(incoming().employeeId))
@@ -690,7 +874,7 @@ service cloud.firestore {
 
     match /pops/{popId} {
       allow get: if isValidId(popId) && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(popId) && isSignedIn() && isValidPop(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(popId) && isSignedIn() && isValidPop(incoming())
@@ -699,15 +883,43 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().createdBy == existing().createdBy
         && incoming().updatedAt == request.time;
-      allow delete: if isValidId(popId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow delete: if isValidId(popId) && isOwner(existing().ownerUid) && !('publicationNumber' in existing());
+    }
+
+
+    match /popVersions/{versionId} {
+      allow get: if isOwner(existing().ownerUid);
+      allow list: if isBoundedList() && isOwner(existing().ownerUid);
+      allow create: if isValidId(versionId) && isSignedIn() && hasAuditFields(incoming())
+        && incoming().keys().hasOnly(['ownerUid', 'popId', 'version', 'publicationNumber', 'title', 'serviceType',
+          'linkedStagePhase', 'objective', 'materialsAndEpi', 'tools', 'protectiveEquipment', 'steps', 'acceptanceCriteria',
+          'usedInOnboarding', 'attachments', 'approvedBy', 'publishedOn', 'changeSummary',
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+        && hasPopContent(incoming()) && hasPopApproval(incoming())
+        && isValidId(incoming().popId) && isValidNonEmptyStr(incoming().version, 20)
+        && incoming().publicationNumber is int && incoming().publicationNumber > 0
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && getAfter(/databases/$(database)/documents/pops/$(incoming().popId)).data.ownerUid == request.auth.uid;
+    }
+
+    match /popMediaChunks/{chunkId} {
+      allow get: if isValidId(chunkId) && isOwner(existing().ownerUid);
+      allow create: if isValidId(chunkId) && isSignedIn() && hasAuditFields(incoming())
+        && incoming().keys().hasOnly(['ownerUid', 'popId', 'attachmentId', 'index', 'content',
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+        && isValidId(incoming().popId) && isValidId(incoming().attachmentId)
+        && incoming().index is int && incoming().index >= 0 && incoming().index < 8
+        && incoming().content is bytes && incoming().content.size() > 0 && incoming().content.size() <= 655360
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && getAfter(/databases/$(database)/documents/pops/$(incoming().popId)).data.ownerUid == request.auth.uid;
     }
 
     match /complianceItems/{itemId} {
       allow get: if isValidId(itemId) && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow create: if isValidId(itemId) && isSignedIn() && isValidComplianceItem(incoming())
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(itemId) && isSignedIn() && isValidComplianceItem(incoming(), itemId)
         && incoming().createdAt == request.time && incoming().updatedAt == request.time;
-      allow update: if isValidId(itemId) && isSignedIn() && isValidComplianceItem(incoming())
+      allow update: if isValidId(itemId) && isSignedIn() && isValidComplianceItem(incoming(), itemId)
         && existing().ownerUid == request.auth.uid
         && incoming().ownerUid == existing().ownerUid
         && incoming().createdAt == existing().createdAt
@@ -716,9 +928,22 @@ service cloud.firestore {
       allow delete: if isValidId(itemId) && isSignedIn() && existing().ownerUid == request.auth.uid;
     }
 
+    match /complianceFiles/{attachmentId} {
+      allow get: if isValidId(attachmentId) && isOwner(existing().ownerUid);
+      allow create: if isValidId(attachmentId) && isSignedIn() && hasAuditFields(incoming())
+        && incoming().keys().hasOnly(['ownerUid', 'itemId', 'name', 'mimeType', 'content',
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && isValidId(incoming().itemId) && isValidNonEmptyStr(incoming().name, 160)
+        && incoming().mimeType in ['application/pdf', 'image/png', 'image/jpeg']
+        && incoming().content is bytes && incoming().content.size() > 0 && incoming().content.size() <= 716800
+        && getAfter(/databases/$(database)/documents/complianceItems/$(incoming().itemId)).data.ownerUid == request.auth.uid
+        && getAfter(/databases/$(database)/documents/complianceItems/$(incoming().itemId)).data.attachmentId == attachmentId;
+    }
+
     match /tenders/{tenderId} {
       allow get: if isValidId(tenderId) && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(tenderId) && isSignedIn() && isValidTender(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(tenderId) && isSignedIn() && isValidTender(incoming())
@@ -730,13 +955,52 @@ service cloud.firestore {
       allow delete: if isValidId(tenderId) && isSignedIn() && existing().ownerUid == request.auth.uid;
     }
 
+    match /projectClosures/{projectId} {
+      allow get: if isOwner(existing().ownerUid);
+      allow list: if isBoundedList() && isOwner(existing().ownerUid);
+      allow create: if isValidId(projectId) && isSignedIn() && hasAuditFields(incoming())
+        && incoming().keys().hasOnly(['ownerUid', 'projectId', 'date', 'dre', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+        && incoming().projectId == projectId && isValidNonEmptyStr(incoming().date, 10)
+        && incoming().dre is map && incoming().dre.obraId == projectId
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && getAfter(/databases/$(database)/documents/projects/$(projectId)).data.ownerUid == request.auth.uid
+        && getAfter(/databases/$(database)/documents/projects/$(projectId)).data.status == 'Concluída'
+        && getAfter(/databases/$(database)/documents/projects/$(projectId)).data.closureDate == incoming().date;
+    }
+
+    function validFollowUp(data, projectId) {
+      return hasAuditFields(data) && data.projectId == projectId
+        && data.keys().hasOnly(['ownerUid', 'projectId', 'testimonialRequestedAt', 'referralRequestedAt',
+          'testimonial', 'referrals', 'marketingPhotos', 'authorizationNote', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+        && isValidStr(data.testimonialRequestedAt, 10) && isValidStr(data.referralRequestedAt, 10)
+        && isValidStr(data.testimonial, 3000) && isValidStr(data.referrals, 2000) && isValidStr(data.authorizationNote, 500)
+        && data.marketingPhotos is list && data.marketingPhotos.size() <= 100
+        && (data.marketingPhotos.size() == 0 || !data.authorizationNote.matches('^\\s*$'))
+        && getAfter(/databases/$(database)/documents/projects/$(projectId)).data.ownerUid == request.auth.uid
+        && getAfter(/databases/$(database)/documents/projects/$(projectId)).data.status == 'Concluída';
+    }
+
+    match /projectFollowUps/{projectId} {
+      allow get: if isValidId(projectId) && isSignedIn() && (resource == null || isOwner(existing().ownerUid));
+      allow list: if isBoundedList() && isOwner(existing().ownerUid);
+      allow create: if isValidId(projectId) && isSignedIn() && validFollowUp(incoming(), projectId)
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(projectId) && isOwner(existing().ownerUid) && validFollowUp(incoming(), projectId)
+        && incoming().createdAt == existing().createdAt && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time;
+    }
+
     match /warrantyCalls/{callId} {
       allow get: if isValidId(callId) && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(callId) && isSignedIn() && isValidWarrantyCall(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time
         && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
-        && get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.ownerUid == request.auth.uid;
+        && get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.ownerUid == request.auth.uid
+        && get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.status == 'Concluída'
+        && isValidNonEmptyStr(incoming().openedDate, 10)
+        && isValidNonEmptyStr(incoming().deadlineDate, 10)
+        && isValidNonEmptyStr(get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.warrantyStartDate, 10);
       allow update: if isValidId(callId) && isSignedIn() && isValidWarrantyCall(incoming())
         && existing().ownerUid == request.auth.uid
         && incoming().ownerUid == existing().ownerUid
@@ -749,7 +1013,7 @@ service cloud.firestore {
 
     match /auditLogs/{logId} {
       allow get: if isValidId(logId) && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow list: if isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(logId) && isSignedIn() && isValidAuditLog(incoming())
         && incoming().createdAt == request.time;
       allow update, delete: if false;

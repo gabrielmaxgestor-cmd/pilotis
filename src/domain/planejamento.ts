@@ -16,6 +16,7 @@ export interface CpmEtapaDetalhe {
 export interface CaminhoCriticoResult {
   cicloDetectado: boolean;
   nosEmCiclo: string[];
+  primeiroCiclo?: string[];
   duracaoTotal: number;
   etapasCriticas: string[];
   detalhes: CpmEtapaDetalhe[];
@@ -46,6 +47,7 @@ export function caminhoCritico(
   const nosEmCicloSet = new Set<string>();
   const stack: string[] = [];
   let cicloDetectado = false;
+  let primeiroCiclo: string[] | undefined;
 
   const dfsCycle = (id: string) => {
     const state = color.get(id) ?? 0;
@@ -53,6 +55,7 @@ export function caminhoCritico(
       cicloDetectado = true;
       const idx = stack.indexOf(id);
       if (idx >= 0) {
+        primeiroCiclo ??= [...stack.slice(idx), id].reverse();
         for (let i = idx; i < stack.length; i++) {
           nosEmCicloSet.add(stack[i]);
         }
@@ -85,6 +88,7 @@ export function caminhoCritico(
     return {
       cicloDetectado: true,
       nosEmCiclo: Array.from(nosEmCicloSet),
+      primeiroCiclo,
       duracaoTotal: 0,
       etapasCriticas: [],
       detalhes: [],
@@ -221,6 +225,8 @@ export function curvaS(
   >,
   baseline: BaselineRecord | BaselineEtapaItem[] | null | undefined,
   semanaReferencia?: number,
+  includePoints = true,
+  restrictPlanToBaseline = false,
 ): CurvaSResult {
   const etapasAtivas = etapas.filter((e) => !e.marco || e.custoOrcado > 0 || e.duracaoSemanas > 0);
   if (etapasAtivas.length === 0) {
@@ -245,16 +251,10 @@ export function curvaS(
 
   const normalized = etapasAtivas.map((e) => {
     const b = baselineById.get(e.id);
-    const start = b ? b.semanaInicioBaseline : e.semanaInicio;
-    const dur = Math.max(0, b ? b.duracaoBaselineSemanas : e.duracaoSemanas);
-    const weight = Math.max(
-      1,
-      b && b.custoOrcadoBaseline > 0
-        ? b.custoOrcadoBaseline
-        : e.custoOrcado > 0
-        ? e.custoOrcado
-        : dur || 1,
-    );
+    const start = b?.semanaInicioBaseline ?? e.semanaInicio;
+    const dur = Math.max(0, b?.duracaoBaselineSemanas ?? e.duracaoSemanas);
+    const cost = b?.custoOrcadoBaseline ?? e.custoOrcado;
+    const weight = cost > 0 ? cost : dur || 1;
     maxWeek = Math.max(maxWeek, start + dur, e.semanaInicio + e.duracaoSemanas);
     totalWeight += weight;
 
@@ -269,6 +269,16 @@ export function curvaS(
     };
   });
 
+  const plannedStages = restrictPlanToBaseline ? baselineItems
+    .filter((stage) => stage.duracaoBaselineSemanas > 0 || stage.custoOrcadoBaseline > 0)
+    .map((stage) => ({
+      baseStart: stage.semanaInicioBaseline,
+      baseDur: stage.duracaoBaselineSemanas,
+      weight: stage.custoOrcadoBaseline || stage.duracaoBaselineSemanas || 1,
+    })) : normalized;
+  const plannedWeight = plannedStages.reduce((sum, stage) => sum + stage.weight, 0);
+  for (const stage of plannedStages) maxWeek = Math.max(maxWeek, stage.baseStart + stage.baseDur);
+
   const maxWeekInt = Math.max(1, Math.ceil(maxWeek));
   const refWeek =
     semanaReferencia !== undefined
@@ -277,7 +287,7 @@ export function curvaS(
 
   const computePlannedAtWeek = (week: number): number => {
     let accWeight = 0;
-    for (const st of normalized) {
+    for (const st of plannedStages) {
       let ratio = 0;
       if (st.baseDur === 0) {
         ratio = week >= st.baseStart ? 1 : 0;
@@ -290,7 +300,7 @@ export function curvaS(
       }
       accWeight += st.weight * ratio;
     }
-    return totalWeight > 0 ? roundCents((accWeight / totalWeight) * 100) : 0;
+    return plannedWeight > 0 ? roundCents((accWeight / plannedWeight) * 100) : 0;
   };
 
   const computeRealizedAtWeek = (week: number): number => {
@@ -311,7 +321,7 @@ export function curvaS(
   };
 
   const pontos: PontoCurvaS[] = [];
-  for (let w = 0; w <= maxWeekInt; w++) {
+  for (let w = 0; includePoints && w <= maxWeekInt; w++) {
     pontos.push({
       semana: w,
       planejadoPct: computePlannedAtWeek(w),
@@ -320,7 +330,7 @@ export function curvaS(
   }
 
   const progressoPlanejadoPct = computePlannedAtWeek(refWeek);
-  const progressoRealizadoPct = computeRealizedAtWeek(refWeek);
+  const progressoRealizadoPct = computeRealizedAtWeek(maxWeekInt);
   const indicePrazo =
     progressoPlanejadoPct > 0
       ? roundCents(progressoRealizadoPct / progressoPlanejadoPct)
@@ -395,3 +405,18 @@ export function resumoFasesEap(
   }));
 }
 
+
+export function allocateScheduleBudget(total: number, weights: number[]): number[] {
+  const cents = Math.round(roundCents(total) * 100);
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+  if (!totalWeight) return weights.map(() => 0);
+  let allocated = 0;
+  let cumulativeWeight = 0;
+  return weights.map((weight) => {
+    cumulativeWeight += weight;
+    const target = Math.round(cents * cumulativeWeight / totalWeight);
+    const share = target - allocated;
+    allocated = target;
+    return share / 100;
+  });
+}

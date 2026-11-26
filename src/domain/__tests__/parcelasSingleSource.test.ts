@@ -199,9 +199,9 @@ describe('/parcelas como fonte única de recebíveis e status Em atraso dinâmic
     assert.equal(caixaDepois.meses[2].contratadoEntradas, 40000);
     assert.equal(caixaDepois.meses[2].saldoProjetado, 100000);
 
-    // Conformidade (sem NF na entrada paga + parcelas abertas com A emitir): soma exata 100.000 sem duplicidade
+    // Conformidade conta somente a entrada recebida, uma vez, e exclui as parcelas abertas.
     const conf = resumoConformidade([], lancamentos, '2026-11-16', parcelas);
-    assert.equal(conf.receitaSemNotaPendente, 100000);
+    assert.equal(conf.receitaSemNotaPendente, 20000);
 
     // Tentativa de receber a mesma parcela novamente deve falhar
     assert.throws(

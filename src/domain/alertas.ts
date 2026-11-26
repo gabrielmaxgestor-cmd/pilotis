@@ -1,5 +1,6 @@
-import { previsaoCaixa } from './caixa';
-import { isParcelaEmAtraso } from './financeiro';
+import { CERTIFICATE_WARNING_DAYS, OBLIGATION_WARNING_DAYS } from './conformidade';
+import { previsaoCaixa, type PrevisaoCaixaResult } from './caixa';
+import { isParcelaEmAtraso, resolverStatusLancamento } from './financeiro';
 import { diffDaysISO, formatDateBR } from './formatters';
 import type { DomainCollections } from './types';
 
@@ -7,6 +8,7 @@ export type AlertaNivel = 'Urgente' | 'Atenção' | 'Info' | 'Neutro';
 export type AlertaCategoria =
   | 'caixa'
   | 'vencimento'
+  | 'tributo'
   | 'certidao'
   | 'treinamento'
   | 'planejamento'
@@ -35,6 +37,8 @@ export interface AlertasOpcoes {
   diasAvisoCertidao?: number;
   diasAvisoTreinamento?: number;
   saldoInicialCaixa?: number | null;
+  forecast?: PrevisaoCaixaResult;
+  lateStages?: ReadonlyMap<string, number>;
 }
 
 export function alertas(
@@ -43,8 +47,8 @@ export function alertas(
 ): AlertaDominio[] {
   const refDate = opcoes.dataReferencia;
   const mesesPrevisao = opcoes.mesesPrevisaoCaixa ?? 5;
-  const diasVencimento = opcoes.diasAvisoVencimento ?? 7;
-  const diasCertidao = opcoes.diasAvisoCertidao ?? 30;
+  const diasVencimento = opcoes.diasAvisoVencimento ?? OBLIGATION_WARNING_DAYS;
+  const diasCertidao = opcoes.diasAvisoCertidao ?? CERTIFICATE_WARNING_DAYS;
   const diasTreinamento = opcoes.diasAvisoTreinamento ?? 45;
 
   const resultado: AlertaDominio[] = [];
@@ -61,7 +65,7 @@ export function alertas(
   const garantias = estado.garantias ?? [];
 
   // 1. Caixa negativo projetado
-  const caixa = previsaoCaixa(mesesPrevisao, {
+  const caixa = opcoes.forecast ?? previsaoCaixa(mesesPrevisao, {
     dataBase: refDate,
     saldoInicial: opcoes.saldoInicialCaixa,
     lancamentos,
@@ -108,6 +112,34 @@ export function alertas(
         referenciaId: cp.id,
       });
     }
+  }
+
+  const taxDebtIds = new Set((estado.dividas ?? []).filter((debt) => debt.tipo === 'Tributo em atraso' && debt.status !== 'Quitada').map((debt) => debt.id));
+  for (const debt of estado.dividas ?? []) {
+    if (!taxDebtIds.has(debt.id)) continue;
+    resultado.push({
+      id: 'tax-debt-' + debt.id,
+      nivel: 'Urgente',
+      categoria: 'tributo',
+      modulo: 'financial',
+      mensagem: 'Tributo em atraso · ' + debt.credor,
+      referenciaId: debt.id,
+    });
+  }
+  for (const entry of lancamentos) {
+    if (entry.tipo !== 'despesa' || entry.status === 'Pago' || entry.categoria.trim().toLowerCase() !== 'tributos'
+      || (entry.dividaId && taxDebtIds.has(entry.dividaId))) continue;
+    const days = diffDaysISO(entry.vencimento || entry.data, refDate);
+    const late = resolverStatusLancamento(entry, refDate) === 'Em atraso';
+    if (!late && (days === null || days > diasVencimento)) continue;
+    resultado.push({
+      id: 'tax-entry-' + entry.id,
+      nivel: late ? 'Urgente' : 'Atenção',
+      categoria: 'tributo',
+      modulo: 'financial',
+      mensagem: 'Tributo · ' + entry.descricao + (late ? ' em atraso' : ' vence em ' + days + ' dia(s)'),
+      referenciaId: entry.id,
+    });
   }
 
   for (const ob of obrigacoes) {
@@ -234,13 +266,15 @@ export function alertas(
 
   // 5. Etapas com atraso justificado
   for (const st of etapas) {
-    if (st.justificativaAtraso && st.status !== 'Concluída') {
+    const lateDays = opcoes.lateStages?.get(st.id);
+    if ((lateDays || st.justificativaAtraso) && st.status !== 'Concluída') {
       resultado.push({
         id: `stage-delay-${st.id}`,
         nivel: 'Info',
         categoria: 'planejamento',
         modulo: 'planning',
-        mensagem: `Etapa "${st.nome}" com atraso registrado (${st.categoriaAtraso || 'Justificado'})`,
+        mensagem: lateDays ? `Etapa "${st.nome}" com ${lateDays} dia(s) de atraso`
+          : `Etapa "${st.nome}" com atraso registrado (${st.categoriaAtraso || 'Justificado'})`,
         referenciaId: st.id,
       });
     }
@@ -255,6 +289,19 @@ export function alertas(
       categoria: 'garantia',
       modulo: 'clients',
       mensagem: `Garantia: ${openWarranties.length} chamado(s) em aberto`,
+    });
+  }
+
+  for (const warranty of openWarranties) {
+    const days = diffDaysISO(warranty.prazoAtendimento, refDate);
+    if (days === null || days > diasVencimento) continue;
+    resultado.push({
+      id: 'warranty-deadline-' + warranty.id,
+      nivel: days < 0 ? 'Urgente' : 'Atenção',
+      categoria: 'garantia',
+      modulo: 'clients',
+      mensagem: 'Garantia · ' + warranty.descricao + (days < 0 ? ' em atraso' : ' vence em ' + days + ' dia(s)'),
+      referenciaId: warranty.id,
     });
   }
 

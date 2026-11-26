@@ -1,8 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import {
-  doc,
-  getDocFromServer,
   getFirestore,
   initializeFirestore,
   persistentLocalCache,
@@ -81,17 +79,4 @@ export function handleFirestoreError(
   };
   console.error('Firestore Error:', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
-}
-
-export async function testFirestoreConnection(): Promise<boolean> {
-  try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-    return true;
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error('Verifique a configuração do Firebase: cliente offline.');
-      return false;
-    }
-    return true;
-  }
 }

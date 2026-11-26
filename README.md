@@ -1,48 +1,73 @@
 # Sistema de Gestão Pilotis
 
-Sistema web de gestão financeira, comercial, planejamento de obras, equipe, POPs e conformidade para construtora residencial de alto padrão.
+Aplicativo web para acompanhar finanças, clientes e orçamentos, obras, equipe, POPs, conformidade e IA Operacional. Cada ambiente começa vazio. Importe ou cadastre os registros da empresa para alimentar os indicadores.
 
-## Stack
+## Código
 
-- **Frontend:** React, TypeScript, Tailwind CSS (Vite)
-- **Domínio puro e testes:** `/src/domain` com `node --test` (`npm test`)
-- **Backend / Persistência:** Firebase Authentication (e-mail e senha) e Cloud Firestore com persistência offline e regras estritas de segurança
+| Local | Responsabilidade |
+| --- | --- |
+| `src/modules/` e `src/components/ui/` | Módulos React, navegação responsiva e componentes compartilhados |
+| `src/domain/` | Regras e cálculos de parcelas, DRE, folha, fluxo de caixa, cronograma e indicadores |
+| `src/services/` e `src/lib/firestorePages.ts` | Transações, auditoria, consultas paginadas, fila offline e anexos |
+| `server.ts` e `src/server/` | Express, verificação de ID token, consultas da IA e Gemini |
+| `firestore.rules`, `storage.rules` e `firebase.json` | Regras e seleção do banco nomeado |
+| `build/fieldPwa.ts` e `public/` | Manifesto, ícones e service worker |
+| `src/domain/__tests__/` e `tests/` | Testes de domínio, integrações e autorização no emulador |
 
-## Configuração do e-mail único da empresa (obrigatório)
+## Coleções do Firestore
 
-O acesso ao sistema é exclusivo de **um único usuário em nome da empresa**, com e-mail verificado no Firebase Authentication.
+| Uso | Caminhos |
+| --- | --- |
+| Empresa e equipe | `companySettings/{uid}`, `employees`, `employees/{id}/occurrences`, `allocations` |
+| Comercial e financeiro | `clients`, `quotes`, `parcelas`, `transactions`, `debts` |
+| Obras e campo | `projects`, `stages`, `baselines`, `scheduleProgress`, `projectRisks`, `dailyLogs`, `dailyLogs/{id}/photos`, `fieldSync` |
+| Pós-obra | `projectClosures`, `projectFollowUps`, `warrantyCalls` |
+| Procedimentos | `pops`, `popVersions`, `popMediaChunks` |
+| Conformidade | `complianceItems`, `complianceFiles`, `tenders` |
+| IA e auditoria | `conversasIA/{uid}/mensagens` (backend), `auditLogs` |
 
-Por segurança, o e-mail autorizado precisa estar **idêntico** em dois pontos:
+O app usa o projeto e o banco de `firebase-applet-config.json`. O banco de `firebase.json` precisa ter o mesmo identificador. As listas do cliente são filtradas por proprietário e limitadas a 201 documentos por requisição. A página extra detecta a existência de mais registros. A sincronização inicial percorre as páginas necessárias para os cálculos e a exportação. As leituras dos módulos da IA usam páginas de até 200 registros. O Admin SDK usa IAM e o backend aplica o filtro por UID da sessão.
 
-1. **Frontend (`src/config/companyAuth.ts` / variável `VITE_COMPANY_EMAIL`):**
-   - Arquivo: `src/config/companyAuth.ts` (`COMPANY_EMAIL`, que lê `import.meta.env.VITE_COMPANY_EMAIL` com fallback `'empresa@pilotis.com.br'`).
-2. **Backend (`server.ts` / variável `COMPANY_EMAIL` ou `VITE_COMPANY_EMAIL`):**
-   - O endpoint `POST /api/ai/chat` valida o ID token Firebase via Firebase Admin SDK e compara `email` + `email_verified: true` com `COMPANY_EMAIL` / `VITE_COMPANY_EMAIL` (fallback `'empresa@pilotis.com.br'`).
-3. **Regras de Segurança do Firestore (`firestore.rules`):**
-   - Função `companyEmail()` em `firestore.rules` (padrão `'empresa@pilotis.com.br'`).
+## Desenvolvimento e verificação
 
-> **Importante:** Todos esses pontos (`COMPANY_EMAIL` / `VITE_COMPANY_EMAIL` no frontend e no `server.ts`, e `companyEmail()` em `firestore.rules`) **precisam coincidir exatamente** (comparação em minúsculas). Se você alterar o e-mail da empresa em um deles sem atualizar os demais e publicar as regras, o acesso ao app, ao Firestore ou à IA Operacional será bloqueado.
+Use Node.js 24. O ambiente deve ter uma conta corporativa com e-mail verificado no Firebase Authentication. Configure o mesmo endereço em `VITE_COMPANY_EMAIL` no build do cliente, `COMPANY_EMAIL` no servidor e em `firestore.rules` e `storage.rules`. Use `.env.example` como referência local. `GEMINI_API_KEY` fica no servidor. Para consultas reais locais da IA, use credenciais padrão da aplicação (ADC) de um projeto de teste.
 
-Sempre que alterar `firestore.rules`, valide e publique as regras antes de usar em produção.
-
-## Variáveis de ambiente e segredos
-
-- Nunca versione arquivos `.env` ou chaves reais no repositório (`.env*` está listado no `.gitignore`, exceto `.env.example`).
-- Use `.env.example` como referência dos nomes de variáveis aceitos (`GEMINI_API_KEY`, `GEMINI_MODEL`, `VITE_COMPANY_EMAIL`, `COMPANY_EMAIL`).
-- O modelo do Gemini usado pelo endpoint `/api/ai/chat` é lido de `GEMINI_MODEL` (padrão `gemini-4-hydrogen`).
-
-
-## Documentação e protótipos de referência
-
-Os documentos de escopo, telas de referência e guia visual estão armazenados em `/docs`, fora de `/public`, para não serem publicados no bundle final de produção (`/dist`).
-
-## Comandos
-
-```bash
-npm install        # Instala dependências
-npm run dev        # Servidor de desenvolvimento na porta 3000
-npm test           # Executa testes unitários da camada de domínio (/src/domain)
-npm run lint       # Checagem TypeScript
-npm run build      # Gera build de produção em /dist e compila server.ts -> server.js
-npm start          # Inicia o servidor compilado (node server.js)
+```sh
+npm ci
+npm run lint
+npm test
+node --test tests/integration.test.mjs
+npm run dev
 ```
+
+Os testes de integração executam os serviços do app com um Firestore em memória, incluindo rollback simulado. Para testar a aplicação das regras, execute o emulador em um projeto demonstrativo local com Java disponível.
+
+```sh
+npx firebase-tools emulators:exec --only firestore --project demo-pilotis "node --test tests/firestore.rules.test.mjs"
+```
+
+No navegador, repita a conferência em 390 px e 1440 px. Percorra navegação, abas e ações com Tab, Shift+Tab, setas, Enter e Escape. Confira foco visível, retorno do foco após fechar modais, texto dos status, colunas convertidas em listas e a movimentação de cartões do Kanban pelo botão **Mover**. Faça a primeira abertura da PWA online. Os registros e fotos capturados offline permanecem em fila até o servidor confirmar a gravação.
+
+## Publicação no Cloud Run
+
+1. Confirme o projeto, o banco nomeado e o e-mail corporativo. Use um projeto de homologação para o primeiro deploy.
+2. Habilite Cloud Run, Cloud Build, Artifact Registry e Secret Manager. Crie uma conta de serviço dedicada ao runtime. Conceda acesso de leitura e gravação ao Firestore de destino (por exemplo, `roles/datastore.user` nesse projeto) e `roles/secretmanager.secretAccessor` no segredo `pilotis-gemini-api-key`. Armazene a chave Gemini no Secret Manager.
+3. A partir da raiz do repositório, publique o contêiner. O exemplo usa o e-mail padrão do projeto. Para outro e-mail, alinhe também o build do cliente e as regras antes de publicar.
+
+```sh
+gcloud run deploy pilotis \
+  --source . \
+  --project "$PROJECT_ID" \
+  --region "$REGION" \
+  --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+  --set-env-vars "COMPANY_EMAIL=empresa@pilotis.com.br" \
+  --set-secrets "GEMINI_API_KEY=pilotis-gemini-api-key:latest" \
+  --allow-unauthenticated
+```
+
+A URL da interface é pública. O Firebase Authentication protege os módulos e o endpoint de IA exige o ID token da conta verificada. O servidor lê a porta `PORT` fornecida pelo Cloud Run. Consulte `/healthz` após o deploy e verifique que `/api/ai/chat` sem token retorna 401.
+
+4. Confirme que o cliente novo já está servindo as consultas paginadas antes de publicar as regras com limite obrigatório. Em produção, oriente usuários com uma aba antiga aberta a recarregar. Execute `npx firebase-tools deploy --only firestore:rules --project "$PROJECT_ID"`.
+5. Confira o domínio do Cloud Run no Firebase Authentication e valide login, recebimentos, planejamento e IA. Aplique `storage.rules` somente se usar o modo Storage para as fotos. O modo padrão gravará JPEGs na subcoleção do Firestore. Para Storage, configure também CORS e gere a imagem com `VITE_DAILY_LOG_PHOTO_BACKEND=storage`.
+
+Referências oficiais de publicação do [Cloud Run](https://cloud.google.com/run/docs/deploying-source-code) e de [segredos no Cloud Run](https://cloud.google.com/run/docs/configuring/services/secrets).

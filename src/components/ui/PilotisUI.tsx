@@ -2,6 +2,7 @@ import {
   Component,
   useEffect,
   useId,
+  useRef,
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
   type ReactNode,
@@ -79,7 +80,7 @@ export type BadgeVariant =
 export type BadgeTone = 'ok' | 'warn' | 'bad' | 'info' | 'crit' | 'neutral';
 
 const BADGE_STYLES: Record<BadgeVariant, string> = {
-  success: 'bg-[#E3F4EC] text-[#1E7F5C]',
+  success: 'bg-[#E3F4EC] text-[#1D6849]',
   warning: 'bg-[#FBF1DC] text-[#8A5200]',
   danger: 'bg-[#FDECEA] text-[#B42318]',
   info: 'bg-[#E6EEFB] text-[#2455A4]',
@@ -311,6 +312,7 @@ export function Tabs({
     <div
       className="flex items-center gap-6 border-b border-[#E4E1DA] overflow-x-auto no-scrollbar"
       role="tablist"
+      aria-label="Abas do módulo"
     >
       {items.map((item) => {
         const isActive = item === active;
@@ -320,7 +322,18 @@ export function Tabs({
             type="button"
             role="tab"
             aria-selected={isActive}
+            tabIndex={isActive ? 0 : -1}
             onClick={() => onChange(item)}
+            onKeyDown={(event) => {
+              const position = items.indexOf(item);
+              const target = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
+                : event.key === 'ArrowLeft' ? (position + items.length - 1) % items.length
+                : event.key === 'ArrowRight' ? (position + 1) % items.length : -1;
+              if (target < 0) return;
+              event.preventDefault();
+              event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[target]?.focus();
+              onChange(items[target]);
+            }}
             className={`pb-2.5 min-h-[40px] text-sm whitespace-nowrap shrink-0 border-b-[3px] -mb-px transition-colors cursor-pointer ${
               isActive
                 ? 'border-[#9A6212] text-[#1F3A5F] font-semibold'
@@ -602,7 +615,7 @@ export type ProgressTone = 'primary' | 'bronze' | 'success' | 'warning' | 'dange
 const PROGRESS_TONE_CLASSES: Record<ProgressTone, string> = {
   primary: 'bg-[#1F3A5F]',
   bronze: 'bg-[#9A6212]',
-  success: 'bg-[#1E7F5C]',
+  success: 'bg-[#1D6849]',
   warning: 'bg-[#8A5200]',
   danger: 'bg-[#B42318]',
 };
@@ -648,7 +661,7 @@ const NOTE_STYLES: Record<
   info: { container: 'bg-[#E6EEFB] text-[#2455A4]', icon: Info },
   warning: { container: 'bg-[#FBF1DC] text-[#8A5200]', icon: AlertTriangle },
   danger: { container: 'bg-[#FDECEA] text-[#B42318]', icon: XCircle },
-  success: { container: 'bg-[#E3F4EC] text-[#1E7F5C]', icon: CheckCircle2 },
+  success: { container: 'bg-[#E3F4EC] text-[#1D6849]', icon: CheckCircle2 },
   soft: { container: 'bg-[#F6E7CC] text-[#14181F]', icon: Info },
 };
 
@@ -784,28 +797,29 @@ export function Modal({
   maxWidth?: string;
 }) {
   const titleId = useId();
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
-    if (!open) return;
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+    const dialog = dialogRef.current;
+    if (!open || !dialog) return;
+    const trigger = document.activeElement;
+    if (!dialog.open) dialog.showModal();
+    titleRef.current?.focus();
+    return () => {
+      if (dialog.open) dialog.close();
+      if (trigger instanceof HTMLElement && trigger.isConnected) trigger.focus();
     };
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-[#101828]/55 flex items-end md:items-center justify-center p-0 md:p-4 overflow-y-auto"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={titleId}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
+    <dialog ref={dialogRef} aria-labelledby={titleId}
+      onCancel={(event) => { event.preventDefault(); onClose(); }}
+      className="fixed inset-0 m-0 h-full max-h-none w-full max-w-none bg-transparent p-0 backdrop:bg-[#101828]/55">
+      <div className="flex min-h-full items-end justify-center md:items-center md:p-4"
+        onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div
         className={`w-full ${maxWidth} bg-white border-t md:border border-[#E4E1DA] rounded-t-[22px] md:rounded-[12px] px-4 pt-3 pb-6 md:p-6 shadow-xl max-h-[88vh] md:max-h-[90vh] flex flex-col animate-sheet-up md:animate-none`}
       >
@@ -816,7 +830,7 @@ export function Modal({
 
         <div className="flex items-start justify-between gap-4 pb-3.5 border-b border-[#E4E1DA] mb-4 shrink-0">
           <div className="min-w-0">
-            <h3 id={titleId} className="text-lg font-bold text-[#14181F] leading-snug">
+            <h3 ref={titleRef} id={titleId} tabIndex={-1} className="text-lg font-bold text-[#14181F] leading-snug">
               {title}
             </h3>
             {subtitle && (
@@ -841,7 +855,8 @@ export function Modal({
           </div>
         )}
       </div>
-    </div>
+      </div>
+    </dialog>
   );
 }
 

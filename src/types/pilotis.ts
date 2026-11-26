@@ -32,6 +32,8 @@ export interface CompanySettings extends AuditMeta {
   accentColor: string;
   logoDataUrl?: string;
   pdfShowLogo: boolean;
+  popPdfHeader?: string;
+  popPdfFooter?: string;
   inssRate: number;
   fgtsRate: number;
   vacationRate: number;
@@ -113,6 +115,10 @@ export interface Project extends AuditMeta {
   type: ProjectType;
   contractKind?: ProjectContractKind;
   planningStatus?: ProjectPlanningStatus;
+  scheduleRevision?: number;
+  workInProgressLimit?: number;
+  scheduleBaselineVersion?: number;
+  scheduleStageIds?: string[];
   contractValue: number;
   contractPdf?: Bytes;
   downPaymentPct?: number;
@@ -129,6 +135,7 @@ export interface Project extends AuditMeta {
   status: ProjectStatus;
   contractSigned: boolean;
   warrantyStartDate: string;
+  closureDate?: string;
 }
 
 export type StageStatus =
@@ -143,12 +150,14 @@ export interface ProjectStage extends AuditMeta {
   projectId: string;
   wbsCode: string;
   phase: string;
+  deliverable?: string;
   name: string;
   responsible: string;
   durationWeeks: number;
   startWeek: number;
   baselineStartWeek: number;
   baselineDurationWeeks: number;
+  baselineBudgetedCost?: number;
   progressPct: number;
   budgetedCost: number;
   popId: string;
@@ -159,9 +168,37 @@ export interface ProjectStage extends AuditMeta {
   delayCategory: string;
   delayJustification: string;
   checklistCompleted: string[];
+  popReview?: StagePopReview | null;
+}
+
+export interface ScheduleBaselineStage {
+  stageId: string;
+  startWeek: number;
+  durationWeeks: number;
+  budgetedCost: number;
+}
+
+export interface ScheduleBaseline extends AuditMeta {
+  id: string;
+  projectId: string;
+  version: number;
+  recordedDate: string;
+  endDate: string;
+  justification: string;
+  stages: ScheduleBaselineStage[];
+}
+
+export interface ScheduleProgress extends AuditMeta {
+  id: string;
+  projectId: string;
+  scheduleRevision: number;
+  date: string;
+  progressPct: number;
 }
 
 export type WeatherType = 'Sol' | 'Chuva fraca' | 'Chuva forte';
+
+export type DailyPhotoBackend = 'firestore' | 'storage';
 
 export interface DailyLog extends AuditMeta {
   id: string;
@@ -172,6 +209,9 @@ export interface DailyLog extends AuditMeta {
   activities: string;
   occurrences: string;
   photoNotes: string[];
+  presentTeam?: string;
+  photoIds?: string[];
+  photoBackend?: DailyPhotoBackend;
 }
 
 export type TransactionKind = 'income' | 'expense' | 'loan';
@@ -211,6 +251,11 @@ export interface FinancialTransaction extends AuditMeta {
   isForecast: boolean;
   wasForecast?: boolean;
   statementKey?: string;
+  payrollEmployeeId?: string;
+  payrollPeriod?: string;
+  payrollBase?: number;
+  payrollCharges?: number;
+  payrollProvisions?: number;
   status: TransactionStatus;
   invoiceStatus: InvoiceStatus;
   paymentMethod: string;
@@ -243,7 +288,14 @@ export interface Debt extends AuditMeta {
   notes: string;
 }
 
-export type EmploymentType = 'CLT' | 'Autônomo' | 'Diarista';
+export type EmploymentType = 'CLT' | 'PJ' | 'Autônomo' | 'Freelancer' | 'Diarista' | 'Informal' | 'Sócio';
+export type EmployeeOccurrenceKind = 'Elogio' | 'Registro' | 'Advertência' | 'Acidente' | 'Quase acidente';
+export interface EmployeeOccurrence extends AuditMeta {
+  id: string;
+  kind: EmployeeOccurrenceKind;
+  date: string;
+  description: string;
+}
 export type EpiStatus = 'Em dia' | 'A repor' | 'Pendente';
 export type OnboardingStatus = 'Concluída' | 'Em andamento' | 'Pendente';
 
@@ -253,6 +305,8 @@ export interface Employee extends AuditMeta {
   role: string;
   employmentType: EmploymentType;
   baseSalary: number;
+  paymentFrequency?: 'monthly' | 'oneOff';
+  paymentMonth?: string;
   paymentMethod: string;
   startDate: string;
   currentProjectId: string;
@@ -262,6 +316,10 @@ export interface Employee extends AuditMeta {
   nr35Expiry: string;
   epiStatus: EpiStatus;
   onboardingStatus: OnboardingStatus;
+  onboardingStart?: string;
+  epiExpiry?: string;
+  vacationStart?: string;
+  vacationEnd?: string;
   vacationPeriod: string;
   vacationScheduled: string;
   occurrencesNote: string;
@@ -274,23 +332,75 @@ export interface Allocation extends AuditMeta {
   projectId: string;
   projectName: string;
   weekStart: string;
+  effectiveFrom?: string;
+  stageId?: string;
   status: 'Obra' | 'Férias';
+}
+
+export type ProjectRiskCategory = 'Chuva' | 'Material do cliente' | 'Equipe' | 'Retrabalho' | 'Projeto' | 'Dependência' | 'Outros';
+export type ProjectRiskImpact = 'Baixo' | 'Médio' | 'Alto';
+export type ProjectRiskStatus = 'Aberto' | 'Monitorado' | 'Resolvido';
+
+export interface ProjectRisk extends AuditMeta {
+  id: string;
+  projectId: string;
+  stageId: string;
+  category: ProjectRiskCategory;
+  description: string;
+  impact: ProjectRiskImpact;
+  status: ProjectRiskStatus;
 }
 
 export type PopStatus = 'Vigente' | 'Em revisão';
 
-export interface Pop extends AuditMeta {
+export interface PopAttachment {
   id: string;
+  name: string;
+  contentType: string;
+  size: number;
+  chunkCount: number;
+}
+
+export interface StagePopReview {
+  popId: string;
+  version: string;
+  acceptanceCriteria: string[];
+}
+
+export interface PopContent {
   title: string;
   serviceType: string;
-  version: string;
   linkedStagePhase: string;
   objective: string;
   materialsAndEpi: string;
   steps: string[];
   acceptanceCriteria: string[];
-  status: PopStatus;
   usedInOnboarding: boolean;
+  tools?: string;
+  protectiveEquipment?: string;
+  attachments?: PopAttachment[];
+}
+
+export interface Pop extends PopContent, AuditMeta {
+  id: string;
+  version: string;
+  status: PopStatus;
+  revision?: number;
+  publicationNumber?: number;
+  approvedBy?: ActorRole;
+  publishedOn?: string;
+  changeSummary?: string;
+  draft?: PopContent | null;
+}
+
+export interface PopVersion extends PopContent, AuditMeta {
+  id: string;
+  popId: string;
+  version: string;
+  publicationNumber: number;
+  approvedBy?: ActorRole;
+  publishedOn?: string;
+  changeSummary?: string;
 }
 
 export type ComplianceKind = 'Obrigação' | 'Certidão' | 'Documento de obra' | 'Licitação';
@@ -303,6 +413,13 @@ export type ComplianceStatus =
   | 'Pendente'
   | 'Parcial';
 
+export interface ComplianceFile extends AuditMeta {
+  itemId: string;
+  name: string;
+  mimeType: string;
+  content: Bytes;
+}
+
 export interface ComplianceItem extends AuditMeta {
   id: string;
   kind: ComplianceKind;
@@ -314,6 +431,7 @@ export interface ComplianceItem extends AuditMeta {
   dueDate: string;
   issuedDate: string;
   fileName: string;
+  attachmentId?: string;
   mandatory: boolean;
   status: ComplianceStatus;
   notes: string;
@@ -368,14 +486,43 @@ export interface PilotisDataState {
   projects: Project[];
   installments: Installment[];
   stages: ProjectStage[];
+  projectRisks?: ProjectRisk[];
+  baselines?: ScheduleBaseline[];
+  scheduleProgress?: ScheduleProgress[];
   dailyLogs: DailyLog[];
   transactions: FinancialTransaction[];
   debts: Debt[];
   employees: Employee[];
   allocations: Allocation[];
   pops: Pop[];
+  popVersions?: PopVersion[];
   complianceItems: ComplianceItem[];
   tenders: Tender[];
   warrantyCalls: WarrantyCall[];
+  projectClosures?: ProjectClosure[];
+  projectFollowUps?: ProjectFollowUp[];
   auditLogs: AuditLog[];
+}
+
+export interface ProjectClosure extends AuditMeta {
+  id: string;
+  projectId: string;
+  date: string;
+  dre: import('../domain/dre').DreObraResult;
+}
+
+export interface MarketingPhotoRef {
+  logId: string;
+  photoId: string;
+}
+
+export interface ProjectFollowUp extends AuditMeta {
+  id: string;
+  projectId: string;
+  testimonialRequestedAt: string;
+  referralRequestedAt: string;
+  testimonial: string;
+  referrals: string;
+  marketingPhotos: MarketingPhotoRef[];
+  authorizationNote: string;
 }

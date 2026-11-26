@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { PostConstructionView } from './ProjectClosureView';
 import { DataList, type DataListColumn } from '../components/ui/DataList';
 import {
   Button,
@@ -43,8 +44,6 @@ import type {
   QuoteStatus,
   Tender,
   TenderStatus,
-  WarrantyCall,
-  WarrantyStatus,
 } from '../types/pilotis';
 
 const formatDateBR = (val: string | null | undefined) => domainFormatDateBR(val, '—');
@@ -57,6 +56,7 @@ const CLIENT_TABS = [
   'Funil',
   'Orçamentos',
   'Clientes',
+  'Pós-obra',
   'Licitações',
   'Rascunhos descartados',
 ];
@@ -82,6 +82,7 @@ export function ClientsQuotesView({
   uid,
   data,
   companyEmail,
+  initialTab,
   externalNewQuoteOpen,
   onCloseExternalNewQuote,
   onProjectCreated,
@@ -90,6 +91,7 @@ export function ClientsQuotesView({
   uid: string;
   data: PilotisDataState;
   companyEmail?: string | null;
+  initialTab?: string;
   externalNewQuoteOpen?: boolean;
   onCloseExternalNewQuote?: () => void;
   onProjectCreated?: (projectId: string) => void;
@@ -97,7 +99,7 @@ export function ClientsQuotesView({
 }) {
   const { showToast } = useToast();
 
-  const [tab, setTab] = useState('Funil');
+  const [tab, setTab] = useState(initialTab && CLIENT_TABS.includes(initialTab) ? initialTab : 'Funil');
   const [selectedQuoteId, setSelectedQuoteId] = useState<string>('');
   const [selectedClientId, setSelectedClientId] = useState<string>('');
   const [quoteListFilter, setQuoteListFilter] = useState('Todos');
@@ -169,18 +171,7 @@ export function ClientsQuotesView({
   const [tActor, setTActor] = useState<ActorRole>('Sócio');
   const [tSaving, setTSaving] = useState(false);
 
-  // Warranty Call Modal (Create) & Status Modal
-  const [warModalOpen, setWarModalOpen] = useState(false);
-  const [wProjectId, setWProjectId] = useState('');
-  const [wDesc, setWDesc] = useState('');
-  const [wDeadline, setWDeadline] = useState(todayISO());
-  const [wCost, setWCost] = useState('0');
-  const [wActor, setWActor] = useState<ActorRole>('Sócio');
-  const [wSaving, setWSaving] = useState(false);
-
-  const [advWarCall, setAdvWarCall] = useState<WarrantyCall | null>(null);
-  const [advWarStatus, setAdvWarStatus] = useState<WarrantyStatus>('Em atendimento');
-  const [advWarActor, setAdvWarActor] = useState<ActorRole>('Sócio');
+  const [postInitialProjectId, setPostInitialProjectId] = useState('');
 
   // Derived Funnel Metrics (Rule 4: always calculated, never typed)
   const openQuotes = useMemo(
@@ -633,7 +624,7 @@ export function ClientsQuotesView({
               {formatBRL(q.totalValue + addenda)}
             </strong>
             {q.status === 'Ganho' && (
-              <span className="text-[11px] text-[#1E7F5C] font-medium">
+              <span className="text-[11px] text-[#1D6849] font-medium">
                 {addenda !== 0 ? `Base + ${formatBRL(addenda)} aditivo` : 'Valor congelado'}
               </span>
             )}
@@ -667,7 +658,7 @@ export function ClientsQuotesView({
             {check.metaConfigurada && (
               <span
                 className={`block text-[11px] ${
-                  check.status === 'acima' ? 'text-[#1E7F5C]' : 'text-[#8A5200]'
+                  check.status === 'acima' ? 'text-[#1D6849]' : 'text-[#8A5200]'
                 }`}
               >
                 {check.status === 'acima' ? 'Acima da meta' : 'Abaixo da meta'}
@@ -1651,20 +1642,17 @@ export function ClientsQuotesView({
                 <Card
                   title="Garantia (1 ano pós-conclusão)"
                   actions={
-                    clientProjects.length > 0 ? (
+                    clientProjects.some((project) => project.status === 'Concluída') ? (
                       <Button
                         size="sm"
                         variant="secondary"
                         onClick={() => {
-                          setWProjectId(clientProjects[0].id);
-                          setWDesc('');
-                          setWCost('0');
-                          setWDeadline(todayISO());
-                          setWActor('Sócio');
-                          setWarModalOpen(true);
+                          const project = clientProjects.find((row) => row.status === 'Concluída');
+                          setPostInitialProjectId(project?.id ?? '');
+                          setTab('Pós-obra');
                         }}
                       >
-                        Abrir chamado
+                        Abrir pós-obra
                       </Button>
                     ) : undefined
                   }
@@ -1709,23 +1697,6 @@ export function ClientsQuotesView({
                             </div>
                             <div className="flex items-center gap-2">
                               <StatusBadge label={w.status} />
-                              {w.status !== 'Resolvido' && (
-                                <Button
-                                  size="sm"
-                                  variant="secondary"
-                                  onClick={() => {
-                                    setAdvWarCall(w);
-                                    setAdvWarStatus(
-                                      w.status === 'Aberto'
-                                        ? 'Em atendimento'
-                                        : 'Resolvido'
-                                    );
-                                    setAdvWarActor('Sócio');
-                                  }}
-                                >
-                                  Atualizar
-                                </Button>
-                              )}
                             </div>
                           </div>
                         ))}
@@ -1803,6 +1774,8 @@ export function ClientsQuotesView({
       )}
 
       {/* ABA 4: LICITAÇÕES */}
+      {tab === 'Pós-obra' && <PostConstructionView key={postInitialProjectId} uid={uid} data={data} initialProjectId={postInitialProjectId} />}
+
       {tab === 'Licitações' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <Card
@@ -1918,7 +1891,7 @@ export function ClientsQuotesView({
             label="Quem indicou"
             value={cReferredBy}
             onChange={(e) => setCReferredBy(e.target.value)}
-            placeholder="Ex.: Nome do cliente, arquiteto ou parceiro que indicou"
+            placeholder="Nome de quem fez a indicação"
             help="Preencha quando houver indicação ou parceria."
           />
 
@@ -1951,7 +1924,7 @@ export function ClientsQuotesView({
             type="email"
             value={cEmail}
             onChange={(e) => setCEmail(e.target.value)}
-            placeholder="cliente@exemplo.com.br"
+            placeholder="E-mail do cliente"
           />
 
           <Textarea
@@ -2076,7 +2049,7 @@ export function ClientsQuotesView({
               required
               value={stageLossReason}
               onChange={(e) => setStageLossReason(e.target.value)}
-              placeholder="Ex.: Preço, prazo, concorrência ou desistência do cliente"
+              placeholder="Motivo da perda"
             />
           )}
 
@@ -2115,7 +2088,7 @@ export function ClientsQuotesView({
             required
             value={discardReason}
             onChange={(e) => setDiscardReason(e.target.value)}
-            placeholder="Ex.: Cliente adiou a obra ou sem retorno"
+            placeholder="Motivo do descarte"
           />
           <RegisteredBySelect
             value={discardActor}
@@ -2182,14 +2155,14 @@ export function ClientsQuotesView({
             required
             value={tAgency}
             onChange={(e) => setTAgency(e.target.value)}
-            placeholder="Ex.: Prefeitura Municipal de Valença"
+            placeholder="Órgão responsável"
           />
           <Input
             label="Objeto"
             required
             value={tObject}
             onChange={(e) => setTObject(e.target.value)}
-            placeholder="Ex.: Reforma de escola municipal"
+            placeholder="Objeto do edital"
           />
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Input
@@ -2310,138 +2283,6 @@ export function ClientsQuotesView({
         </form>
       </Modal>
 
-      {/* MODAL: NOVO CHAMADO DE GARANTIA */}
-      <Modal
-        open={warModalOpen}
-        onClose={() => setWarModalOpen(false)}
-        title="Novo chamado de garantia"
-      >
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault();
-            const proj =
-              data.projects.find((p) => p.id === wProjectId) || data.projects[0];
-            if (!proj) return;
-            setWSaving(true);
-            try {
-              await createRecord(
-                'warrantyCalls',
-                uid,
-                wActor,
-                {
-                  projectId: proj.id,
-                  projectName: proj.name,
-                  description: clampStr(wDesc, 400),
-                  openedDate: todayISO(),
-                  deadlineDate: wDeadline,
-                  cost: Math.max(0, Number(wCost) || 0),
-                  status: 'Aberto',
-                },
-                `Chamado de garantia: ${proj.name}`
-              );
-              showToast({ tone: 'success', title: 'Chamado de garantia registrado.' });
-              setWDesc('');
-              setWarModalOpen(false);
-            } finally {
-              setWSaving(false);
-            }
-          }}
-          className="flex flex-col gap-4"
-        >
-          <Select
-            label="Obra"
-            value={wProjectId || data.projects[0]?.id || ''}
-            onChange={(e) => setWProjectId(e.target.value)}
-          >
-            {data.projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </Select>
-          <Textarea
-            label="Descrição do atendimento"
-            required
-            rows={3}
-            value={wDesc}
-            onChange={(e) => setWDesc(e.target.value)}
-          />
-          <div className="grid grid-cols-2 gap-3">
-            <Input
-              label="Prazo de atendimento"
-              type="date"
-              value={wDeadline}
-              onChange={(e) => setWDeadline(e.target.value)}
-            />
-            <Input
-              label="Custo estimado (R$)"
-              type="number"
-              min={0}
-              step="0.01"
-              value={wCost}
-              onChange={(e) => setWCost(e.target.value)}
-              className="tabular-nums"
-            />
-          </div>
-          <RegisteredBySelect value={wActor} onChange={setWActor} id="war-actor" />
-          <div className="flex justify-end gap-2.5">
-            <Button variant="secondary" onClick={() => setWarModalOpen(false)}>
-              Cancelar
-            </Button>
-            <Button type="submit" variant="primary" disabled={wSaving}>
-              {wSaving ? 'Salvando...' : 'Abrir chamado'}
-            </Button>
-          </div>
-        </form>
-      </Modal>
-
-      {/* MODAL: ATUALIZAR CHAMADO DE GARANTIA */}
-      <Modal
-        open={Boolean(advWarCall)}
-        onClose={() => setAdvWarCall(null)}
-        title="Atualizar chamado de garantia"
-      >
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault();
-            if (!advWarCall) return;
-            await updateRecord(
-              'warrantyCalls',
-              advWarCall.id,
-              uid,
-              advWarActor,
-              { status: advWarStatus },
-              `Garantia atualizada: ${advWarCall.projectName} (${advWarStatus})`
-            );
-            showToast({ tone: 'success', title: 'Chamado de garantia atualizado.' });
-            setAdvWarCall(null);
-          }}
-          className="flex flex-col gap-4"
-        >
-          <Select
-            label="Novo status"
-            value={advWarStatus}
-            onChange={(e) => setAdvWarStatus(e.target.value as WarrantyStatus)}
-          >
-            <option value="Aberto">Aberto</option>
-            <option value="Em atendimento">Em atendimento</option>
-            <option value="Resolvido">Resolvido</option>
-          </Select>
-          <RegisteredBySelect
-            value={advWarActor}
-            onChange={setAdvWarActor}
-            id="war-adv-actor"
-          />
-          <div className="flex justify-end gap-2.5">
-            <Button variant="secondary" onClick={() => setAdvWarCall(null)}>
-              Cancelar
-            </Button>
-            <Button type="submit" variant="primary">
-              Salvar status
-            </Button>
-          </div>
-        </form>
-      </Modal>
     </div>
   );
 }

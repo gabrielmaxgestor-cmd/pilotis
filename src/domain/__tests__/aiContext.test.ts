@@ -1,191 +1,94 @@
-import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  classifyAiQuestionTopics,
-  sanitizeAiContextSnapshot,
-} from '../aiContext.ts';
+import { test } from 'node:test';
+import { classifyAiQuestionTopics, readAiFacts, renderAiAnswer, resolveAiPeriod } from '../aiContext';
+import { calcularDreObra, calcularPrevisaoCaixa } from '../pilotisAdapters';
+import { formatBRL, formatPercentBR } from '../formatters';
+import { simulateCommercialCash } from '../orcamentos';
+import type { FinancialTransaction, PilotisDataState, Project } from '../../types/pilotis';
 
-const SAMPLE_FULL_CONTEXT = {
-  resumoExecutivo: {
-    cashBalance: 120000,
-    forecastMonthEndCash: 150000,
-    receivables30Days: 45000,
-    receivables30Count: 2,
-    overdueReceivablesCount: 0,
-    monthResult: 30000,
-    averageMarginPct: 18.5,
-    activeProjectsCount: 2,
-    negotiatingQuotesCount: 1,
-    unissuedInvoicesAmount: 0,
-  },
-  fluxoCaixaProjetado5Meses: [
-    {
-      monthKey: '2026-11',
-      label: 'nov/2026',
-      contractedIn: 50000,
-      funnelWeightedIn: 10000,
-      realizedIn: 20000,
-      outflows: 35000,
-      provisionsIncluded: 4000,
-      projectedBalance: 135000,
-      projectedBalanceWithFunnel: 145000,
-      isNegative: false,
-    },
-  ],
-  folhaEquipe: {
-    totalHeadcount: 4,
-    cltCount: 3,
-    otherCount: 1,
-    recurringNonCltCount: 1,
-    basePayroll: 16000,
-    chargesTotal: 4500,
-    provisionsTotal: 2500,
-    totalMonthlyCost: 23000,
-    paramsConfigured: true,
-  },
-  dividasResumo: {
-    totalBalance: 25000,
-    overdueTaxesBalance: 0,
-    monthlyCommitment: 2500,
-    nextDueDate: '2026-12-10',
-    activeCount: 1,
-  },
-  obras: [
-    {
-      nome: 'Casa Jardim Botânico',
-      tipo: 'Casa residencial',
-      status: 'Em execução',
-      valorContrato: 900000,
-      clientName: 'Cliente Privado',
-      dre: {
-        revenueBudgeted: 900000,
-        revenueRealized: 300000,
-        marginRealized: 60000,
-        marginRealizedPct: 20,
-      },
-    },
-  ],
-  etapasEmAndamentoOuAtrasadas: [
-    {
-      obraId: 'p1',
-      codigo: '01.01',
-      etapa: 'Fundação',
-      status: 'Em andamento',
-      progressoPct: 60,
-      atrasoCategoria: '',
-      atrasoJustificativa: '',
-    },
-  ],
-  orcamentosAbertos: [
-    {
-      codigo: 'ORC-01',
-      titulo: 'Reforma Centro',
-      tipo: 'Reforma',
-      cliente: 'Fulano da Silva',
-      valor: 180000,
-      probabilidadePct: 60,
-      status: 'Em negociação',
-    },
-  ],
-  colaboradoresResumo: [
-    {
-      nome: 'João Pedro',
-      funcao: 'Mestre de obras',
-      vinculo: 'CLT',
-      obraAtual: 'Sem alocação',
-      baseSalary: 5800,
-      cpf: '123.456.789-00',
-      asoValidade: '2027-01-10',
-      nr18Validade: '2026-12-15',
-      nr35Validade: '2027-02-01',
-      paymentMethod: 'PIX',
-    },
-  ],
-  conformidade: [
-    {
-      tipo: 'Certidão',
-      titulo: 'CND Federal',
-      vencimento: '2026-11-28',
-      status: 'Vence em breve',
-      obra: 'Empresa',
-      fileName: 'cnd_secreta_2026.pdf',
-      notes: 'Observação interna confidencial',
-    },
-  ],
-  prontidaoLicitacoesPct: 85,
-  recebimentosSemNota: [
-    {
-      descricao: 'Parcela 1',
-      valor: 25000,
-      vencimento: '2026-11-30',
-      receiptRef: 'comp-123.pdf',
-    },
-  ],
+const today = '2026-11-25';
+const audit = { ownerUid: 'pilotis', createdBy: 'Sócio' as const, updatedBy: 'Sócio' as const };
+const project: Project = {
+  ...audit, id: 'obra', name: 'Residência Alto', quoteId: '', clientId: '', clientName: '', type: 'Casa residencial',
+  contractValue: 12000, budgetedLabor: 4000, budgetedSubcontract: 0, budgetedEquipment: 0, budgetedBdi: 0, budgetedTax: 0,
+  startDate: '2026-10-08', baselineEndDate: '', forecastEndDate: '', status: 'Em execução', contractSigned: true, warrantyStartDate: '',
 };
+function movement(id: string, options: Partial<FinancialTransaction>): FinancialTransaction {
+  return {
+    ...audit, id, date: '2026-11-20', dueDate: '2026-10-01', description: 'Comprovante confidencial', projectId: 'obra', projectName: project.name,
+    entryKind: 'income', category: 'Recebimento', amount: 5000, isForecast: false, status: 'Recebido', invoiceStatus: 'A emitir',
+    paymentMethod: '', installmentLabel: '', quoteId: '', debtId: '', source: 'manual', ...options,
+  };
+}
+function company(overrides: Partial<PilotisDataState> = {}): PilotisDataState {
+  return {
+    settings: null, clients: [], quotes: [], projects: [], installments: [], stages: [], dailyLogs: [], transactions: [],
+    debts: [], employees: [], allocations: [], pops: [], complianceItems: [], tenders: [], warrantyCalls: [], auditLogs: [], ...overrides,
+  };
+}
 
-test('cashflow question sends only executive and cashflow data', () => {
-  const topics = classifyAiQuestionTopics('Quanto entra e sai nos próximos 5 meses?', false);
-  assert.ok(topics.has('cashflow'));
-  assert.ok(!topics.has('team_allocation'));
-  assert.ok(!topics.has('compliance'));
-
-  const sanitized = sanitizeAiContextSnapshot(
-    SAMPLE_FULL_CONTEXT,
-    'Quanto entra e sai nos próximos 5 meses?',
-    false,
-  );
-  assert.ok('resumoExecutivo' in sanitized);
-  assert.ok('fluxoCaixaProjetado5Meses' in sanitized);
-  assert.equal('colaboradoresAlocacao' in sanitized, false);
-  assert.equal('conformidade' in sanitized, false);
-  assert.equal('orcamentosAbertos' in sanitized, false);
-  assert.equal('obras' in sanitized, false);
+test('usa DRE e projeção do Financeiro com as mesmas bases e cita os registros', () => {
+  const base = company({ projects: [project], transactions: [
+    movement('tx-recebida', {}), movement('tx-paga', { entryKind: 'expense', category: 'Folha', status: 'Pago', amount: 2000 }),
+    movement('tx-emprestimo', { entryKind: 'loan', status: 'Não é receita', amount: 3100 }),
+    movement('tx-prevista', { isForecast: true, status: 'A vencer', dueDate: '2026-12-10' }),
+  ] });
+  const question = 'Qual a margem realizada da Residência Alto?';
+  const facts = readAiFacts(base, question, today, classifyAiQuestionTopics(question, false));
+  const dre = calcularDreObra(project, base.transactions, base.stages);
+  const margin = facts.find((fact) => fact.label === 'Margem realizada da obra');
+  assert.equal(margin?.value, formatPercentBR(dre.margemRealizadaPct));
+  assert.equal(margin?.source.subject, project.name);
+  assert.ok(margin?.source.records.includes('tx-recebida'));
+  assert.equal(facts.find((fact) => fact.label === 'Receita realizada da obra')?.value, formatBRL(dre.receita.realizado));
+  const cashQuestion = 'Quanto entra e sai nos próximos 5 meses?';
+  const cash = readAiFacts(base, cashQuestion, today, classifyAiQuestionTopics(cashQuestion, false));
+  const projection = calcularPrevisaoCaixa(base, 5, today).meses;
+  assert.deepEqual(cash.filter(({ label }) => label.startsWith('Entradas contratadas')).map(({ value }) => value), projection.map((row) => formatBRL(row.contratadoEntradas)));
+  assert.deepEqual(cash.filter(({ label }) => label.startsWith('Saídas totais')).map(({ value }) => value), projection.map((row) => formatBRL(row.saidasTotais)));
+  assert.equal(JSON.stringify(facts).includes('Comprovante confidencial'), false);
 });
 
-test('certidoes question sends only compliance without fileName or notes', () => {
-  const sanitized = sanitizeAiContextSnapshot(
-    SAMPLE_FULL_CONTEXT,
-    'Quais certidões vencem este mês?',
-    false,
-  );
-  assert.ok(Array.isArray(sanitized.conformidade));
-  assert.equal('fluxoCaixaProjetado5Meses' in sanitized, false);
-  assert.equal('colaboradoresAlocacao' in sanitized, false);
-
-  const first = (sanitized.conformidade as Record<string, unknown>[])[0];
-  assert.equal(first.titulo, 'CND Federal');
-  assert.equal('fileName' in first, false);
-  assert.equal('notes' in first, false);
+test('aceita somente IDs de fatos calculados e mantém sugestões fora do modo Analista', () => {
+  const base = company({ transactions: [movement('real', {})] });
+  const question = 'Como está o caixa?';
+  const topics = classifyAiQuestionTopics(question, false);
+  const facts = readAiFacts(base, question, today, topics);
+  const fact = facts.find((row) => row.source.module === 'Financeiro · Fluxo de caixa')!;
+  const malicious = { factIds: ['inexistente', fact.id, fact.id], suggestionIds: ['simulator', 'pilotis-external'], answer: 'Valor inventado' };
+  const analyst = renderAiAnswer(malicious, facts, 'Analista', question, false);
+  assert.deepEqual(analyst.facts, [fact]);
+  assert.deepEqual(analyst.suggestions, []);
+  assert.doesNotMatch(JSON.stringify(analyst), /Valor inventado/);
+  assert.deepEqual(renderAiAnswer(malicious, facts, 'Consultor', question, false).suggestions, ['simulator']);
+  assert.match(renderAiAnswer({}, [], 'Analista', 'Qual a obrigação trabalhista?', false).text, /Não há dados/);
+  assert.equal(renderAiAnswer({}, [], 'Analista', 'Qual a obrigação trabalhista?', false).guidance, true);
 });
 
-test('team allocation question strips individual salary, CPF, ASO/NR docs, and payment method', () => {
-  const sanitized = sanitizeAiContextSnapshot(
-    SAMPLE_FULL_CONTEXT,
-    'Quem está sem obra alocada atualmente?',
-    false,
-  );
-  assert.equal('obras' in sanitized, false);
-  assert.ok(Array.isArray(sanitized.colaboradoresAlocacao));
-  const emp = (sanitized.colaboradoresAlocacao as Record<string, unknown>[])[0];
-  assert.equal(emp.nome, 'João Pedro');
-  assert.equal(emp.obraAtual, 'Sem alocação');
-  assert.equal('baseSalary' in emp, false);
-  assert.equal('cpf' in emp, false);
-  assert.equal('asoValidade' in emp, false);
-  assert.equal('nr18Validade' in emp, false);
-  assert.equal('nr35Validade' in emp, false);
-  assert.equal('paymentMethod' in emp, false);
+test('usa data do recebimento para notas e separa previsto de realizado', () => {
+  const question = 'Quanto foi recebido sem nota neste mês?';
+  const topics = classifyAiQuestionTopics(question, false);
+  const rows = [movement('real', { amount: 1200 }), movement('outra-data', { date: '2026-10-30', amount: 100 }),
+    movement('previsto', { isForecast: true, status: 'A vencer', amount: 999999 })];
+  const facts = readAiFacts(company({ transactions: rows }), question, today, topics);
+  const total = facts.find(({ label }) => label === 'Total recebido sem nota emitida')!;
+  assert.equal(total.value, formatBRL(1200));
+  assert.deepEqual(total.source.records, ['real']);
+  assert.deepEqual(resolveAiPeriod('e no mês passado?', today), { start: '2026-10-01', end: '2026-10-31' });
+  assert.deepEqual(resolveAiPeriod('entre 01/11/2026 e 10/11/2026', today), { start: '2026-11-01', end: '2026-11-10' });
 });
 
-test('project cost/margin question strips clientName and keeps DRE', () => {
-  const sanitized = sanitizeAiContextSnapshot(
-    SAMPLE_FULL_CONTEXT,
-    'Qual o custo real e margem de cada obra?',
-    false,
-  );
-  assert.ok(Array.isArray(sanitized.obras));
-  const obra = (sanitized.obras as Record<string, unknown>[])[0];
-  assert.equal(obra.nome, 'Casa Jardim Botânico');
-  assert.equal('clientName' in obra, false);
-  assert.ok(obra.dre);
+test('simula só no modo Consultor e com valor de uma obra ou orçamento cadastrado', () => {
+  const question = 'Simule a Residência Alto com 20% de entrada e 5 parcelas';
+  const topics = classifyAiQuestionTopics(question, false);
+  const base = company({ projects: [project] });
+  const scenario = readAiFacts(base, question, today, topics, '', 'Consultor').filter(({ label }) => label.startsWith('Cenário simulado'));
+  const expected = simulateCommercialCash({ valorTotal: project.contractValue, entradaPct: 20, nParcelas: 5, dataInicio: today });
+  assert.equal(scenario.find(({ label }) => label.includes('parcela mensal média'))?.value, formatBRL(expected.parcelaMensalMedia));
+  assert.equal(readAiFacts(company(), question, today, topics, '', 'Consultor').length, 0);
+  assert.equal(readAiFacts(base, question, today, topics).some(({ label }) => label.startsWith('Cenário simulado')), false);
+});
+
+test('banco vazio não converte valores ausentes em zero no resumo semanal', () => {
+  assert.deepEqual(readAiFacts(company(), '', today, classifyAiQuestionTopics('', true)), []);
 });
