@@ -38,7 +38,7 @@ function adminApp() {
 }
 
 export function getAuthorizedCompanyEmail(override?: string): string {
-  return (override ?? process.env.COMPANY_EMAIL ?? process.env.VITE_COMPANY_EMAIL ?? 'empresa@pilotis.com.br').trim().toLowerCase();
+  return (override ?? process.env.COMPANY_EMAIL ?? process.env.VITE_COMPANY_EMAIL ?? 'gabrielmaxgestor@gmail.com').trim().toLowerCase();
 }
 
 export function getConfiguredGeminiModel(override?: string): string {

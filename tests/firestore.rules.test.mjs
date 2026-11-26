@@ -2,6 +2,24 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 
+test('usa o mesmo e-mail para autorizar o frontend, o backend e o acesso aos dados', async () => {
+  const expectedEmail = 'gabrielmaxgestor@gmail.com';
+  const files = {
+    '../src/config/companyAuth.ts': /import\.meta\.env\.VITE_COMPANY_EMAIL\s*\|\|\s*'([^']+)'/,
+    '../server.ts': /process\.env\.VITE_COMPANY_EMAIL\s*\?\?\s*'([^']+)'/,
+    '../firestore.rules': /function companyEmail\(\)\s*\{\s*return '([^']+)'/,
+    '../storage.rules': /token\.email\.lower\(\)\s*==\s*'([^']+)'/,
+    '../Dockerfile': /^ARG VITE_COMPANY_EMAIL=(.+)$/m,
+    '../.env.example': /^VITE_COMPANY_EMAIL="([^"]+)"$/m,
+  };
+  for (const [file, pattern] of Object.entries(files)) {
+    const source = await readFile(new URL(file, import.meta.url), 'utf8');
+    assert.equal(pattern.exec(source)?.[1], expectedEmail, file);
+  }
+  const env = await readFile(new URL('../.env.example', import.meta.url), 'utf8');
+  assert.equal(/^COMPANY_EMAIL="([^"]+)"$/m.exec(env)?.[1], expectedEmail);
+});
+
 test('somente a conta verificada consulta os próprios registros em páginas limitadas', { skip: !process.env.FIRESTORE_EMULATOR_HOST }, async () => {
   const { initializeApp, deleteApp } = await import('firebase/app');
   const { collection, connectFirestoreEmulator, doc, getDocFromServer, getDocsFromServer, getFirestore,
@@ -11,7 +29,7 @@ test('somente a conta verificada consulta os próprios registros em páginas lim
   const config = JSON.parse(await readFile(new URL('../firebase.json', import.meta.url), 'utf8'));
   const databases = [];
   const clients = [];
-  const email = 'empresa@pilotis.com.br';
+  const email = 'gabrielmaxgestor@gmail.com';
   function client(name, mockUserToken) {
     const app = initializeApp({ projectId: 'demo-pilotis' }, name);
     const db = getFirestore(app, config.firestore[0].database);

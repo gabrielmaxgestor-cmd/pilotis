@@ -25,7 +25,7 @@ service cloud.firestore {
     // Ponto único de configuração do e-mail autorizado da empresa
     // Deve coincidir exatamente com COMPANY_EMAIL / VITE_COMPANY_EMAIL em src/config/companyAuth.ts
     function companyEmail() {
-      return 'empresa@pilotis.com.br';
+      return 'gabrielmaxgestor@gmail.com';
     }
 
     function isSignedIn() {

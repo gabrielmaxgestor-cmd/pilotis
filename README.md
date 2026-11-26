@@ -28,6 +28,14 @@ Aplicativo web para acompanhar finanças, clientes e orçamentos, obras, equipe,
 
 O app usa o projeto e o banco de `firebase-applet-config.json`. O banco de `firebase.json` precisa ter o mesmo identificador. As listas do cliente são filtradas por proprietário e limitadas a 201 documentos por requisição. A página extra detecta a existência de mais registros. A sincronização inicial percorre as páginas necessárias para os cálculos e a exportação. As leituras dos módulos da IA usam páginas de até 200 registros. O Admin SDK usa IAM e o backend aplica o filtro por UID da sessão.
 
+## Conta autorizada
+
+A conta do Pilotis é `gabrielmaxgestor@gmail.com`. Ela precisa existir no Firebase Authentication do projeto indicado em `firebase-applet-config.json`, com o provedor **E-mail/senha** e o e-mail verificado. A senha é definida no Firebase Authentication.
+
+Para ativar a mudança em um ambiente já publicado, atualize `VITE_COMPANY_EMAIL` e `COMPANY_EMAIL` se estiverem definidas na hospedagem. Faça um novo build e publique as regras do Firestore no banco nomeado. Publique também `storage.rules` se as fotos usam Firebase Storage. Coordene as publicações na mesma janela para manter o cliente e as regras com o mesmo e-mail.
+
+Os registros pertencem ao UID que os criou. Se a conta autorizada for trocada por uma conta com outro UID, a alteração do e-mail autorizado por si só não transfere os registros.
+
 ## Desenvolvimento e verificação
 
 Use Node.js 24. O ambiente deve ter uma conta corporativa com e-mail verificado no Firebase Authentication. Configure o mesmo endereço em `VITE_COMPANY_EMAIL` no build do cliente, `COMPANY_EMAIL` no servidor e em `firestore.rules` e `storage.rules`. Use `.env.example` como referência local. `GEMINI_API_KEY` fica no servidor. Para consultas reais locais da IA, use credenciais padrão da aplicação (ADC) de um projeto de teste.
@@ -60,7 +68,7 @@ gcloud run deploy pilotis \
   --project "$PROJECT_ID" \
   --region "$REGION" \
   --service-account "$RUNTIME_SERVICE_ACCOUNT" \
-  --set-env-vars "COMPANY_EMAIL=empresa@pilotis.com.br" \
+  --set-env-vars "COMPANY_EMAIL=gabrielmaxgestor@gmail.com" \
   --set-secrets "GEMINI_API_KEY=pilotis-gemini-api-key:latest" \
   --allow-unauthenticated
 ```

@@ -79,6 +79,9 @@ export function useCurrentUser(): CurrentUserState {
       isAuthorizedCompanyEmail(refreshed.email) &&
       refreshed.emailVerified
     ) {
+      // Firestore evaluates the verification claim in the ID token.
+      await refreshed.getIdToken(true);
+      if (auth.currentUser?.uid !== refreshed.uid) return false;
       setUser(refreshed);
       setAuthIssue(null);
       return true;

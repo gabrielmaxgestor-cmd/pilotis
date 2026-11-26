@@ -30,7 +30,7 @@ function memoryStore(overrides: Partial<PilotisDataState> = {}) {
   return { store, reads };
 }
 
-const EMAIL = 'empresa@pilotis.com.br';
+const EMAIL = 'gabrielmaxgestor@gmail.com';
 const base = {
   authorizedCompanyEmail: EMAIL,
   now: () => Date.parse('2026-11-25T12:00:00Z'),
