@@ -113,8 +113,8 @@ async function loadConfirmationService(db) {
 
 test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', { skip: !process.env.FIRESTORE_EMULATOR_HOST }, async () => {
   const { initializeApp, deleteApp } = await import('firebase/app');
-  const { collection, connectFirestoreEmulator, doc, getDocFromServer, getDocsFromServer, getFirestore,
-    limit, query, serverTimestamp, setDoc, terminate, where } = await import('firebase/firestore');
+  const { Bytes, collection, connectFirestoreEmulator, doc, getDocFromServer, getDocsFromServer, getFirestore,
+    limit, query, serverTimestamp, setDoc, terminate, updateDoc, where, writeBatch } = await import('firebase/firestore');
   const [host, port] = process.env.FIRESTORE_EMULATOR_HOST.split(':');
   assert.ok(host === '127.0.0.1' || host === 'localhost', 'Use apenas o emulador local');
   const config = JSON.parse(await readFile(new URL('../firebase.json', import.meta.url), 'utf8'));
@@ -163,6 +163,28 @@ test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', {
         contractSignedAt: '', contractAddenda: [], addendaTotalValue: 0, projectId: '',
       });
 
+      await assert.rejects(updateDoc(quoteRef, {
+        status: 'Ganho', probabilityPct: 100, projectId: 'missing-' + randomUUID(),
+        contractSignStatus: 'Aguardando assinatura', updatedAt: serverTimestamp(),
+      }), { code: 'permission-denied' });
+
+      if (status === 'Em negociação') {
+        const orphanProject = doc(collection(db, 'projects'));
+        const missingClientId = 'missing-client-' + randomUUID();
+        const batch = writeBatch(db);
+        batch.set(orphanProject, {
+          ...meta, name: 'Obra isolada', type: 'Reforma', quoteId: quoteRef.id, clientId: missingClientId,
+          contractValue: totalValue, contractPdf: Bytes.fromUint8Array(new TextEncoder().encode('%PDF-')),
+          status: 'Contratada', planningStatus: 'Aguardando modelo de cronograma',
+        });
+        batch.update(quoteRef, {
+          status: 'Ganho', probabilityPct: 100, projectId: orphanProject.id, clientId: missingClientId,
+          contractSignStatus: 'Aguardando assinatura', updatedAt: serverTimestamp(),
+        });
+        await assert.rejects(batch.commit(), { code: 'permission-denied' });
+        assert.equal((await getDocFromServer(orphanProject)).exists(), false);
+      }
+
       const { projectId } = await confirmQuoteAndGenerateProject({
         uid, actor, quoteId: quoteRef.id, totalValue, downPaymentPct: 40, installmentsCount, startDate,
       });
@@ -173,6 +195,10 @@ test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', {
       const quote = (await getDocFromServer(quoteRef)).data();
       assert.equal(quote.status, 'Ganho');
       assert.equal(quote.projectId, projectId);
+      assert.equal(quote.totalValue, totalValue);
+      await assert.rejects(updateDoc(quoteRef, {
+        totalValue: totalValue + 1, updatedAt: serverTimestamp(),
+      }), { code: 'permission-denied' });
       const payments = (await matching('parcelas', projectId)).docs.map((item) => item.data());
       assert.equal(payments.length, installmentsCount + 1);
       assert.equal(payments.find((item) => item.number === 0)?.amount, 4800);
