@@ -50,3 +50,16 @@ jobs:
       - run: npm test
       - run: node --test tests/integration.test.mjs
       - run: npm run build
+
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npm install --no-save --package-lock=false @playwright/test @axe-core/playwright
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test --config tests/browser/playwright.config.mjs

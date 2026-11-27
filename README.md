@@ -91,3 +91,36 @@ A URL da interface é pública. O Firebase Authentication protege os módulos e 
 5. Confira o domínio do Cloud Run no Firebase Authentication e valide login, recebimentos, planejamento e IA. Aplique `storage.rules` somente se usar o modo Storage para as fotos. O modo padrão gravará JPEGs na subcoleção do Firestore. Para Storage, configure também CORS e gere a imagem com `VITE_DAILY_LOG_PHOTO_BACKEND=storage`.
 
 Referências oficiais de publicação do [Cloud Run](https://cloud.google.com/run/docs/deploying-source-code) e de [segredos no Cloud Run](https://cloud.google.com/run/docs/configuring/services/secrets).
+
+### Resumo semanal automático
+
+O comando `node server.js --weekly-summary` roda o mesmo processamento do resumo sob demanda, encontra a conta verificada pelo e-mail corporativo e registra uma execução por semana em `conversasIA`. As entradas agendadas aparecem no histórico com autoria “Sistema”. O botão de resumo sob demanda continua disponível.
+
+Use a imagem atual do Pilotis em `PILOTIS_IMAGE` e uma conta de serviço em `SCHEDULER_SERVICE_ACCOUNT` para invocar o job. Habilite a API do Cloud Scheduler. A conta de execução definida em `RUNTIME_SERVICE_ACCOUNT` também precisa de `firebaseauth.users.get` para localizar a conta, disponível em `roles/firebaseauth.viewer`. Se o serviço usa `GEMINI_MODEL` ou outro `COMPANY_EMAIL`, replique essas configurações no job.
+
+```sh
+gcloud run jobs deploy pilotis-resumo-semanal \
+  --project "$PROJECT_ID" --region "$REGION" --image "$PILOTIS_IMAGE" \
+  --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+  --command node --args server.js,--weekly-summary \
+  --set-env-vars "COMPANY_EMAIL=gabrielmaxgestor@gmail.com" \
+  --set-secrets "GEMINI_API_KEY=pilotis-gemini-api-key:latest"
+
+gcloud run jobs execute pilotis-resumo-semanal \
+  --project "$PROJECT_ID" --region "$REGION" --wait
+
+gcloud run jobs add-iam-policy-binding pilotis-resumo-semanal \
+  --project "$PROJECT_ID" --region "$REGION" \
+  --member "serviceAccount:$SCHEDULER_SERVICE_ACCOUNT" --role roles/run.invoker
+
+gcloud scheduler jobs create http pilotis-resumo-semanal \
+  --project "$PROJECT_ID" --location "$REGION" --schedule '0 8 * * 1' \
+  --time-zone 'America/Sao_Paulo' --http-method POST \
+  --uri "https://run.googleapis.com/v2/projects/$PROJECT_ID/locations/$REGION/jobs/pilotis-resumo-semanal:run" \
+  --oauth-service-account-email "$SCHEDULER_SERVICE_ACCOUNT" \
+  --headers 'Content-Type=application/json' --message-body '{}'
+```
+
+O exemplo agenda o resumo para segunda-feira às 8h, no horário de Valença. Após a execução de teste, confira a entrada em **IA Operacional → Conversas**.
+
+Referência para [agendar jobs do Cloud Run](https://cloud.google.com/run/docs/execute/jobs-on-schedule).

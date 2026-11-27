@@ -45,7 +45,7 @@ export interface AiTurn {
   week: string;
   answer: AiAnswer;
   createdAt: string;
-  createdBy: ActorRole;
+  createdBy: ActorRole | 'Sistema';
 }
 
 export const WEEKLY_QUESTION = 'Gerar resumo semanal operacional';

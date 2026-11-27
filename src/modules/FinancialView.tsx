@@ -670,7 +670,8 @@ export function FinancialView({
       {tab === 'Visão geral' && (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-            <KpiCard label="Saldo de caixa" value={formatBRL(periodSummary.saldoRealizadoCaixa)} />
+            <KpiCard label="Saldo de caixa" value={formatBRL(periodSummary.saldoRealizadoCaixa)}
+              subtext="Movimentos realizados, incluindo financiamentos" isEmpty={periodSummary.saldoRealizadoCaixa === null} />
             <KpiCard
               label="Receitas recebidas no mês"
               value={periodSummary.possuiMovimentoRealizadoNoMes ? formatBRL(periodSummary.entradasMes) : 'Sem dados'}
