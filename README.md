@@ -56,11 +56,10 @@ Use Node.js 24. O ambiente deve ter uma conta corporativa com e-mail verificado 
 npm ci
 npm run lint
 npm test
-node --test tests/integration.test.mjs
 npm run dev
 ```
 
-Os testes de integração executam os serviços do app com um Firestore em memória, incluindo rollback simulado. Para testar a aplicação das regras, execute o emulador em um projeto demonstrativo local com Java disponível.
+O comando `npm test` roda os testes de domínio e os arquivos `tests/*.mjs`. Os testes de integração executam os serviços do app com um Firestore em memória, incluindo rollback simulado. Os testes que verificam as regras do Firestore exigem o emulador. Execute-os em um projeto demonstrativo local com Java disponível.
 
 ```sh
 npx firebase-tools emulators:exec --only firestore --project demo-pilotis "node --test tests/firestore.rules.test.mjs"

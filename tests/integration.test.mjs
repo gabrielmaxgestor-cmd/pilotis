@@ -172,6 +172,28 @@ test('confirmação é atômica e cria obra, parcelas, PDF, checklist e entrada 
   assert.equal(rows('baselines').length, 1);
 });
 
+test('nova obra a partir de modelo cria etapas e vincula o POP publicado da fase', async () => {
+  db.clear();
+  const phase = 'Instalações';
+  db.set('pops/draft', { ...audit, status: 'Em revisão', publicationNumber: 0, linkedStagePhase: phase });
+  db.set('pops/published', { ...audit, status: 'Vigente', publicationNumber: 1, linkedStagePhase: phase });
+
+  const projectId = await service.createProjectFromTemplate(uid, actor, {
+    name: 'Obra de integração', clientName: 'Cliente', type: 'Reforma',
+    contractValue: 10000, costBudget: 4000, startDate: today, pops: rows('pops'),
+  });
+
+  const project = row('projects', projectId);
+  const stages = rows('stages').filter((stage) => stage.projectId === projectId);
+  assert.equal(project.planningStatus, 'Cronograma criado');
+  assert.ok(stages.length > 1);
+  assert.deepEqual(project.scheduleStageIds, stages.map((stage) => stage.id));
+  const installations = stages.find((stage) => stage.phase.endsWith(phase));
+  assert.ok(installations);
+  assert.equal(installations.popId, 'published');
+  assert.ok(!stages.some((stage) => stage.popId === 'draft'));
+});
+
 test('atualização genérica registra valores anteriores e novos junto com a alteração', async () => {
   db.clear();
   db.set('clients/client', { ...audit, name: 'Nome anterior', notes: 'a'.repeat(500), origin: 'Indicação' });

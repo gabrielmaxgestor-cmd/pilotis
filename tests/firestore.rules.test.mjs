@@ -127,7 +127,8 @@ test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', {
   });
 
   try {
-    const { confirmQuoteAndGenerateProject, recordFinancialTransaction, updateRecord } = await loadConfirmationService(db);
+    const { confirmQuoteAndGenerateProject, createProjectFromTemplate, recordFinancialTransaction, updateRecord } =
+      await loadConfirmationService(db);
     const meta = {
       ownerUid: uid, createdBy: actor, updatedBy: actor, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
     };
@@ -236,6 +237,21 @@ test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', {
     assert.equal(debt.remainingInstallments, 3);
     assert.equal(debt.nextDueDate, '2027-02-15');
     assert.equal(debt.monthlyCost, undefined);
+
+    const popRef = doc(collection(db, 'pops'));
+    await setDoc(popRef, {
+      ...meta, title: 'Conferência das instalações', serviceType: 'Instalações', linkedStagePhase: 'Instalações',
+      version: 'v1.0', status: 'Vigente', publicationNumber: 1,
+    });
+    const pop = (await getDocFromServer(popRef)).data();
+    const modeledProjectId = await createProjectFromTemplate(uid, actor, {
+      name: 'Obra a partir do modelo', clientName: 'Cliente do teste', type: 'Reforma',
+      contractValue: totalValue, costBudget: 5000, startDate, pops: [{ ...pop, id: popRef.id }],
+    });
+    const modeledStages = await matching('stages', modeledProjectId);
+    assert.ok(modeledStages.size > 1);
+    const linkedStage = modeledStages.docs.find((item) => item.data().phase.endsWith('Instalações'));
+    assert.equal(linkedStage?.data().popId, popRef.id);
   } finally {
     await terminate(db);
     await deleteApp(app);
