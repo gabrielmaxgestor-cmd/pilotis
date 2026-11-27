@@ -10,7 +10,7 @@ import {
 } from 'firebase/auth';
 import { Button, Input, Note } from '../components/ui/PilotisUI';
 import { isAuthorizedCompanyEmail } from '../config/companyAuth';
-import type { AuthIssue } from '../hooks/useCurrentUser';
+import type { AuthIssue, VerificationEmailResult } from '../hooks/useCurrentUser';
 import { auth } from '../lib/firebase';
 
 type AuthScreenMode = 'login' | 'forgot';
@@ -25,7 +25,7 @@ export function LoginView({
   authIssue?: AuthIssue;
   currentUserEmail?: string | null;
   onLogout?: () => Promise<void>;
-  onResendVerification?: () => Promise<void>;
+  onResendVerification?: () => Promise<VerificationEmailResult>;
   onReloadUser?: () => Promise<boolean>;
 }) {
   const [mode, setMode] = useState<AuthScreenMode>('login');
@@ -119,11 +119,11 @@ export function LoginView({
     setLoading(true);
     setVerifyFeedback(null);
     try {
-      await onResendVerification();
+      if (await onResendVerification() === 'already-verified') return;
       setVerifyFeedback({
         tone: 'info',
         title: 'E-mail de verificação enviado',
-        text: 'Confira a caixa de entrada e clique no link de confirmação para liberar o acesso.',
+        text: 'Abra a mensagem mais recente, confirme o e-mail e volte para entrar.',
       });
     } catch {
       setVerifyFeedback({
@@ -146,7 +146,7 @@ export function LoginView({
         setVerifyFeedback({
           tone: 'warning',
           title: 'E-mail ainda não verificado',
-          text: 'Abra o link recebido no e-mail da empresa e tente confirmar novamente.',
+          text: 'Use o link mais recente. Se ele expirou ou já foi usado e o acesso continua pendente, solicite um novo.',
         });
       }
     } catch {

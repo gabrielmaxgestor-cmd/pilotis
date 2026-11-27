@@ -9,6 +9,7 @@ import { isAuthorizedCompanyEmail } from '../config/companyAuth';
 import { auth } from '../lib/firebase';
 
 export type AuthIssue = 'unauthorized_email' | 'email_not_verified' | null;
+export type VerificationEmailResult = 'sent' | 'already-verified';
 
 export interface CurrentUserState {
   user: User | null;
@@ -16,7 +17,7 @@ export interface CurrentUserState {
   isAuthorized: boolean;
   authIssue: AuthIssue;
   logout: () => Promise<void>;
-  resendVerificationEmail: () => Promise<void>;
+  resendVerificationEmail: () => Promise<VerificationEmailResult>;
   reloadUser: () => Promise<boolean>;
 }
 
@@ -63,17 +64,12 @@ export function useCurrentUser(): CurrentUserState {
     setAuthIssue(null);
   }, []);
 
-  const resendVerificationEmail = useCallback(async () => {
-    if (!auth.currentUser) {
-      throw new Error('Nenhuma sessão pendente de verificação.');
-    }
-    await sendEmailVerification(auth.currentUser);
-  }, []);
-
   const reloadUser = useCallback(async (): Promise<boolean> => {
-    if (!auth.currentUser) return false;
-    await auth.currentUser.reload();
+    const session = auth.currentUser;
+    if (!session || !isAuthorizedCompanyEmail(session.email)) return false;
+    await session.reload();
     const refreshed = auth.currentUser;
+    if (refreshed?.uid !== session.uid) return false;
     if (
       refreshed &&
       isAuthorizedCompanyEmail(refreshed.email) &&
@@ -91,6 +87,20 @@ export function useCurrentUser(): CurrentUserState {
     }
     return false;
   }, []);
+
+  const resendVerificationEmail = useCallback(async (): Promise<VerificationEmailResult> => {
+    const before = auth.currentUser;
+    if (!before || !isAuthorizedCompanyEmail(before.email)) {
+      throw new Error('Entre com a conta autorizada para solicitar a verificação.');
+    }
+    if (await reloadUser()) return 'already-verified';
+    const current = auth.currentUser;
+    if (!current || current.uid !== before.uid || !isAuthorizedCompanyEmail(current.email)) {
+      throw new Error('A sessão mudou. Entre novamente para solicitar a verificação.');
+    }
+    await sendEmailVerification(current);
+    return 'sent';
+  }, [reloadUser]);
 
   const isAuthorized = Boolean(
     user && isAuthorizedCompanyEmail(user.email) && user.emailVerified,
