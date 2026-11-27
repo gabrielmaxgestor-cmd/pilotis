@@ -11,6 +11,7 @@ import { ToastProvider } from './components/ui/Toast';
 import { useCurrentUser } from './hooks/useCurrentUser';
 import { importLegacyDailyQueue, startFieldSync } from './services/fieldQueue';
 import { subscribePilotisCollections } from './services/pilotisService';
+import { readEmailAction } from './services/emailActions';
 import type { ModuleKey, PilotisDataState } from './types/pilotis';
 
 const ClientsQuotesView = lazy(() =>
@@ -18,6 +19,9 @@ const ClientsQuotesView = lazy(() =>
 );
 const ComplianceView = lazy(() =>
   import('./modules/ComplianceView').then((m) => ({ default: m.ComplianceView }))
+);
+const EmailActionView = lazy(() =>
+  import('./modules/EmailActionView').then((m) => ({ default: m.EmailActionView }))
 );
 const DashboardView = lazy(() =>
   import('./modules/DashboardView').then((m) => ({ default: m.DashboardView }))
@@ -374,6 +378,11 @@ function AuthenticatedShell({
 }
 
 function ProtectedPilotisApp() {
+  const [emailAction] = useState(() => readEmailAction(window.location.search));
+  useEffect(() => {
+    if (emailAction) window.history.replaceState(window.history.state, '', window.location.pathname);
+  }, [emailAction]);
+
   const {
     user,
     loading,
@@ -401,6 +410,14 @@ function ProtectedPilotisApp() {
           </div>
         </div>
       </div>
+    );
+  }
+
+  if (emailAction) {
+    return (
+      <Suspense fallback={<ModuleLoadingFallback label="Carregando ação de e-mail..." />}>
+        <EmailActionView action={emailAction} onCheckSession={reloadUser} />
+      </Suspense>
     );
   }
 

@@ -36,6 +36,18 @@ Para ativar a mudança em um ambiente já publicado, atualize `VITE_COMPANY_EMAI
 
 Os registros pertencem ao UID que os criou. Se a conta autorizada for trocada por uma conta com outro UID, a alteração do e-mail autorizado por si só não transfere os registros.
 
+## Links de verificação de e-mail
+
+O Pilotis carrega a ação de e-mail na própria página inicial. A pessoa precisa clicar em **Confirmar e-mail** para aplicar o código do Firebase. Abrir a página, inclusive por uma pré-visualização de e-mail, não aplica o código. A mesma tela atende à redefinição de senha e à recuperação de endereço porque o Firebase usa uma única URL de ação para todos os modelos.
+
+1. Publique a versão que inclui a tela de confirmação.
+2. No Firebase Console do projeto `climbing-starlight-m8gvj`, abra **Authentication → Modelos**, edite um dos modelos e escolha **Personalizar URL de ação**. Use a página inicial da versão publicada, por exemplo `https://pilotis-five.vercel.app/`. A configuração se aplica aos novos e-mails de todos os modelos.
+3. Entre no Pilotis e clique em **Reenviar e-mail de verificação**. Abra a mensagem nova, clique em **Confirmar e-mail** e volte ao app. Se precisar, clique em **Já verifiquei, entrar** na mesma sessão.
+4. Confira também **Esqueci a senha** e a abertura de um link expirado no ambiente de homologação. Os links antigos continuam apontando para o endereço original.
+
+O código do link é de uso único. Para diagnosticar uma falha, compartilhe apenas a mensagem exibida ou o domínio do link.
+[Documentação do Firebase sobre a URL de ação personalizada](https://firebase.google.com/docs/auth/custom-email-handler).
+
 ## Desenvolvimento e verificação
 
 Use Node.js 24. O ambiente deve ter uma conta corporativa com e-mail verificado no Firebase Authentication. Configure o mesmo endereço em `VITE_COMPANY_EMAIL` no build do cliente, `COMPANY_EMAIL` no servidor e em `firestore.rules` e `storage.rules`. Use `.env.example` como referência local. `GEMINI_API_KEY` fica no servidor. Para consultas reais locais da IA, use credenciais padrão da aplicação (ADC) de um projeto de teste.
