@@ -7,8 +7,16 @@ async function checkAccessibility(page) {
 }
 
 async function checkPageWidth(page) {
-  const widths = await page.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]);
-  expect(widths[0]).toBeLessThanOrEqual(widths[1]);
+  const result = await page.evaluate(() => {
+    const viewport = window.innerWidth;
+    const width = document.documentElement.scrollWidth;
+    const overflowing = width <= viewport ? [] : Array.from(document.querySelectorAll('main *'))
+      .filter((element) => element.getBoundingClientRect().right > viewport)
+      .filter((element) => !element.closest('.overflow-x-auto, .no-scrollbar'))
+      .slice(0, 8).map((element) => [element.tagName, element.className]);
+    return { viewport, width, overflowing };
+  });
+  expect(result.width, JSON.stringify(result.overflowing)).toBeLessThanOrEqual(result.viewport);
 }
 
 for (const width of [390, 1440]) {

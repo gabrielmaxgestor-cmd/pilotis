@@ -5,7 +5,7 @@ import path from 'path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { GoogleGenAI } from '@google/genai';
-import { getApp, getApps, initializeApp } from 'firebase-admin/app';
+import { deleteApp, getApp, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth, type DecodedIdToken, type UserRecord } from 'firebase-admin/auth';
 import {
   classifyAiQuestionTopics, CONSULTANT_ACTIONS, readAiFacts, renderAiAnswer, suggestedActions, WEEKLY_QUESTION, type AiTurn,
@@ -326,6 +326,8 @@ if (isDirectExecution) {
   const weekly = process.argv[2] === '--weekly-summary';
   const task = weekly ? runScheduledAiSummary().then((turn) => {
     console.log('Resumo semanal registrado para a semana de ' + turn.week);
+  }).finally(async () => {
+    await Promise.all(getApps().map(deleteApp));
   }) : startServer();
   task.catch((err) => {
     if (weekly) console.error('Não foi possível gerar o resumo semanal.', err instanceof Error ? err.name : '');
