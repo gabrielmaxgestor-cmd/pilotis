@@ -123,7 +123,6 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastContext.Provider value={value}>
       {children}
       <div
-        aria-label="Notificações"
         className="pointer-events-none fixed z-50 left-4 right-4 bottom-20 md:bottom-6 md:left-auto md:right-6 flex flex-col gap-2 items-end"
       >
         {toasts.map((item) => (

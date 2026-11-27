@@ -230,6 +230,13 @@ export function toDomainTaxParams(
   };
 }
 
+export function getContractCostBudget(project: Project): number | null {
+  const amounts = [project.budgetedLabor, project.budgetedSubcontract, project.budgetedEquipment,
+    project.budgetedBdi, project.budgetedTax];
+  const total = roundCents(amounts.reduce((sum, amount) => sum + (amount ?? 0), 0));
+  return total > 0 ? total : null;
+}
+
 export function toDomainProjectDreInput(project: Project, stages: ProjectStage[] = []): ObraDreInput {
   const projectStages = stages.filter((stage) => stage.projectId === project.id);
   return {

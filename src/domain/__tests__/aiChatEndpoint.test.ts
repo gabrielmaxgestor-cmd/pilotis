@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { AddressInfo } from 'node:net';
-import { createApiApp, getConfiguredGeminiModel, DEFAULT_GEMINI_MODEL, MAX_AI_BODY_BYTES } from '../../../server.ts';
+import { createApiApp, runScheduledAiSummary, getConfiguredGeminiModel, DEFAULT_GEMINI_MODEL, MAX_AI_BODY_BYTES } from '../../../server.ts';
 import type { AiTurn } from '../aiContext';
 import type { PilotisDataState } from '../../types/pilotis';
 import type { AiStore, StoredAiTurn } from '../../server/aiStore';
@@ -130,4 +130,30 @@ test('limita corpo e aplica rate limit por UID autenticado', async () => {
 test('modelo padrão é configurável no servidor', () => {
   assert.equal(getConfiguredGeminiModel(' '), DEFAULT_GEMINI_MODEL);
   assert.equal(getConfiguredGeminiModel('override'), 'override');
+});
+
+test('resumo agendado exige a conta verificada e registra uma vez por semana com autoria do sistema', async () => {
+  const { store, reads } = memoryStore();
+  const options = {
+    store, authorizedCompanyEmail: EMAIL, now: () => Date.parse('2026-11-30T11:00:00Z'),
+    generateContent: async () => assert.fail('Gemini não deve ser chamado sem fatos'),
+  };
+  await assert.rejects(runScheduledAiSummary({
+    ...options,
+    findCompanyUser: async () => ({ uid: 'company', email: EMAIL, disabled: false, emailVerified: false }),
+  }), /ativa e verificada/);
+  assert.deepEqual(reads, []);
+
+  const validOptions = {
+    ...options,
+    findCompanyUser: async (email: string) => ({ uid: 'company', email, disabled: false, emailVerified: true }),
+  };
+  const first = await runScheduledAiSummary(validOptions);
+  const retry = await runScheduledAiSummary(validOptions);
+  assert.equal(first.id, 'weekly-2026-11-30');
+  assert.equal(first.createdBy, 'Sistema');
+  assert.equal(first.weekly, true);
+  assert.match(first.answer.text, /Não há dados/);
+  assert.deepEqual(retry, first);
+  assert.deepEqual(reads, ['company']);
 });

@@ -32,6 +32,7 @@ import {
   formatMonthLabelBR,
   formatPercentBR,
   formatShortDateBR,
+  getContractCostBudget,
   monthKey,
   parseBankStatement,
   resolverStatusDivida,
@@ -629,6 +630,10 @@ export function FinancialView({
     [consolidatedDre, activeDreProject, data.transactions, data.stages],
   );
 
+  const hasActiveCostBudget = Boolean(activeDreProject && (
+    getContractCostBudget(activeDreProject) !== null || (activeDre?.custosTotais.orcado ?? 0) > 0
+  ));
+
   const companyDre = useMemo(
     () => calcularDreEmpresa(data, drePeriodStart, drePeriodEnd),
     [data, drePeriodStart, drePeriodEnd],
@@ -670,7 +675,8 @@ export function FinancialView({
       {tab === 'Visão geral' && (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-            <KpiCard label="Saldo de caixa" value={formatBRL(periodSummary.saldoRealizadoCaixa)} />
+            <KpiCard label="Saldo de caixa" value={formatBRL(periodSummary.saldoRealizadoCaixa)}
+              subtext="Movimentos realizados, incluindo financiamentos" isEmpty={periodSummary.saldoRealizadoCaixa === null} />
             <KpiCard
               label="Receitas recebidas no mês"
               value={periodSummary.possuiMovimentoRealizadoNoMes ? formatBRL(periodSummary.entradasMes) : 'Sem dados'}
@@ -709,7 +715,7 @@ export function FinancialView({
             <section className="lg:col-span-2 bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <h2 className="text-base font-semibold text-[#14181F]">Fluxo de caixa mensal</h2>
-                <div className="flex items-center gap-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
                   {cashForecast.mesesNegativos.length > 0 && (
                     <StatusBadge
                       label={`${cashForecast.mesesNegativos.length} mês(es) negativo(s)`}
@@ -744,36 +750,39 @@ export function FinancialView({
                 Simulador de condições comerciais
               </h2>
               <div className="flex flex-col gap-1">
-                <label className="text-xs font-semibold text-[#14181F]">Valor da obra (R$)</label>
+                <label htmlFor="sim-value" className="text-xs font-semibold text-[#14181F]">Valor da obra (R$)</label>
                 <input
+                  id="sim-value"
                   type="number"
                   min={0}
                   value={simValue}
                   onChange={(e) => setSimValue(e.target.value)}
-                  className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm tabular-nums"
+                  className="w-full min-w-0 rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm tabular-nums"
                 />
               </div>
               <div className="grid grid-cols-2 gap-2.5">
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-semibold text-[#14181F]">Entrada (%)</label>
+                  <label htmlFor="sim-entry" className="text-xs font-semibold text-[#14181F]">Entrada (%)</label>
                   <input
+                    id="sim-entry"
                     type="number"
                     min={0}
                     max={100}
                     value={simDownPct}
                     onChange={(e) => setSimDownPct(e.target.value)}
-                    className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm tabular-nums"
+                    className="w-full min-w-0 rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm tabular-nums"
                   />
                 </div>
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-semibold text-[#14181F]">Parcelas (13–24x)</label>
+                  <label htmlFor="sim-installments" className="text-xs font-semibold text-[#14181F]">Parcelas (13–24x)</label>
                   <input
+                    id="sim-installments"
                     type="number"
                     min={1}
                     max={36}
                     value={simParcels}
                     onChange={(e) => setSimParcels(e.target.value)}
-                    className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm tabular-nums"
+                    className="w-full min-w-0 rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm tabular-nums"
                   />
                 </div>
               </div>
@@ -1339,12 +1348,12 @@ export function FinancialView({
                 <KpiCard
                   label="Custos diretos realizados"
                   value={formatBRL(activeDre.possuiRealizado ? activeDre.custosTotais.realizado : null)}
-                  subtext={`Orçado: ${formatBRL(activeDre.custosTotais.orcado)}`}
+                  subtext={`Orçado: ${formatBRL(hasActiveCostBudget ? activeDre.custosTotais.orcado : null)}`}
                 />
                 <KpiCard
                   label="Margem real"
                   value={formatPercentBR(activeDre.receita.realizado > 0 ? activeDre.margemRealizadaPct : null)}
-                  subtext={`Prevista: ${formatPercentBR(activeDre.margemOrcadaPct)}`}
+                  subtext={`Prevista: ${formatPercentBR(hasActiveCostBudget ? activeDre.margemOrcadaPct : null)}`}
                 />
                 <KpiCard
                   label="Resultado acumulado"
@@ -1365,14 +1374,13 @@ export function FinancialView({
                       ? ` · Meta de margem: ${formatPercentBR(data.settings.targetMarginPct)}`
                       : ''}
                   </h2>
-                  <StatusBadge
-                    label={
-                      activeDre.margemRealizadaPct < activeDre.margemOrcadaPct
-                        ? 'Margem abaixo do previsto'
-                        : 'Margem dentro do previsto'
-                    }
-                    tone={activeDre.margemRealizadaPct < activeDre.margemOrcadaPct ? 'warn' : 'ok'}
-                  />
+                  {hasActiveCostBudget && activeDre.receita.realizado > 0 && (
+                    <StatusBadge
+                      label={activeDre.margemRealizadaPct < activeDre.margemOrcadaPct
+                        ? 'Margem abaixo do previsto' : 'Margem dentro do previsto'}
+                      tone={activeDre.margemRealizadaPct < activeDre.margemOrcadaPct ? 'warn' : 'ok'}
+                    />
+                  )}
                 </div>
 
                 <DataList caption="DRE por obra" keyExtractor={(row) => row.label}
@@ -1388,11 +1396,17 @@ export function FinancialView({
                   ] as const).filter(([, line]) => line !== activeDre.ajusteEap || line.orcado !== 0).map(([label, line]) => ({ label, line }))}
                   columns={[
                     { key: 'label', header: 'Linha', render: (row) => row.label },
-                    { key: 'budget', header: 'Orçado', numeric: true, align: 'right', render: ({ line }) => formatBRL(line.orcado) },
+                    { key: 'budget', header: 'Orçado', numeric: true, align: 'right', render: ({ line }) =>
+                      formatBRL(line === activeDre.receita || hasActiveCostBudget ? line.orcado : null) },
                     { key: 'actual', header: 'Realizado', numeric: true, align: 'right', render: ({ line }) =>
                       formatBRL(activeDre.possuiRealizado && line !== activeDre.ajusteEap ? line.realizado : null) },
                     { key: 'variance', header: 'Variação / margem', render: ({ label, line }) => {
                       if (!activeDre.possuiRealizado || line === activeDre.ajusteEap) return 'Sem dados';
+                      if (!hasActiveCostBudget && line !== activeDre.receita) {
+                        return line === activeDre.resultado && activeDre.receita.realizado > 0
+                          ? formatPercentBR(activeDre.margemRealizadaPct)
+                          : 'Sem dados';
+                      }
                       const pct = line === activeDre.resultado ? activeDre.margemRealizadaPct : line.variacaoPct;
                       const tone: BadgeTone = line === activeDre.resultado ? (line.realizado >= line.orcado ? 'ok' : 'warn')
                         : !pct ? 'neutral' : (pct > 0) === label.startsWith('(−)') ? 'bad' : 'ok';
@@ -1417,6 +1431,7 @@ export function FinancialView({
               <div className="flex flex-wrap items-center gap-2">
                 <input
                   type="date"
+                  aria-label="Início do período da DRE"
                   value={drePeriodStart}
                   onChange={(e) => setDrePeriodStart(e.target.value)}
                   className="rounded-lg border border-[#E4E1DA] px-2.5 py-1.5 text-xs"
@@ -1424,6 +1439,7 @@ export function FinancialView({
                 <span className="text-xs text-[#5B6472]">até</span>
                 <input
                   type="date"
+                  aria-label="Fim do período da DRE"
                   value={drePeriodEnd}
                   onChange={(e) => setDrePeriodEnd(e.target.value)}
                   className="rounded-lg border border-[#E4E1DA] px-2.5 py-1.5 text-xs"
@@ -1523,8 +1539,9 @@ export function FinancialView({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             <div className="flex flex-col gap-1.5">
-              <label className="text-[13px] font-semibold text-[#14181F]">Descrição</label>
+              <label htmlFor="tx-description" className="text-[13px] font-semibold text-[#14181F]">Descrição</label>
               <input
+                id="tx-description"
                 type="text"
                 required
                 value={txDesc}
@@ -1535,8 +1552,9 @@ export function FinancialView({
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-[13px] font-semibold text-[#14181F]">Valor (R$)</label>
+              <label htmlFor="tx-amount" className="text-[13px] font-semibold text-[#14181F]">Valor (R$)</label>
               <input
+                id="tx-amount"
                 type="number"
                 step="0.01"
                 min="0.01"
@@ -1551,8 +1569,9 @@ export function FinancialView({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             <div className="flex flex-col gap-1.5">
-              <label className="text-[13px] font-semibold text-[#14181F]">Data / Vencimento</label>
+              <label htmlFor="tx-date" className="text-[13px] font-semibold text-[#14181F]">Data / Vencimento</label>
               <input
+                id="tx-date"
                 type="date"
                 required
                 value={txDate}
@@ -1646,16 +1665,17 @@ export function FinancialView({
                 onChange={(e) => setTxPaymentMethod(e.target.value)} className="rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm font-normal" />
             </label>
             <div className="flex flex-col gap-1.5">
-              <label className="text-[13px] font-semibold text-[#14181F]">
+              <label htmlFor="tx-receipt-ref" className="text-[13px] font-semibold text-[#14181F]">
                 Comprovante (arquivo ou NSU)
               </label>
               <div className="flex items-center gap-2">
                 <input
                   type="text"
+                  id="tx-receipt-ref"
                   value={txReceiptRef}
                   onChange={(e) => setTxReceiptRef(e.target.value)}
                   placeholder="Referência ou NSU"
-                  className="flex-1 rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
+                  className="min-w-0 flex-1 rounded-lg border border-[#E4E1DA] px-3.5 py-2.5 text-sm"
                 />
                 <label className="px-3 py-2.5 rounded-lg border border-[#E4E1DA] bg-white text-xs font-semibold text-[#1F3A5F] hover:bg-[#F0EEE9] focus-within:ring-2 focus-within:ring-[#2455A4] cursor-pointer whitespace-nowrap">
                   Anexar

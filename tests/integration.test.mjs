@@ -164,10 +164,28 @@ test('confirmação é atômica e cria obra, parcelas, PDF, checklist e entrada 
   assert.equal(new TextDecoder().decode(project.contractPdf.toUint8Array().slice(0, 5)), '%PDF-');
   assert.equal(rows('complianceItems').length, 3);
   await assert.rejects(service.confirmQuoteAndGenerateProject(params), /confirmado/);
-  await service.applyScheduleTemplateToProject({ uid, actor, project, templateType: 'Reforma', startDate: today, estimatedMonths: 3, pops: [] });
+  const pop = { id: 'pop', ...audit, status: 'Vigente', publicationNumber: 1, linkedStagePhase: 'Instalações' };
+  await service.applyScheduleTemplateToProject({ uid, actor, project, templateType: 'Reforma', startDate: today, estimatedMonths: 3, pops: [pop] });
+  assert.ok(rows('stages').some((stage) => stage.popId === pop.id));
   assert.equal(row('projects', projectId).status, 'Em execução');
   assert.equal(rows('stages').reduce((sum, stage) => sum + stage.budgetedCost, 0), 4000);
   assert.equal(rows('baselines').length, 1);
+});
+
+test('atualização genérica registra valores anteriores e novos junto com a alteração', async () => {
+  db.clear();
+  db.set('clients/client', { ...audit, name: 'Nome anterior', notes: 'a'.repeat(500), origin: 'Indicação' });
+  const payload = { name: 'Nome atualizado', notes: 'b'.repeat(500), origin: 'Indicação' };
+  rejectCommit = new Error('falha simulada na auditoria');
+  await assert.rejects(service.updateRecord('clients', 'client', uid, actor, payload, 'Cliente atualizado'),
+    /falha simulada na auditoria/);
+  assert.equal(row('clients', 'client').name, 'Nome anterior');
+  assert.equal(rows('auditLogs').length, 0);
+  await service.updateRecord('clients', 'client', uid, actor, payload, 'Cliente atualizado');
+  assert.equal(row('clients', 'client').name, payload.name);
+  const [log] = rows('auditLogs');
+  assert.equal(log.beforeValue, 'Nome: Nome anterior · Observações: ' + 'a'.repeat(500));
+  assert.equal(log.afterValue, 'Nome: Nome atualizado · Observações: ' + payload.notes);
 });
 
 test('recebimento alimenta parcela, caixa, DRE, Dashboard e pendências de notas sem dupla contagem', async () => {

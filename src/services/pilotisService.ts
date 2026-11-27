@@ -53,6 +53,7 @@ import {
   describeScheduleCycle,
   diffDaysISO,
   getProjectSchedule,
+  getContractCostBudget,
   isPublishedPop,
   linkedPopChecklist,
   getClosureReview,
@@ -134,6 +135,27 @@ const FINANCIAL_AUDIT_FIELDS: Record<string, FinancialAuditFieldMeta> = {
   discardReason: { label: 'Motivo do descarte', format: 'text' },
 };
 
+const AUDIT_TEXT_LIMIT = 16_000;
+
+const RECORD_AUDIT_LABELS: Record<string, string> = {
+  name: 'Nome', title: 'Título', description: 'Descrição', notes: 'Observações', origin: 'Origem',
+  referredBy: 'Quem indicou', city: 'Localidade', phone: 'Telefone', email: 'E-mail',
+  referralsCount: 'Indicações', testimonialStatus: 'Depoimento', status: 'Situação',
+  clientId: 'Identificador do cliente', clientName: 'Cliente', type: 'Tipo de obra', areaM2: 'Área',
+  estimatedMonths: 'Prazo em meses', validityDays: 'Validade em dias', probabilityPct: 'Probabilidade (%)',
+  contractSigned: 'Contrato assinado', contractSignedAt: 'Data da assinatura', contractAddenda: 'Aditivos',
+  versionHistory: 'Histórico de versões', agency: 'Órgão', subject: 'Objeto', openingDate: 'Abertura',
+  readiness: 'Prontidão', qualificationChecklist: 'Habilitação', creditor: 'Credor',
+  debtType: 'Tipo da dívida', projectId: 'Identificador da obra', projectName: 'Obra', stageId: 'Identificador da etapa',
+  category: 'Categoria', impact: 'Impacto', role: 'Especialidade', paymentMethod: 'Forma de pagamento',
+  paymentFrequency: 'Frequência de pagamento', admissionDate: 'Admissão', startDate: 'Data de início',
+  asoExpiry: 'Validade do ASO', nr18Expiry: 'Validade da NR-18', nr35Expiry: 'Validade da NR-35',
+  ppeStatus: 'Entrega de EPIs', onboardingStart: 'Início da integração', onboardingEnd: 'Fim da integração',
+  onboardingDone: 'Integração concluída', vacationPeriod: 'Período aquisitivo',
+  vacationScheduled: 'Férias programadas', vacationStart: 'Início das férias', vacationEnd: 'Fim das férias',
+  issuedDate: 'Data de emissão', fileName: 'Nome do arquivo',
+};
+
 const COLLECTIONS_WITH_STATUS_FINANCIAL_AUDIT = new Set([
   'transactions',
   'debts',
@@ -147,13 +169,15 @@ function formatAuditValue(val: unknown, format: FinancialAuditFieldMeta['format'
   if (format === 'pct' && typeof val === 'number') return `${val}%`;
   if (format === 'date' && typeof val === 'string') return formatDateBR(val);
   if (format === 'forecast') return val ? 'Previsto' : 'Realizado';
-  return String(val);
+  if (typeof val === 'boolean') return val ? 'Sim' : 'Não';
+  return typeof val === 'object' ? JSON.stringify(val) : String(val);
 }
 
-function buildFinancialFieldDiff(
+function buildRecordDiff(
   collectionName: string,
   prevData: Record<string, unknown>,
   nextData: Record<string, unknown>,
+  includeAllFields = false,
 ): { before: string; after: string } | null {
   const beforeParts: string[] = [];
   const afterParts: string[] = [];
@@ -164,10 +188,14 @@ function buildFinancialFieldDiff(
     if (!meta && key === 'status' && COLLECTIONS_WITH_STATUS_FINANCIAL_AUDIT.has(collectionName)) {
       meta = { label: 'Status', format: 'text' };
     }
+    if (!meta && includeAllFields) meta = { label: RECORD_AUDIT_LABELS[key] ?? key, format: 'text' };
     if (!meta) continue;
 
     const prevVal = prevData[key];
-    if (prevVal === nextVal) continue;
+    if (Object.is(prevVal, nextVal) || (
+      (Array.isArray(prevVal) || (prevVal && typeof prevVal === 'object')) &&
+      JSON.stringify(prevVal) === JSON.stringify(nextVal)
+    )) continue;
 
     beforeParts.push(`${meta.label}: ${formatAuditValue(prevVal, meta.format)}`);
     afterParts.push(`${meta.label}: ${formatAuditValue(nextVal, meta.format)}`);
@@ -307,47 +335,24 @@ export async function updateRecord<T extends Record<string, unknown>>(
   const ref = doc(db, collectionName, id);
   const auditRef = doc(db, 'auditLogs', generateId('aud'));
   try {
-    let resolvedBefore = beforeValue;
-    let resolvedAfter = afterValue || auditSummary;
+    await runTransaction(db, async (tx) => {
+      const snapshot = await tx.get(ref);
+      const current = snapshot.data();
+      if (!snapshot.exists() || current?.ownerUid !== uid) throw new Error('Registro indisponível.');
 
-    const touchesFinancialField = Object.keys(payload).some(
-      (key) =>
-        Boolean(FINANCIAL_AUDIT_FIELDS[key]) ||
-        (key === 'status' && COLLECTIONS_WITH_STATUS_FINANCIAL_AUDIT.has(collectionName)),
-    );
-
-    if (touchesFinancialField) {
-      const existingSnap = await getDoc(ref);
-      if (existingSnap.exists()) {
-        const diff = buildFinancialFieldDiff(
-          collectionName,
-          existingSnap.data() as Record<string, unknown>,
-          payload,
-        );
-        if (diff) {
-          resolvedBefore = diff.before;
-          resolvedAfter = diff.after;
-        }
-      }
-    }
-
-    const batch = writeBatch(db);
-    batch.update(ref, {
-      ...payload,
-      updatedBy: actor,
-      updatedAt: serverTimestamp(),
+      const diff = buildRecordDiff(collectionName, current, payload, true);
+      tx.update(ref, { ...payload, updatedBy: actor, updatedAt: serverTimestamp() });
+      tx.set(auditRef, {
+        ownerUid: uid,
+        registeredBy: actor,
+        action: 'Atualização',
+        entityType: clampStr(collectionName, 60),
+        summary: clampStr(auditSummary, 240),
+        beforeValue: clampStr(diff?.before ?? beforeValue, AUDIT_TEXT_LIMIT),
+        afterValue: clampStr(diff?.after ?? (afterValue || auditSummary), AUDIT_TEXT_LIMIT),
+        createdAt: serverTimestamp(),
+      });
     });
-    batch.set(auditRef, {
-      ownerUid: uid,
-      registeredBy: actor,
-      action: 'Atualização',
-      entityType: clampStr(collectionName, 60),
-      summary: clampStr(auditSummary, 240),
-      beforeValue: clampStr(resolvedBefore, 240),
-      afterValue: clampStr(resolvedAfter, 240),
-      createdAt: serverTimestamp(),
-    });
-    await batch.commit();
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `${collectionName}/${id}`);
   }
@@ -424,7 +429,7 @@ export async function upsertCompanySettings(
       batch.set(ref, initialSettings);
       afterValue = `Empresa: ${initialSettings.companyName}`;
     } else {
-      const diff = buildFinancialFieldDiff(
+      const diff = buildRecordDiff(
         'companySettings',
         existing as unknown as Record<string, unknown>,
         data as Record<string, unknown>,
@@ -846,7 +851,7 @@ function buildScheduleStages(
     : Math.ceil((diffDaysISO(addMonthsISO(project.startDate, months), project.startDate) ?? 0) / 7);
   const scaleWeek = (week: number) => Math.round(week * durationWeeks / templateWeeks);
   const wbsToId = new Map(template.map((item) => [item.wbsCode, generateId('stg')]));
-  const currentPops = pops.filter((pop) => poisPublishedPop(p) && (p.status === 'Vigente' || (p.publicationNumber ?? 0) > 0));
+  const currentPops = pops.filter((pop) => isPublishedPop(pop) && (pop.status === 'Vigente' || (pop.publicationNumber ?? 0) > 0));
   const deliverables = new Map<string, Map<string, number>>();
 
   const stages: ProjectStage[] = template.map((item, index) => {
@@ -943,8 +948,7 @@ export async function applyScheduleTemplateToProject(params: {
     if (current.planningStatus === 'Cronograma criado' || current.status !== 'Contratada' || current.scheduleStageIds?.length) {
       throw new Error('A obra já tem cronograma ou não está aguardando um modelo.');
     }
-    const budget = roundCents([current.budgetedLabor, current.budgetedSubcontract,
-      current.budgetedEquipment, current.budgetedBdi, current.budgetedTax].reduce((sum, value) => sum + (value ?? 0), 0));
+    const budget = getContractCostBudget(current) ?? 0;
     validateScheduleInput(startDate, estimatedMonths, budget);
     const { stages, endDate } = buildScheduleStages(uid, actor, { ...current, startDate }, templateType, estimatedMonths, budget, pops);
     for (const { id, ...stage } of stages) {

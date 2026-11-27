@@ -113,8 +113,8 @@ async function loadConfirmationService(db) {
 
 test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', { skip: !process.env.FIRESTORE_EMULATOR_HOST }, async () => {
   const { initializeApp, deleteApp } = await import('firebase/app');
-  const { collection, connectFirestoreEmulator, doc, getDocFromServer, getDocsFromServer, getFirestore,
-    limit, query, serverTimestamp, setDoc, terminate, where } = await import('firebase/firestore');
+  const { Bytes, collection, connectFirestoreEmulator, doc, getDocFromServer, getDocsFromServer, getFirestore,
+    limit, query, serverTimestamp, setDoc, terminate, updateDoc, where, writeBatch } = await import('firebase/firestore');
   const [host, port] = process.env.FIRESTORE_EMULATOR_HOST.split(':');
   assert.ok(host === '127.0.0.1' || host === 'localhost', 'Use apenas o emulador local');
   const config = JSON.parse(await readFile(new URL('../firebase.json', import.meta.url), 'utf8'));
@@ -127,23 +127,63 @@ test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', {
   });
 
   try {
-    const { confirmQuoteAndGenerateProject } = await loadConfirmationService(db);
+    const { confirmQuoteAndGenerateProject, recordFinancialTransaction, updateRecord } = await loadConfirmationService(db);
     const meta = {
       ownerUid: uid, createdBy: actor, updatedBy: actor, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
     };
     const totalValue = 12_000;
     const startDate = '2027-01-15';
     const clientRef = doc(collection(db, 'clients'));
-    await setDoc(clientRef, { ...meta, name: 'Cliente do teste', origin: 'Indicação', status: 'Potencial' });
+    await setDoc(clientRef, {
+      ...meta, name: 'Cliente do teste', origin: 'Indicação', status: 'Potencial',
+      city: 'Valença', referredBy: '', phone: '', email: '', notes: '', referralsCount: 0,
+      testimonialStatus: 'Aguardando conclusão',
+    });
     const matching = (name, projectId) => getDocsFromServer(query(collection(db, name),
       where('ownerUid', '==', uid), where('projectId', '==', projectId), limit(100)));
 
-    for (const installmentsCount of [4, 36]) {
+    const cases = [
+      { installmentsCount: 4, status: 'Ganho' },
+      { installmentsCount: 36, status: 'Em negociação' },
+    ];
+    for (const { installmentsCount, status } of cases) {
+      if (status === 'Em negociação') {
+        await setDoc(doc(db, 'companySettings', uid), { ...meta, companyName: 'Empresa no teste do emulador' });
+      }
       const quoteRef = doc(collection(db, 'quotes'));
       await setDoc(quoteRef, {
         ...meta, code: 'TESTE', title: 'Confirmação no emulador', clientId: clientRef.id, clientName: 'Cliente do teste',
-        type: 'Reforma', status: 'Em negociação', estimatedMonths: 4, totalValue, downPaymentPct: 40, installmentsCount,
+        type: 'Reforma', city: 'Valença', areaM2: 80, estimatedMonths: 4, validityDays: 30,
+        description: 'Confirmação no banco do emulador', origin: 'Indicação',
+        laborCost: 6000, subcontractCost: 1000, equipmentCost: 500, bdiCost: 500, taxCost: 1000, pricingMarginPct: 25,
+        totalValue, downPaymentPct: 40, installmentsCount,
+        probabilityPct: status === 'Ganho' ? 100 : 50, status, discardReason: '', lossReason: '',
+        version: 'v1.0', versionHistory: ['v1.0|2027-01-15|12000.00|9000.00|25.0|Sócio|Versão inicial'],
+        contractSignStatus: status === 'Ganho' ? 'Aguardando assinatura' : 'Não gerado',
+        contractSignedAt: '', contractAddenda: [], addendaTotalValue: 0, projectId: '',
       });
+
+      await assert.rejects(updateDoc(quoteRef, {
+        status: 'Ganho', probabilityPct: 100, projectId: 'missing-' + randomUUID(),
+        contractSignStatus: 'Aguardando assinatura', updatedAt: serverTimestamp(),
+      }), { code: 'permission-denied' });
+
+      if (status === 'Em negociação') {
+        const orphanProject = doc(collection(db, 'projects'));
+        const missingClientId = 'missing-client-' + randomUUID();
+        const batch = writeBatch(db);
+        batch.set(orphanProject, {
+          ...meta, name: 'Obra isolada', type: 'Reforma', quoteId: quoteRef.id, clientId: missingClientId,
+          contractValue: totalValue, contractPdf: Bytes.fromUint8Array(new TextEncoder().encode('%PDF-')),
+          status: 'Contratada', planningStatus: 'Aguardando modelo de cronograma',
+        });
+        batch.update(quoteRef, {
+          status: 'Ganho', probabilityPct: 100, projectId: orphanProject.id, clientId: missingClientId,
+          contractSignStatus: 'Aguardando assinatura', updatedAt: serverTimestamp(),
+        });
+        await assert.rejects(batch.commit(), { code: 'permission-denied' });
+        assert.equal((await getDocFromServer(orphanProject)).exists(), false);
+      }
 
       const { projectId } = await confirmQuoteAndGenerateProject({
         uid, actor, quoteId: quoteRef.id, totalValue, downPaymentPct: 40, installmentsCount, startDate,
@@ -155,6 +195,10 @@ test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', {
       const quote = (await getDocFromServer(quoteRef)).data();
       assert.equal(quote.status, 'Ganho');
       assert.equal(quote.projectId, projectId);
+      assert.equal(quote.totalValue, totalValue);
+      await assert.rejects(updateDoc(quoteRef, {
+        totalValue: totalValue + 1, updatedAt: serverTimestamp(),
+      }), { code: 'permission-denied' });
       const payments = (await matching('parcelas', projectId)).docs.map((item) => item.data());
       assert.equal(payments.length, installmentsCount + 1);
       assert.equal(payments.find((item) => item.number === 0)?.amount, 4800);
@@ -167,6 +211,31 @@ test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', {
     }
     const audits = await getDocsFromServer(query(collection(db, 'auditLogs'), where('ownerUid', '==', uid), limit(100)));
     assert.equal(audits.docs.filter((item) => item.data().entityType === 'quote->project').length, 2);
+
+    await updateRecord('clients', clientRef.id, uid, actor, { notes: 'a'.repeat(500) }, 'Observações registradas');
+    await updateRecord('clients', clientRef.id, uid, actor, { notes: 'b'.repeat(500) }, 'Observações atualizadas');
+    const updatedAudits = await getDocsFromServer(query(collection(db, 'auditLogs'), where('ownerUid', '==', uid), limit(100)));
+    const change = updatedAudits.docs.map((item) => item.data()).find((item) => item.summary === 'Observações atualizadas');
+    assert.equal(change?.beforeValue, 'Observações: ' + 'a'.repeat(500));
+    assert.equal(change?.afterValue, 'Observações: ' + 'b'.repeat(500));
+
+    const receipt = new File(['%PDF-1.4'], 'comprovante.pdf', { type: 'application/pdf' });
+    await recordFinancialTransaction(uid, actor, {
+      date: '2027-01-15', dueDate: '2027-01-15', description: 'Empréstimo conferido',
+      entryKind: 'loan', category: 'Empréstimo', projectId: 'Empresa', projectName: 'Empresa',
+      amount: 1200, isForecast: false, status: 'Não é receita', invoiceStatus: 'Não se aplica',
+      paymentMethod: 'Pix', installmentLabel: '', quoteId: '', debtId: '', source: 'manual',
+    }, receipt, { creditor: 'Credor de teste', debtType: 'Empréstimo bancário', remainingInstallments: 3, nextDueDate: '2027-02-15' });
+    const loans = await getDocsFromServer(query(collection(db, 'transactions'), where('ownerUid', '==', uid), limit(100)));
+    assert.equal(loans.size, 1);
+    const loan = loans.docs[0].data();
+    assert.equal(loan.entryKind, 'loan');
+    assert.equal(loan.receiptFile.name, 'comprovante.pdf');
+    assert.equal(new TextDecoder().decode(loan.receiptFile.content.toUint8Array()), '%PDF-1.4');
+    const debt = (await getDocFromServer(doc(db, 'debts', loan.debtId))).data();
+    assert.equal(debt.remainingInstallments, 3);
+    assert.equal(debt.nextDueDate, '2027-02-15');
+    assert.equal(debt.monthlyCost, undefined);
   } finally {
     await terminate(db);
     await deleteApp(app);

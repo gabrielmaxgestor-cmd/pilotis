@@ -287,7 +287,7 @@ export function buildImportPreviewRows(
     const taggedAsRevenue =
       !isNegative &&
       (/receita|faturamento|entrada|parcela/.test(`${rawKind} ${rawCat}`.toLowerCase()) ||
-        (!rawKind && /faturamento|parcela|receb/.test(hintJoined)));
+        (!rawKind && !isLoanKeywordPresent(rawCat) && /faturamento|parcela|receb/.test(hintJoined)));
 
     const classified = classificarLancamento({
       descricao: rawDesc || 'Lançamento da planilha',
@@ -330,7 +330,7 @@ export function buildImportPreviewRows(
       projectName: rawProj.trim() || 'Empresa',
       amount: absAmount,
       flaggedLoan,
-      wasTaggedAsRevenue: flaggedLoan && classified.rejeitadoComoReceita,
+      wasTaggedAsRevenue: flaggedLoan && taggedAsRevenue,
     });
   });
 

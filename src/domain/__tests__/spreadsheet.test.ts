@@ -48,6 +48,13 @@ describe('spreadsheet import and export helpers', () => {
     assert.equal(preview.rows[2].amount, 8400.5);
   });
 
+  it('preserva a classificação de empréstimo já indicada na planilha', () => {
+    const parsed = parseCsvText('Data;Descrição;Categoria;Valor\n26/11/2026;Recebimento de parcela;Empréstimo;125,00');
+    const { rows } = buildImportPreviewRows(parsed, parsed.suggestedMapping);
+    assert.equal(rows[0].entryKind, 'loan');
+    assert.equal(rows[0].wasTaggedAsRevenue, false);
+  });
+
   it('permite mapear colunas fora de ordem manualmente', () => {
     const csv = [
       'Centro;Valor R$;Historico;Dt Movimento;Grupo',

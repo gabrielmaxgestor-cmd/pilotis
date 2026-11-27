@@ -541,8 +541,8 @@ service cloud.firestore {
         && isValidNonEmptyStr(data.entityType, 60)
         && isValidNonEmptyStr(data.summary, 240)
         && data.createdAt is timestamp
-        && (!('beforeValue' in data) || isValidStr(data.beforeValue, 240))
-        && (!('afterValue' in data) || isValidStr(data.afterValue, 240));
+        && (!('beforeValue' in data) || isValidStr(data.beforeValue, 16000))
+        && (!('afterValue' in data) || isValidStr(data.afterValue, 16000));
     }
 
     match /companySettings/{userId} {
@@ -584,6 +584,38 @@ service cloud.firestore {
         && project.contractPdf is bytes;
     }
 
+    function confirmationClientBelongsToCompany(clientId) {
+      let client = getAfter(/databases/$(database)/documents/clients/$(clientId));
+      return client != null && client.data.ownerUid == request.auth.uid;
+    }
+
+    function isValidQuoteConfirmation(quoteId, quote, before) {
+      return before.get('projectId', '') == ''
+        && before.status in ['Rascunho', 'Enviado', 'Em negociação', 'Ganho']
+        // The stored quote's unchanged fields were validated when they were saved.
+        && quote.diff(before).affectedKeys().hasOnly([
+          'status', 'probabilityPct', 'projectId', 'clientId', 'clientName',
+          'downPaymentPct', 'installmentsCount', 'contractSignStatus', 'updatedBy', 'updatedAt'
+        ])
+        && quote.status == 'Ganho'
+        && quote.probabilityPct == 100
+        && isValidId(quote.projectId)
+        && isValidId(quote.clientId)
+        && isValidNonEmptyStr(quote.clientName, 140)
+        && isValidNum(quote.totalValue) && quote.totalValue > 0
+        && isValidNonNegNum(quote.downPaymentPct) && quote.downPaymentPct <= 100
+        && quote.installmentsCount is int && quote.installmentsCount >= 1 && quote.installmentsCount <= 36
+        && quote.contractSignStatus in ['Aguardando assinatura', 'Assinado pelo cliente', 'Assinado pelas partes']
+        && (before.status != 'Ganho' || (
+          quote.clientId == before.clientId
+          && (before.get('downPaymentPct', null) == null || quote.downPaymentPct == before.downPaymentPct)
+          && (before.get('installmentsCount', null) == null || quote.installmentsCount == before.installmentsCount)
+        ))
+        && isValidActor(quote.updatedBy)
+        && confirmationClientBelongsToCompany(quote.clientId)
+        && confirmedProjectMatches(quoteId, quote);
+    }
+
     match /quotes/{quoteId} {
       allow get: if isValidId(quoteId) && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
@@ -591,38 +623,33 @@ service cloud.firestore {
         && incoming().createdAt == request.time && incoming().updatedAt == request.time
         && exists(/databases/$(database)/documents/clients/$(incoming().clientId))
         && get(/databases/$(database)/documents/clients/$(incoming().clientId)).data.ownerUid == request.auth.uid;
-      allow update: if isValidId(quoteId) && isSignedIn() && isValidQuote(incoming())
+      allow update: if isValidId(quoteId) && isSignedIn()
         && existing().ownerUid == request.auth.uid
-        && incoming().ownerUid == existing().ownerUid
-        && incoming().createdAt == existing().createdAt
-        && incoming().createdBy == existing().createdBy
         && incoming().updatedAt == request.time
-        && (
-          incoming().get('projectId', '') == existing().get('projectId', '')
-          || (
-            existing().get('projectId', '') == ''
-            && isValidId(incoming().projectId)
-            && incoming().status == 'Ganho'
-            && incoming().totalValue == existing().totalValue
-            && confirmedProjectMatches(quoteId, incoming())
+        && (incoming().get('projectId', '') == existing().get('projectId', '')
+          ? (
+            isValidQuote(incoming())
+            && incoming().ownerUid == existing().ownerUid
+            && incoming().createdAt == existing().createdAt
+            && incoming().createdBy == existing().createdBy
+            && (
+              existing().status != 'Ganho'
+              || (
+                incoming().status == 'Ganho'
+                && incoming().totalValue == existing().totalValue
+                && (!('laborCost' in existing()) || incoming().laborCost == existing().laborCost)
+                && (!('subcontractCost' in existing()) || incoming().subcontractCost == existing().subcontractCost)
+                && (!('equipmentCost' in existing()) || incoming().equipmentCost == existing().equipmentCost)
+                && (!('bdiCost' in existing()) || incoming().bdiCost == existing().bdiCost)
+                && (!('taxCost' in existing()) || incoming().taxCost == existing().taxCost)
+                && incoming().get('pricingMarginPct', null) == existing().get('pricingMarginPct', null)
+                && (existing().get('projectId', '') == '' || incoming().diff(existing()).affectedKeys().hasOnly([
+                  'contractSignStatus', 'contractSignedAt', 'contractAddenda', 'addendaTotalValue', 'updatedBy', 'updatedAt'
+                ]))
+              )
+            )
           )
-        )
-        && (
-          existing().status != 'Ganho'
-          || (
-            incoming().status == 'Ganho'
-            && incoming().totalValue == existing().totalValue
-            && (!('laborCost' in existing()) || incoming().laborCost == existing().laborCost)
-            && (!('subcontractCost' in existing()) || incoming().subcontractCost == existing().subcontractCost)
-            && (!('equipmentCost' in existing()) || incoming().equipmentCost == existing().equipmentCost)
-            && (!('bdiCost' in existing()) || incoming().bdiCost == existing().bdiCost)
-            && (!('taxCost' in existing()) || incoming().taxCost == existing().taxCost)
-            && incoming().get('pricingMarginPct', null) == existing().get('pricingMarginPct', null)
-            && (existing().get('projectId', '') == '' || incoming().diff(existing()).affectedKeys().hasOnly([
-              'contractSignStatus', 'contractSignedAt', 'contractAddenda', 'addendaTotalValue', 'updatedBy', 'updatedAt'
-            ]))
-          )
-        );
+          : isValidQuoteConfirmation(quoteId, incoming(), existing()));
       allow delete: if isValidId(quoteId) && isSignedIn() && existing().ownerUid == request.auth.uid;
     }
 
