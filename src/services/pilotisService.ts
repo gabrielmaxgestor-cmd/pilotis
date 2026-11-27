@@ -581,9 +581,11 @@ export async function confirmQuoteAndGenerateProject(
 ): Promise<ConfirmQuoteResult> {
   const { uid, actor, quoteId } = params;
   const projectId = generateId('proj');
+  let permissionStep = 'a leitura do orçamento';
 
   try {
     const result = await runTransaction(db, async (tx) => {
+      permissionStep = 'a leitura do orçamento';
       const quoteRef = doc(db, 'quotes', quoteId);
       const quoteSnap = await tx.get(quoteRef);
       if (!quoteSnap.exists()) {
@@ -623,6 +625,7 @@ export async function confirmQuoteAndGenerateProject(
       }
 
       const clientRef = doc(db, 'clients', resolvedClientId);
+      permissionStep = 'a leitura do cliente vinculado';
       const clientSnap = await tx.get(clientRef);
       if (!clientSnap.exists()) {
         throw new ConfirmValidationError('Cliente vinculado não encontrado. Cadastre ou selecione um cliente válido.');
@@ -644,6 +647,7 @@ export async function confirmQuoteAndGenerateProject(
         params.installmentsCount,
         startISO
       ).filter((installment) => installment.valor > 0);
+      permissionStep = 'a leitura das configurações da empresa';
       const settingsSnap = await tx.get(doc(db, 'companySettings', uid));
       const contractPdf = Bytes.fromUint8Array(createContractPdf({
         code: quoteData.code,
@@ -658,6 +662,8 @@ export async function confirmQuoteAndGenerateProject(
         startDate: startISO,
         installments: generatedParcelas,
       }));
+
+      permissionStep = 'a gravação conjunta da confirmação';
 
       // 1. Criar a obra (Obra/Contrato) com status "Contratada" e aguardando modelo no Planejamento
       const projectRef = doc(db, 'projects', projectId);
@@ -806,6 +812,9 @@ export async function confirmQuoteAndGenerateProject(
   } catch (err) {
     if (err instanceof ConfirmValidationError) {
       throw err;
+    }
+    if (err instanceof Error && 'code' in err && err.code === 'permission-denied') {
+      throw new ConfirmValidationError(`O Firestore recusou ${permissionStep}. Nenhum registro da confirmação foi gravado.`);
     }
     handleFirestoreError(err, OperationType.WRITE, `quotes/${quoteId}`);
   }
