@@ -36,7 +36,7 @@ function Fixture() {
     transactions: [{
       id: 'expense', ownerUid: 'browser-test', createdBy: 'Sócio', updatedBy: 'Sócio',
       date: '2026-11-27', description: 'Comprovante de despesa', entryKind: 'expense',
-      category: 'Empresa', projectId: 'company', projectName: 'Empresa', amount: 135,
+      category: 'Empresa', projectId: 'Empresa', projectName: 'Empresa', amount: 135,
       status: 'Pago', isForecast: false, paymentMethod: 'Pix', invoiceStatus: 'Não se aplica',
       dueDate: '', installmentLabel: '', quoteId: '', debtId: '', source: 'manual',
     }],

@@ -593,12 +593,12 @@ export function SettingsView({
     {
       key: 'before',
       header: 'Antes',
-      render: (log) => <span className="text-[#5B6472]">{log.beforeValue || '—'}</span>,
+      render: (log) => <span className="whitespace-pre-wrap [overflow-wrap:anywhere] text-[#5B6472]">{log.beforeValue || '—'}</span>,
     },
     {
       key: 'after',
       header: 'Depois',
-      render: (log) => <span className="text-[#14181F]">{log.afterValue || '—'}</span>,
+      render: (log) => <span className="whitespace-pre-wrap [overflow-wrap:anywhere] text-[#14181F]">{log.afterValue || '—'}</span>,
     },
   ];
 
@@ -1593,13 +1593,13 @@ export function SettingsView({
                     <div className="grid grid-cols-2 gap-2 pt-1.5 border-t border-[#F0EEE9] text-xs">
                       <div>
                         <span className="block text-[#5B6472]">Antes</span>
-                        <span className="text-[#14181F] break-words">
+                        <span className="text-[#14181F] whitespace-pre-wrap [overflow-wrap:anywhere]">
                           {log.beforeValue || '—'}
                         </span>
                       </div>
                       <div>
                         <span className="block text-[#5B6472]">Depois</span>
-                        <span className="text-[#14181F] break-words">
+                        <span className="text-[#14181F] whitespace-pre-wrap [overflow-wrap:anywhere]">
                           {log.afterValue || '—'}
                         </span>
                       </div>

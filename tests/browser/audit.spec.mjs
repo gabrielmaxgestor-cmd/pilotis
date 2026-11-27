@@ -12,56 +12,78 @@ async function checkPageWidth(page) {
 }
 
 for (const width of [390, 1440]) {
-  test(`layout, contraste, teclado e formulários em ${width} px`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 900 });
-    await page.route('https://**/*', (route) => route.abort());
-    await page.goto('/');
-    await expect(page.getByRole('button', { name: 'Entrar', exact: true })).toBeVisible();
-    await checkPageWidth(page);
-    await checkAccessibility(page);
-    await page.goto('/tests/browser/index.html');
+  test.describe(`${width} px`, () => {
+    test.use({ viewport: { width, height: 900 } });
+    test.beforeEach(async ({ page }) => {
+      await page.route('https://**/*', (route) => route.abort());
+    });
 
-    const nav = width === 390 ? page.getByRole('navigation', { name: 'Navegação inferior' })
-      : page.getByRole('complementary', { name: 'Navegação principal' });
-    await expect(nav).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
-    await checkPageWidth(page);
-    await checkAccessibility(page);
-
-    await nav.getByRole('button', { name: 'Financeiro' }).focus();
-    await page.keyboard.press('Enter');
-    await expect(page.getByRole('heading', { name: 'Lançamentos recentes' })).toBeVisible();
-    if (width === 390) {
-      await expect(page.getByRole('table')).toHaveCount(0);
-      await expect(page.getByText('Comprovante de despesa', { exact: true }).filter({ visible: true })).toBeVisible();
-    } else {
-      await expect(page.getByRole('table').getByText('Comprovante de despesa', { exact: true })).toBeVisible();
+    function navigation(page) {
+      return width === 390 ? page.getByRole('navigation', { name: 'Navegação inferior' })
+        : page.getByRole('complementary', { name: 'Navegação principal' });
     }
-    await checkPageWidth(page);
-    await checkAccessibility(page);
 
-    const trigger = page.getByRole('button', { name: 'Novo lançamento', exact: true });
-    await trigger.focus();
-    await page.keyboard.press('Enter');
-    const dialog = page.getByRole('dialog', { name: 'Novo lançamento' });
-    await expect(dialog).toBeVisible();
-    await expect(dialog.getByRole('heading', { name: 'Novo lançamento' })).toBeFocused();
-    await expect(dialog.getByLabel('Registrado por')).toBeVisible();
-    await checkAccessibility(page);
-    await page.keyboard.press('Escape');
-    await expect(dialog).toHaveCount(0);
-    await expect(trigger).toBeFocused();
+    async function openFinance(page) {
+      await page.goto('/tests/browser/index.html');
+      await navigation(page).getByRole('button', { name: 'Financeiro' }).focus();
+      await page.keyboard.press('Enter');
+      await expect(page.getByRole('heading', { name: 'Lançamentos recentes' })).toBeVisible();
+    }
 
-    const overview = page.getByRole('tab', { name: 'Visão geral' });
-    await overview.focus();
-    await page.keyboard.press('ArrowRight');
-    await expect(page.getByRole('tab', { name: 'A receber' })).toBeFocused();
-    await expect(page.getByRole('tab', { name: 'A receber' })).toHaveAttribute('aria-selected', 'true');
+    test('login e Dashboard vazio com navegação responsiva', async ({ page }) => {
+      await page.goto('/');
+      await expect(page.getByRole('button', { name: 'Entrar', exact: true })).toBeVisible();
+      await checkPageWidth(page);
+      await checkAccessibility(page);
 
-    await nav.getByRole('button', { name: width === 390 ? 'Obras' : 'Planejamento de Obras' }).click();
-    await expect(page.getByRole('heading', { name: /Planejamento de Obras/i }).first()).toBeVisible();
-    await expect(page.getByText('Custo orçado · Sem dados.', { exact: false })).toBeVisible();
-    await checkPageWidth(page);
-    await checkAccessibility(page);
+      await page.goto('/tests/browser/index.html');
+      await expect(navigation(page)).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+      await checkPageWidth(page);
+      await checkAccessibility(page);
+    });
+
+    test('Financeiro alterna tabela e lista e habilita as abas por teclado', async ({ page }) => {
+      await openFinance(page);
+      if (width === 390) {
+        await expect(page.getByRole('table')).toHaveCount(0);
+        await expect(page.getByText('Comprovante de despesa', { exact: true }).filter({ visible: true })).toBeVisible();
+      } else {
+        await expect(page.getByRole('table').getByText('Comprovante de despesa', { exact: true })).toBeVisible();
+      }
+      await checkPageWidth(page);
+      await checkAccessibility(page);
+
+      const overview = page.getByRole('tab', { name: 'Visão geral' });
+      await overview.focus();
+      await page.keyboard.press('ArrowRight');
+      await expect(page.getByRole('tab', { name: 'A receber' })).toBeFocused();
+      await expect(page.getByRole('tab', { name: 'A receber' })).toHaveAttribute('aria-selected', 'true');
+    });
+
+    test('modal financeiro mantém foco visível e devolve foco ao fechar', async ({ page }) => {
+      await openFinance(page);
+      const trigger = page.getByRole('button', { name: 'Novo lançamento', exact: true });
+      await trigger.focus();
+      await expect(trigger).toHaveCSS('outline-style', 'solid');
+      await page.keyboard.press('Enter');
+      const dialog = page.getByRole('dialog', { name: 'Novo lançamento' });
+      await expect(dialog).toBeVisible();
+      await expect(dialog.getByRole('heading', { name: 'Novo lançamento' })).toBeFocused();
+      await expect(dialog.getByLabel('Registrado por')).toBeVisible();
+      await checkAccessibility(page);
+      await page.keyboard.press('Escape');
+      await expect(dialog).toHaveCount(0);
+      await expect(trigger).toBeFocused();
+    });
+
+    test('planejamento indica a falta de custo cadastrado', async ({ page }) => {
+      await page.goto('/tests/browser/index.html');
+      await navigation(page).getByRole('button', { name: width === 390 ? 'Obras' : 'Planejamento de Obras' }).click();
+      await expect(page.getByRole('heading', { name: /Planejamento de Obras/i }).first()).toBeVisible();
+      await expect(page.getByText('Custo orçado · Sem dados.', { exact: false })).toBeVisible();
+      await checkPageWidth(page);
+      await checkAccessibility(page);
+    });
   });
 }

@@ -238,7 +238,7 @@ export function getContractCostBudget(project: Project): number | null {
 }
 
 export function toDomainProjectDreInput(project: Project, stages: ProjectStage[] = []): ObraDreInput {
-  const eapBudget = getWorkPackageBudget(stages.filter((stage) => stage.projectId === project.id));
+  const projectStages = stages.filter((stage) => stage.projectId === project.id);
   return {
     id: project.id,
     nome: project.name,
@@ -248,7 +248,7 @@ export function toDomainProjectDreInput(project: Project, stages: ProjectStage[]
     orcadoEquipamentos: project.budgetedEquipment || 0,
     orcadoImpostos: project.budgetedTax || 0,
     orcadoBdi: project.budgetedBdi || 0,
-    orcadoEap: eapBudget > 0 ? eapBudget : undefined,
+    orcadoEap: projectStages.length ? getWorkPackageBudget(projectStages) : undefined,
   };
 }
 

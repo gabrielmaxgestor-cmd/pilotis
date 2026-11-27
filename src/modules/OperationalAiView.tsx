@@ -48,7 +48,8 @@ function Answer({ turn, onNavigate }: { turn: AiTurn; onNavigate: Navigate }) {
     <article className="grid gap-3 rounded-xl border border-[#E4E1DA] bg-[#F6F5F2] p-3.5 sm:p-4">
       <div className="flex flex-wrap items-center gap-2">
         <strong className="text-sm">IA Operacional</strong>
-        <StatusBadge label={turn.weekly ? 'Resumo semanal' : turn.mode} tone={turn.mode === 'Consultor' ? 'warn' : 'info'} />
+        <StatusBadge label={turn.weekly ? (turn.createdBy === 'Sistema' ? 'Resumo semanal automático' : 'Resumo semanal') : turn.mode}
+          tone={turn.mode === 'Consultor' ? 'warn' : 'info'} />
         <span className="text-xs text-[#5B6472]">{formatDateBR(turn.createdAt.slice(0, 10))}</span>
       </div>
       <p className="text-sm">{answer.text}</p>

@@ -32,6 +32,7 @@ import {
   formatMonthLabelBR,
   formatPercentBR,
   formatShortDateBR,
+  getContractCostBudget,
   monthKey,
   parseBankStatement,
   resolverStatusDivida,
@@ -628,6 +629,10 @@ export function FinancialView({
     () => consolidatedDre?.dre ?? (activeDreProject ? calcularDreObra(activeDreProject, data.transactions, data.stages) : null),
     [consolidatedDre, activeDreProject, data.transactions, data.stages],
   );
+
+  const hasActiveCostBudget = Boolean(activeDreProject && (
+    getContractCostBudget(activeDreProject) !== null || (activeDre?.custosTotais.orcado ?? 0) > 0
+  ));
 
   const companyDre = useMemo(
     () => calcularDreEmpresa(data, drePeriodStart, drePeriodEnd),
@@ -1340,12 +1345,12 @@ export function FinancialView({
                 <KpiCard
                   label="Custos diretos realizados"
                   value={formatBRL(activeDre.possuiRealizado ? activeDre.custosTotais.realizado : null)}
-                  subtext={`Orçado: ${formatBRL(activeDre.custosTotais.orcado > 0 ? activeDre.custosTotais.orcado : null)}`}
+                  subtext={`Orçado: ${formatBRL(hasActiveCostBudget ? activeDre.custosTotais.orcado : null)}`}
                 />
                 <KpiCard
                   label="Margem real"
                   value={formatPercentBR(activeDre.receita.realizado > 0 ? activeDre.margemRealizadaPct : null)}
-                  subtext={`Prevista: ${formatPercentBR(activeDre.custosTotais.orcado > 0 ? activeDre.margemOrcadaPct : null)}`}
+                  subtext={`Prevista: ${formatPercentBR(hasActiveCostBudget ? activeDre.margemOrcadaPct : null)}`}
                 />
                 <KpiCard
                   label="Resultado acumulado"
@@ -1366,7 +1371,7 @@ export function FinancialView({
                       ? ` · Meta de margem: ${formatPercentBR(data.settings.targetMarginPct)}`
                       : ''}
                   </h2>
-                  {activeDre.custosTotais.orcado > 0 && activeDre.receita.realizado > 0 && (
+                  {hasActiveCostBudget && activeDre.receita.realizado > 0 && (
                     <StatusBadge
                       label={activeDre.margemRealizadaPct < activeDre.margemOrcadaPct
                         ? 'Margem abaixo do previsto' : 'Margem dentro do previsto'}
@@ -1389,12 +1394,12 @@ export function FinancialView({
                   columns={[
                     { key: 'label', header: 'Linha', render: (row) => row.label },
                     { key: 'budget', header: 'Orçado', numeric: true, align: 'right', render: ({ line }) =>
-                      formatBRL(line === activeDre.receita || activeDre.custosTotais.orcado > 0 ? line.orcado : null) },
+                      formatBRL(line === activeDre.receita || hasActiveCostBudget ? line.orcado : null) },
                     { key: 'actual', header: 'Realizado', numeric: true, align: 'right', render: ({ line }) =>
                       formatBRL(activeDre.possuiRealizado && line !== activeDre.ajusteEap ? line.realizado : null) },
                     { key: 'variance', header: 'Variação / margem', render: ({ label, line }) => {
                       if (!activeDre.possuiRealizado || line === activeDre.ajusteEap) return 'Sem dados';
-                      if (activeDre.custosTotais.orcado <= 0 && line !== activeDre.receita) {
+                      if (!hasActiveCostBudget && line !== activeDre.receita) {
                         return line === activeDre.resultado && activeDre.receita.realizado > 0
                           ? formatPercentBR(activeDre.margemRealizadaPct)
                           : 'Sem dados';

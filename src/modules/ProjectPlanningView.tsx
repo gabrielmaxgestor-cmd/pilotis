@@ -322,7 +322,7 @@ export function ProjectPlanningView({
   }
 
   const totalEapBudget = getWorkPackageBudget(projectStages);
-  const hasEapBudget = totalEapBudget > 0;
+  const hasEapBudget = totalEapBudget > 0 || Boolean(projectStages.length && activeProject && getContractCostBudget(activeProject) !== null);
 
   return (
     <div className="flex flex-col gap-6">

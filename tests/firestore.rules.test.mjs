@@ -127,7 +127,7 @@ test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', {
   });
 
   try {
-    const { confirmQuoteAndGenerateProject } = await loadConfirmationService(db);
+    const { confirmQuoteAndGenerateProject, recordFinancialTransaction, updateRecord } = await loadConfirmationService(db);
     const meta = {
       ownerUid: uid, createdBy: actor, updatedBy: actor, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
     };
@@ -211,6 +211,31 @@ test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', {
     }
     const audits = await getDocsFromServer(query(collection(db, 'auditLogs'), where('ownerUid', '==', uid), limit(100)));
     assert.equal(audits.docs.filter((item) => item.data().entityType === 'quote->project').length, 2);
+
+    await updateRecord('clients', clientRef.id, uid, actor, { notes: 'a'.repeat(500) }, 'Observações registradas');
+    await updateRecord('clients', clientRef.id, uid, actor, { notes: 'b'.repeat(500) }, 'Observações atualizadas');
+    const updatedAudits = await getDocsFromServer(query(collection(db, 'auditLogs'), where('ownerUid', '==', uid), limit(100)));
+    const change = updatedAudits.docs.map((item) => item.data()).find((item) => item.summary === 'Observações atualizadas');
+    assert.equal(change?.beforeValue, 'Observações: ' + 'a'.repeat(500));
+    assert.equal(change?.afterValue, 'Observações: ' + 'b'.repeat(500));
+
+    const receipt = new File(['%PDF-1.4'], 'comprovante.pdf', { type: 'application/pdf' });
+    await recordFinancialTransaction(uid, actor, {
+      date: '2027-01-15', dueDate: '2027-01-15', description: 'Empréstimo conferido',
+      entryKind: 'loan', category: 'Empréstimo', projectId: 'Empresa', projectName: 'Empresa',
+      amount: 1200, isForecast: false, status: 'Não é receita', invoiceStatus: 'Não se aplica',
+      paymentMethod: 'Pix', installmentLabel: '', quoteId: '', debtId: '', source: 'manual',
+    }, receipt, { creditor: 'Credor de teste', debtType: 'Empréstimo bancário', remainingInstallments: 3, nextDueDate: '2027-02-15' });
+    const loans = await getDocsFromServer(query(collection(db, 'transactions'), where('ownerUid', '==', uid), limit(100)));
+    assert.equal(loans.size, 1);
+    const loan = loans.docs[0].data();
+    assert.equal(loan.entryKind, 'loan');
+    assert.equal(loan.receiptFile.name, 'comprovante.pdf');
+    assert.equal(new TextDecoder().decode(loan.receiptFile.content.toUint8Array()), '%PDF-1.4');
+    const debt = (await getDocFromServer(doc(db, 'debts', loan.debtId))).data();
+    assert.equal(debt.remainingInstallments, 3);
+    assert.equal(debt.nextDueDate, '2027-02-15');
+    assert.equal(debt.monthlyCost, undefined);
   } finally {
     await terminate(db);
     await deleteApp(app);
