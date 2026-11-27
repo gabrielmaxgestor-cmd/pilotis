@@ -5,7 +5,7 @@ service firebase.storage {
       return request.auth != null && request.auth.uid == uid
         && request.auth.token.email_verified == true
         && request.auth.token.email is string
-        && request.auth.token.email.lower() == 'empresa@pilotis.com.br';
+        && request.auth.token.email.lower() == 'gabrielmaxgestor@gmail.com';
     }
 
     match /dailyLogs/{uid}/{logId}/{imageName} {

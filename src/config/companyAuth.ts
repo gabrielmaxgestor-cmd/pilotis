@@ -3,7 +3,7 @@
  * Deve corresponder exatamente ao valor definido em `companyEmail()` em `firestore.rules`.
  */
 export const COMPANY_EMAIL = (
-  import.meta.env.VITE_COMPANY_EMAIL || 'empresa@pilotis.com.br'
+  import.meta.env.VITE_COMPANY_EMAIL || 'gabrielmaxgestor@gmail.com'
 )
   .trim()
   .toLowerCase();

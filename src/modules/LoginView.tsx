@@ -149,6 +149,12 @@ export function LoginView({
           text: 'Abra o link recebido no e-mail da empresa e tente confirmar novamente.',
         });
       }
+    } catch {
+      setVerifyFeedback({
+        tone: 'danger',
+        title: 'Não foi possível confirmar a verificação',
+        text: 'Confira sua conexão e tente novamente.',
+      });
     } finally {
       setLoading(false);
     }

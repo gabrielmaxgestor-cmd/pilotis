@@ -3,7 +3,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
-ARG VITE_COMPANY_EMAIL=empresa@pilotis.com.br
+ARG VITE_COMPANY_EMAIL=gabrielmaxgestor@gmail.com
 ARG VITE_DAILY_LOG_PHOTO_BACKEND=firestore
 ENV VITE_COMPANY_EMAIL=${VITE_COMPANY_EMAIL} VITE_DAILY_LOG_PHOTO_BACKEND=${VITE_DAILY_LOG_PHOTO_BACKEND}
 RUN npm run build && npm prune --omit=dev
