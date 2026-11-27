@@ -134,15 +134,33 @@ test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', {
     const totalValue = 12_000;
     const startDate = '2027-01-15';
     const clientRef = doc(collection(db, 'clients'));
-    await setDoc(clientRef, { ...meta, name: 'Cliente do teste', origin: 'Indicação', status: 'Potencial' });
+    await setDoc(clientRef, {
+      ...meta, name: 'Cliente do teste', origin: 'Indicação', status: 'Potencial',
+      city: 'Valença', referredBy: '', phone: '', email: '', notes: '', referralsCount: 0,
+      testimonialStatus: 'Aguardando conclusão',
+    });
     const matching = (name, projectId) => getDocsFromServer(query(collection(db, name),
       where('ownerUid', '==', uid), where('projectId', '==', projectId), limit(100)));
 
-    for (const installmentsCount of [4, 36]) {
+    const cases = [
+      { installmentsCount: 4, status: 'Ganho' },
+      { installmentsCount: 36, status: 'Em negociação' },
+    ];
+    for (const { installmentsCount, status } of cases) {
+      if (status === 'Em negociação') {
+        await setDoc(doc(db, 'companySettings', uid), { ...meta, companyName: 'Empresa no teste do emulador' });
+      }
       const quoteRef = doc(collection(db, 'quotes'));
       await setDoc(quoteRef, {
         ...meta, code: 'TESTE', title: 'Confirmação no emulador', clientId: clientRef.id, clientName: 'Cliente do teste',
-        type: 'Reforma', status: 'Em negociação', estimatedMonths: 4, totalValue, downPaymentPct: 40, installmentsCount,
+        type: 'Reforma', city: 'Valença', areaM2: 80, estimatedMonths: 4, validityDays: 30,
+        description: 'Confirmação no banco do emulador', origin: 'Indicação',
+        laborCost: 6000, subcontractCost: 1000, equipmentCost: 500, bdiCost: 500, taxCost: 1000, pricingMarginPct: 25,
+        totalValue, downPaymentPct: 40, installmentsCount,
+        probabilityPct: status === 'Ganho' ? 100 : 50, status, discardReason: '', lossReason: '',
+        version: 'v1.0', versionHistory: ['v1.0|2027-01-15|12000.00|9000.00|25.0|Sócio|Versão inicial'],
+        contractSignStatus: status === 'Ganho' ? 'Aguardando assinatura' : 'Não gerado',
+        contractSignedAt: '', contractAddenda: [], addendaTotalValue: 0, projectId: '',
       });
 
       const { projectId } = await confirmQuoteAndGenerateProject({
