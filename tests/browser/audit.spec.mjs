@@ -85,6 +85,23 @@ for (const width of [390, 1440]) {
       await expect(trigger).toBeFocused();
     });
 
+    test('prévia de CSV sinaliza empréstimo marcado como faturamento', async ({ page }) => {
+      await page.goto('/tests/browser/index.html?route=settings');
+      await page.getByLabel('Colar linhas CSV manualmente').fill([
+        'Data;Descrição;Categoria;Valor;Obra;Tipo',
+        '10/11/2026;Crédito contratado;Faturamento;50000,00;Empresa;Empréstimo',
+        '11/11/2026;Crédito declarado;Empréstimo;125,00;Empresa;Empréstimo',
+      ].join('\n'));
+      await page.getByRole('button', { name: 'Avançar para relacionar colunas' }).click();
+      await page.getByRole('button', { name: 'Revisar movimentos' }).click();
+
+      await expect(page.getByText('Empréstimo lançado como faturamento sinalizado para reclassificação')).toBeVisible();
+      const warning = width === 390 ? 'Empréstimo sinalizado · não entra como receita' : 'Sinalizado · empréstimo não é faturamento';
+      await expect(page.getByText(warning, { exact: true })).toBeVisible();
+      await expect(page.getByRole('combobox', { name: 'Tipo de Crédito contratado' })).toHaveValue('loan');
+      await expect(page.getByRole('combobox', { name: 'Tipo de Crédito declarado' })).toHaveValue('loan');
+    });
+
     test('planejamento indica a falta de custo cadastrado', async ({ page }) => {
       await page.goto('/tests/browser/index.html');
       await navigation(page).getByRole('button', { name: width === 390 ? 'Obras' : 'Planejamento de Obras' }).click();

@@ -6,6 +6,7 @@ import { ToastProvider } from '../../src/components/ui/Toast';
 import { DashboardView } from '../../src/modules/DashboardView';
 import { FinancialView } from '../../src/modules/FinancialView';
 import { ProjectPlanningView } from '../../src/modules/ProjectPlanningView';
+import { SettingsView } from '../../src/modules/SettingsView';
 import type { PilotisDataState } from '../../src/types/pilotis';
 import '../../src/index.css';
 
@@ -18,7 +19,8 @@ const data: PilotisDataState = {
 function noAction() {}
 
 function Fixture() {
-  const [route, navigate] = useState<AppRouteKey>('dashboard');
+  const [route, navigate] = useState<AppRouteKey>(() =>
+    new URLSearchParams(window.location.search).get('route') === 'settings' ? 'settings' : 'dashboard');
   const [newExpense, setNewExpense] = useState(false);
   const planningData: PilotisDataState = {
     ...data,
@@ -41,7 +43,8 @@ function Fixture() {
       dueDate: '', installmentLabel: '', quoteId: '', debtId: '', source: 'manual',
     }],
   };
-  const title = route === 'financial' ? 'Financeiro' : route === 'planning' ? 'Obras' : 'Dashboard';
+  const title = route === 'financial' ? 'Financeiro' : route === 'planning' ? 'Obras'
+    : route === 'settings' ? 'Configurações' : 'Dashboard';
   return (
     <div className="min-h-screen flex flex-col md:flex-row bg-[#F6F5F2]">
       <Sidebar active={route} onSelect={navigate} onLogout={noAction} />
@@ -53,6 +56,7 @@ function Fixture() {
         {route === 'financial' && <FinancialView uid="browser-test" data={financeData} externalNewTxOpen={newExpense}
           onCloseExternalNewTx={() => setNewExpense(false)} />}
         {route === 'planning' && <ProjectPlanningView uid="browser-test" data={planningData} selectedProjectId="construction" onSelectProject={noAction} />}
+        {route === 'settings' && <SettingsView uid="browser-test" data={data} initialTab="Importar dados" />}
       </main>
       <MobileNav active={route} onSelect={navigate} />
     </div>

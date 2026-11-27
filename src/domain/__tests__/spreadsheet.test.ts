@@ -48,6 +48,21 @@ describe('spreadsheet import and export helpers', () => {
     assert.equal(preview.rows[2].amount, 8400.5);
   });
 
+  it('sinaliza quando a indicação do empréstimo está apenas na coluna Tipo', () => {
+    const parsed = parseCsvText([
+      'Data;Descrição;Categoria;Valor;Obra;Tipo',
+      '26/11/2026;Crédito contratado;Faturamento;125,00;Empresa;Empréstimo',
+      '27/11/2026;Crédito em conta;Outros;250,00;Empresa;Receita de empréstimo',
+    ].join('\n'));
+    const { rows } = buildImportPreviewRows(parsed, parsed.suggestedMapping);
+
+    assert.deepEqual(rows.map(({ description, entryKind, wasTaggedAsRevenue }) =>
+      ({ description, entryKind, wasTaggedAsRevenue })), [
+      { description: 'Crédito contratado', entryKind: 'loan', wasTaggedAsRevenue: true },
+      { description: 'Crédito em conta', entryKind: 'loan', wasTaggedAsRevenue: true },
+    ]);
+  });
+
   it('preserva a classificação de empréstimo já indicada na planilha', () => {
     const parsed = parseCsvText('Data;Descrição;Categoria;Valor\n26/11/2026;Recebimento de parcela;Empréstimo;125,00');
     const { rows } = buildImportPreviewRows(parsed, parsed.suggestedMapping);
