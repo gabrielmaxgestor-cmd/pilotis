@@ -1339,12 +1339,12 @@ export function FinancialView({
                 <KpiCard
                   label="Custos diretos realizados"
                   value={formatBRL(activeDre.possuiRealizado ? activeDre.custosTotais.realizado : null)}
-                  subtext={`Orçado: ${formatBRL(activeDre.custosTotais.orcado)}`}
+                  subtext={`Orçado: ${formatBRL(activeDre.custosTotais.orcado > 0 ? activeDre.custosTotais.orcado : null)}`}
                 />
                 <KpiCard
                   label="Margem real"
                   value={formatPercentBR(activeDre.receita.realizado > 0 ? activeDre.margemRealizadaPct : null)}
-                  subtext={`Prevista: ${formatPercentBR(activeDre.margemOrcadaPct)}`}
+                  subtext={`Prevista: ${formatPercentBR(activeDre.custosTotais.orcado > 0 ? activeDre.margemOrcadaPct : null)}`}
                 />
                 <KpiCard
                   label="Resultado acumulado"
@@ -1365,14 +1365,13 @@ export function FinancialView({
                       ? ` · Meta de margem: ${formatPercentBR(data.settings.targetMarginPct)}`
                       : ''}
                   </h2>
-                  <StatusBadge
-                    label={
-                      activeDre.margemRealizadaPct < activeDre.margemOrcadaPct
-                        ? 'Margem abaixo do previsto'
-                        : 'Margem dentro do previsto'
-                    }
-                    tone={activeDre.margemRealizadaPct < activeDre.margemOrcadaPct ? 'warn' : 'ok'}
-                  />
+                  {activeDre.custosTotais.orcado > 0 && activeDre.receita.realizado > 0 && (
+                    <StatusBadge
+                      label={activeDre.margemRealizadaPct < activeDre.margemOrcadaPct
+                        ? 'Margem abaixo do previsto' : 'Margem dentro do previsto'}
+                      tone={activeDre.margemRealizadaPct < activeDre.margemOrcadaPct ? 'warn' : 'ok'}
+                    />
+                  )}
                 </div>
 
                 <DataList caption="DRE por obra" keyExtractor={(row) => row.label}
@@ -1388,11 +1387,17 @@ export function FinancialView({
                   ] as const).filter(([, line]) => line !== activeDre.ajusteEap || line.orcado !== 0).map(([label, line]) => ({ label, line }))}
                   columns={[
                     { key: 'label', header: 'Linha', render: (row) => row.label },
-                    { key: 'budget', header: 'Orçado', numeric: true, align: 'right', render: ({ line }) => formatBRL(line.orcado) },
+                    { key: 'budget', header: 'Orçado', numeric: true, align: 'right', render: ({ line }) =>
+                      formatBRL(line === activeDre.receita || activeDre.custosTotais.orcado > 0 ? line.orcado : null) },
                     { key: 'actual', header: 'Realizado', numeric: true, align: 'right', render: ({ line }) =>
                       formatBRL(activeDre.possuiRealizado && line !== activeDre.ajusteEap ? line.realizado : null) },
                     { key: 'variance', header: 'Variação / margem', render: ({ label, line }) => {
                       if (!activeDre.possuiRealizado || line === activeDre.ajusteEap) return 'Sem dados';
+                      if (activeDre.custosTotais.orcado <= 0 && line !== activeDre.receita) {
+                        return line === activeDre.resultado && activeDre.receita.realizado > 0
+                          ? formatPercentBR(activeDre.margemRealizadaPct)
+                          : 'Sem dados';
+                      }
                       const pct = line === activeDre.resultado ? activeDre.margemRealizadaPct : line.variacaoPct;
                       const tone: BadgeTone = line === activeDre.resultado ? (line.realizado >= line.orcado ? 'ok' : 'warn')
                         : !pct ? 'neutral' : (pct > 0) === label.startsWith('(−)') ? 'bad' : 'ok';
@@ -1417,6 +1422,7 @@ export function FinancialView({
               <div className="flex flex-wrap items-center gap-2">
                 <input
                   type="date"
+                  aria-label="Início do período da DRE"
                   value={drePeriodStart}
                   onChange={(e) => setDrePeriodStart(e.target.value)}
                   className="rounded-lg border border-[#E4E1DA] px-2.5 py-1.5 text-xs"
@@ -1424,6 +1430,7 @@ export function FinancialView({
                 <span className="text-xs text-[#5B6472]">até</span>
                 <input
                   type="date"
+                  aria-label="Fim do período da DRE"
                   value={drePeriodEnd}
                   onChange={(e) => setDrePeriodEnd(e.target.value)}
                   className="rounded-lg border border-[#E4E1DA] px-2.5 py-1.5 text-xs"

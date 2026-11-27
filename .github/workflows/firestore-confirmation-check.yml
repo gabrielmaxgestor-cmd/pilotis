@@ -1,4 +1,4 @@
-name: Firestore confirmation check
+name: Pilotis verification
 
 on:
   push:
@@ -8,7 +8,10 @@ on:
       - '.github/workflows/firestore-confirmation-check.yml'
       - 'firestore.rules'
       - 'src/services/pilotisService.ts'
-      - 'tests/firestore.rules.test.mjs'
+      - 'tests/**'
+      - 'src/**'
+      - 'server.ts'
+      - 'package*.json'
 
 permissions:
   contents: read
@@ -33,3 +36,17 @@ jobs:
         if: failure()
         run: |
           if test -f firestore-debug.log; then tail -n 150 firestore-debug.log; fi
+
+  application:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: node --test tests/integration.test.mjs
+      - run: npm run build

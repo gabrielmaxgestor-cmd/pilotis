@@ -230,8 +230,15 @@ export function toDomainTaxParams(
   };
 }
 
+export function getContractCostBudget(project: Project): number | null {
+  const amounts = [project.budgetedLabor, project.budgetedSubcontract, project.budgetedEquipment,
+    project.budgetedBdi, project.budgetedTax];
+  const total = roundCents(amounts.reduce((sum, amount) => sum + (amount ?? 0), 0));
+  return total > 0 ? total : null;
+}
+
 export function toDomainProjectDreInput(project: Project, stages: ProjectStage[] = []): ObraDreInput {
-  const projectStages = stages.filter((stage) => stage.projectId === project.id);
+  const eapBudget = getWorkPackageBudget(stages.filter((stage) => stage.projectId === project.id));
   return {
     id: project.id,
     nome: project.name,
@@ -241,7 +248,7 @@ export function toDomainProjectDreInput(project: Project, stages: ProjectStage[]
     orcadoEquipamentos: project.budgetedEquipment || 0,
     orcadoImpostos: project.budgetedTax || 0,
     orcadoBdi: project.budgetedBdi || 0,
-    orcadoEap: projectStages.length ? getWorkPackageBudget(projectStages) : undefined,
+    orcadoEap: eapBudget > 0 ? eapBudget : undefined,
   };
 }
 

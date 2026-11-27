@@ -541,8 +541,8 @@ service cloud.firestore {
         && isValidNonEmptyStr(data.entityType, 60)
         && isValidNonEmptyStr(data.summary, 240)
         && data.createdAt is timestamp
-        && (!('beforeValue' in data) || isValidStr(data.beforeValue, 240))
-        && (!('afterValue' in data) || isValidStr(data.afterValue, 240));
+        && (!('beforeValue' in data) || isValidStr(data.beforeValue, 16000))
+        && (!('afterValue' in data) || isValidStr(data.afterValue, 16000));
     }
 
     match /companySettings/{userId} {

@@ -203,7 +203,7 @@ function readProjects(data: PilotisDataState, projects: PilotisDataState['projec
       records: [project.id, ...data.transactions.filter((row) => row.projectId === project.id && !row.isForecast).map((row) => row.id)],
     });
     add('Receita orçada da obra', dre.receita.orcado, ref, formatBRL);
-    add('Custo orçado da obra', dre.custosTotais.orcado, ref, formatBRL);
+    if (dre.custosTotais.orcado > 0) add('Custo orçado da obra', dre.custosTotais.orcado, ref, formatBRL);
     if (dre.possuiRealizado) {
       add('Receita realizada da obra', dre.receita.realizado, ref, formatBRL);
       add('Custo realizado da obra', dre.custosTotais.realizado, ref, formatBRL);

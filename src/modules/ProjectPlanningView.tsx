@@ -37,6 +37,7 @@ import {
   plannedWeeks,
   resolveTeamWeek,
   getProjectSchedule,
+  getContractCostBudget,
   isPublishedPop,
   linkedPopChecklist,
   getRecordedScheduleProgress,
@@ -321,6 +322,7 @@ export function ProjectPlanningView({
   }
 
   const totalEapBudget = getWorkPackageBudget(projectStages);
+  const hasEapBudget = totalEapBudget > 0;
 
   return (
     <div className="flex flex-col gap-6">
@@ -427,6 +429,10 @@ export function ProjectPlanningView({
               </div>
 
               <ScheduleTemplateOptions value={tplType} onChange={setTplType} />
+
+              {getContractCostBudget(activeProject) === null && (
+                <p className="text-sm text-[#5B6472]">Custo orçado · Sem dados. Você pode gerar o cronograma e registrar os custos nos pacotes da EAP.</p>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
                 <div className="flex flex-col gap-1">
@@ -698,7 +704,7 @@ export function ProjectPlanningView({
               <header className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#E4E1DA] bg-white p-4">
                 <div>
                   <h2 className="text-base font-semibold text-[#14181F]">Estrutura analítica do projeto</h2>
-                  <p className="text-sm text-[#5B6472]">Custo orçado da obra · {projectStages.length ? formatBRL(totalEapBudget) : 'Sem dados'}</p>
+                  <p className="text-sm text-[#5B6472]">Custo orçado da obra · {formatBRL(hasEapBudget ? totalEapBudget : null)}</p>
                 </div>
                 {!awaitingScheduleTemplate && <button type="button" onClick={openCreateStage} className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm font-semibold">Adicionar pacote</button>}
               </header>
@@ -706,13 +712,13 @@ export function ProjectPlanningView({
                 <section key={phase} className="overflow-hidden rounded-xl border border-[#E4E1DA] bg-white">
                   <div className="flex flex-wrap justify-between gap-2 bg-[#E6EEFB] px-4 py-3">
                     <h3 className="text-sm font-bold text-[#14181F]">{phase}</h3>
-                    <strong className="text-sm text-[#1F3A5F]">{formatBRL(getWorkPackageBudget([...deliveries.values()].flat()))}</strong>
+                    <strong className="text-sm text-[#1F3A5F]">{formatBRL(hasEapBudget ? getWorkPackageBudget([...deliveries.values()].flat()) : null)}</strong>
                   </div>
                   {[...deliveries].map(([delivery, packages]) => (
                     <div key={delivery} className="grid gap-2 border-t border-[#E4E1DA] p-4">
                       <div className="flex flex-wrap justify-between gap-2">
                         <h4 className="text-sm font-semibold">{delivery}</h4>
-                        <span className="text-sm text-[#5B6472]">{formatBRL(getWorkPackageBudget(packages))}</span>
+                        <span className="text-sm text-[#5B6472]">{formatBRL(hasEapBudget ? getWorkPackageBudget(packages) : null)}</span>
                       </div>
                       <div className="grid gap-1">
                         {packages.map((stage) => {
@@ -723,7 +729,7 @@ export function ProjectPlanningView({
                               <strong className="min-w-0 break-words text-[#14181F]">{stage.wbsCode} · {stage.name}</strong>
                               <span className="text-[#5B6472]">{stage.responsible || 'Sem responsável'}</span>
                               <span>{stage.isMilestone ? 'Marco' : `${stage.durationWeeks} sem.`}</span>
-                              <span className="tabular-nums">{formatBRL(stage.budgetedCost)}</span>
+                              <span className="tabular-nums">{formatBRL(hasEapBudget ? stage.budgetedCost : null)}</span>
                               <span className="text-[#5B6472]">{pop ? `POP · ${pop.title}` : 'Sem POP vinculado'}</span>
                               <span><StatusBadge label={stage.status} /></span>
                             </button>
