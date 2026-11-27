@@ -651,13 +651,17 @@ service cloud.firestore {
       allow delete: if isValidId(projectId) && isSignedIn() && existing().ownerUid == request.auth.uid;
     }
 
+    function installmentProjectBelongsToCompany(projectId) {
+      let project = getAfter(/databases/$(database)/documents/projects/$(projectId));
+      return project != null && project.data.ownerUid == request.auth.uid;
+    }
+
     match /parcelas/{installmentId} {
       allow get: if isValidId(installmentId) && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(installmentId) && isSignedIn() && isValidInstallment(incoming())
         && incoming().createdAt == request.time && incoming().updatedAt == request.time
-        && existsAfter(/databases/$(database)/documents/projects/$(incoming().projectId))
-        && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.ownerUid == request.auth.uid;
+        && installmentProjectBelongsToCompany(incoming().projectId);
       allow update: if isValidId(installmentId) && isSignedIn() && isValidInstallment(incoming())
         && existing().ownerUid == request.auth.uid
         && incoming().ownerUid == existing().ownerUid

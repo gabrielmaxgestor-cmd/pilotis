@@ -62,7 +62,11 @@ function bufferWrites() {
     update: (ref, value) => changes.push({ ref, value, action: 'update' }),
     delete: (ref) => changes.push({ ref, action: 'delete' }),
     async commit() {
-      if (rejectCommit) { rejectCommit = false; throw new Error('falha simulada no commit'); }
+      if (rejectCommit) {
+        const error = rejectCommit;
+        rejectCommit = false;
+        throw error;
+      }
       for (const { ref, action } of changes) {
         if (action === 'update') assert.ok(db.has(ref.path));
         if (ref.path.startsWith('auditLogs/') && db.has(ref.path)) throw new Error('auditoria imutável');
@@ -128,12 +132,12 @@ function state() {
     projectFollowUps: rows('projectFollowUps'),
   };
 }
-function prepareQuote(downPaymentPct) {
+function prepareQuote(downPaymentPct, installmentsCount = 3, estimatedMonths = 3) {
   db.set('clients/client', { ...audit, name: 'Cliente', status: 'Prospect' });
   db.set('quotes/quote', { ...audit, code: '1', title: 'Obra', city: 'Valença', description: '', status: 'Em negociação',
-    clientId: 'client', totalValue: 10000, downPaymentPct, installmentsCount: 3, estimatedMonths: 3,
+    clientId: 'client', totalValue: 10000, downPaymentPct, installmentsCount, estimatedMonths,
     type: 'Reforma', laborCost: 3000, subcontractCost: 500, equipmentCost: 500, bdiCost: 0, taxCost: 0 });
-  return { uid, actor, quoteId: 'quote', clientId: 'client', totalValue: 10000, downPaymentPct, installmentsCount: 3, startDate: today };
+  return { uid, actor, quoteId: 'quote', clientId: 'client', totalValue: 10000, downPaymentPct, installmentsCount, startDate: today };
 }
 function replaceStage(stage, patch) {
   const { id, ownerUid, createdBy, updatedBy, createdAt, updatedAt, ...payload } = { ...stage, ...patch };
@@ -142,17 +146,19 @@ function replaceStage(stage, patch) {
 
 test('confirmação é atômica e cria obra, parcelas, PDF, checklist e entrada no Planejamento', async () => {
   db.clear();
-  const params = prepareQuote(10);
-  rejectCommit = true;
-  await assert.rejects(service.confirmQuoteAndGenerateProject(params), /falha simulada/);
+  const params = prepareQuote(40, 4, 4);
+  rejectCommit = Object.assign(new Error('falha simulada no commit'), { code: 'permission-denied' });
+  await assert.rejects(service.confirmQuoteAndGenerateProject(params), /recusou a gravação conjunta/);
   assert.deepEqual([rows('projects').length, rows('parcelas').length, rows('complianceItems').length, rows('auditLogs').length], [0, 0, 0, 0]);
+  assert.equal(row('quotes', 'quote').status, 'Em negociação');
   const { projectId } = await service.confirmQuoteAndGenerateProject(params);
   const project = row('projects', projectId);
   assert.equal(project.status, 'Contratada');
   assert.match(project.planningStatus, /Aguardando/);
   assert.equal(row('quotes', 'quote').projectId, projectId);
   assert.equal(row('quotes', 'quote').status, 'Ganho');
-  assert.equal(rows('parcelas').length, 4);
+  assert.equal(rows('parcelas').length, 5);
+  assert.equal(rows('parcelas').find((payment) => payment.number === 0)?.amount, 4000);
   assert.equal(rows('parcelas').reduce((sum, payment) => sum + payment.amount, 0), 10000);
   assert.equal(rows('transactions').length, 0);
   assert.equal(new TextDecoder().decode(project.contractPdf.toUint8Array().slice(0, 5)), '%PDF-');
