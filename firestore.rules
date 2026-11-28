@@ -845,6 +845,10 @@ service cloud.firestore {
         && incoming().updatedAt == request.time;
     }
 
+    function validMaterialDate(value) {
+      return value is string && (value == '' || value.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'));
+    }
+
     function validCustomerMaterial(data) {
       return data.keys().hasAll([
         'ownerUid', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt', 'projectId', 'stageId', 'auditId',
@@ -913,8 +917,7 @@ service cloud.firestore {
       allow delete: if isValidId(stageId) && isSignedIn() && existing().ownerUid == request.auth.uid;
     }
 
-    function validMaterialDate(value) {
-      return value is string && (value == '' || value.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2} {
+    match /dailyLogs/{logId} {
       allow get: if isValidId(logId) && isSignedIn() && (resource == null || existing().ownerUid == request.auth.uid);
       allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(logId) && isSignedIn() && isValidDailyLog(incoming())
