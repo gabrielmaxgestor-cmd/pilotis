@@ -35,7 +35,12 @@ export async function permanentRecordDeletion(db: Firestore, uid: string, entity
     const hasContract = entity === 'quotes' && (row.projectId || row.status === 'Ganho' ||
       (row.contractSignStatus && row.contractSignStatus !== 'Não gerado') || row.contractAddenda?.length);
     const hasProjectIdentity = entity === 'projects' && (row.clientId || row.quoteId || row.contractPdf);
-    if (hasContract || hasProjectIdentity) throw new DeletionError(409, 'Este registro tem vínculos e pode permanecer arquivado.');
+    const parent = entity === 'quotes' && row.clientId ? db.collection('clients').doc(row.clientId)
+      : entity === 'employees' && row.currentProjectId && !['Sem obra', 'Empresa'].includes(row.currentProjectId)
+        ? db.collection('projects').doc(row.currentProjectId) : undefined;
+    if (hasContract || hasProjectIdentity || (parent && (await tx.get(parent)).exists)) {
+      throw new DeletionError(409, 'Este registro tem vínculos e pode permanecer arquivado.');
+    }
 
     const queries = links[entity].map(([collection, field]) => db.collection(collection)
       .where(field, '==', id).where('ownerUid', '==', uid).limit(1));

@@ -25,6 +25,7 @@ import type {
   CompanySettings,
   ComplianceItem,
   ComplianceFile,
+  ContractSignStatus,
   DailyLog,
   Debt,
   EmployeeOccurrence,
@@ -360,6 +361,38 @@ export async function updateRecord<T extends Record<string, unknown>>(
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `${collectionName}/${id}`);
   }
+}
+
+export async function saveContractSignature(
+  uid: string, actor: ActorRole, quoteId: string, status: ContractSignStatus, date: string,
+) {
+  const ref = doc(db, 'quotes', quoteId);
+  const auditRef = doc(db, 'auditLogs', generateId('aud'));
+  const undo = await runTransaction(db, async (tx) => {
+    const quote = (await tx.get(ref)).data() as Quote | undefined;
+    if (!quote || quote.ownerUid !== uid || quote.archive) throw new Error('Orçamento indisponível.');
+    const projectRef = quote.projectId ? doc(db, 'projects', quote.projectId) : null;
+    const project = projectRef ? (await tx.get(projectRef)).data() as Project | undefined : undefined;
+    if (projectRef && (!project || project.ownerUid !== uid || project.archive)) {
+      throw new Error('Restaure a obra vinculada antes de editar a assinatura.');
+    }
+    const signed = status === 'Assinado pelo cliente' || status === 'Assinado pelas partes';
+    const signature = { contractSignStatus: status, contractSignedAt: signed ? date : '' };
+    if (signed && !isValidISODate(date)) throw new Error('Informe a data da assinatura.');
+    const auditFields = { updatedAt: serverTimestamp(), updatedBy: actor };
+    tx.update(ref, { ...signature, ...auditFields });
+    if (projectRef) tx.update(projectRef, { contractSigned: signed, ...auditFields });
+    tx.set(auditRef, {
+      ownerUid: uid, registeredBy: actor, action: 'Atualização', entityType: 'quotes', entityId: quoteId,
+      summary: clampStr('Assinatura do contrato · ' + quote.code, 240),
+      beforeValue: quote.contractSignStatus ?? 'Não gerado', afterValue: status, createdAt: serverTimestamp(),
+    });
+    return prepareEditUndo(uid, actor, [
+      { ref, before: quote, after: signature },
+      ...(projectRef && project ? [{ ref: projectRef, before: project, after: { contractSigned: signed } }] : []),
+    ]);
+  });
+  publishEditUndo(undo);
 }
 
 export async function deleteRecord(

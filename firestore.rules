@@ -312,7 +312,7 @@ service cloud.firestore {
           'amount', 'isForecast', 'wasForecast', 'statementKey', 'status', 'invoiceStatus', 'paymentMethod', 'receiptRef', 'receiptFile', 'installmentLabel',
           'installmentId', 'quoteId', 'debtId', 'source', 'payrollEmployeeId', 'payrollPeriod',
           'payrollBase', 'payrollCharges', 'payrollProvisions',
-          'reversalId', 'reversalOfId', 'reversalReason', 'reversalAuditId', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
         ])
         && hasAuditFields(data)
         && isValidNonEmptyStr(data.date, 20)
@@ -323,7 +323,7 @@ service cloud.firestore {
         && isValidNonEmptyStr(data.projectId, 128)
         && isValidNonNegNum(data.amount)
         && data.isForecast is bool
-        && data.status in ['Recebido', 'Pago', 'A vencer', 'Não é receita', 'Estornado', 'Estorno']
+        && data.status in ['Recebido', 'Pago', 'A vencer', 'Não é receita']
         && (!('dueDate' in data) || isValidStr(data.dueDate, 20))
         && (!('projectName' in data) || isValidStr(data.projectName, 160))
         && (!('invoiceStatus' in data) || data.invoiceStatus in ['Emitida', 'A emitir', 'Não emitida', 'Não se aplica'])
@@ -746,8 +746,7 @@ service cloud.firestore {
         && validNewReference(incoming(), 'quotes', 'quoteId')
         && !('receiptReversalAuditId' in incoming()) && incoming().createdAt == request.time && incoming().updatedAt == request.time
         && installmentProjectBelongsToCompany(incoming().projectId);
-      allow update: if isValidId(installmentId) && isSignedIn() && isValidInstallment(incoming())
-        && existing().ownerUid == request.auth.uid
+      allow update: if isValidId(installmentId) && isSignedIn() && existing().ownerUid == request.auth.uid
         && incoming().ownerUid == existing().ownerUid
         && incoming().projectId == existing().projectId
         && incoming().quoteId == existing().quoteId
@@ -755,12 +754,12 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().createdBy == existing().createdBy
         && incoming().updatedAt == request.time
-        && ((existing().status != 'Recebida' || incoming().status == 'Recebida')
-          && incoming().get('receiptReversalAuditId', '') == existing().get('receiptReversalAuditId', '')
-          && (existing().status != 'Recebida' || incoming().diff(existing()).affectedKeys().hasOnly([
-            'invoiceStatus', 'updatedBy', 'updatedAt'
-          ]))
-          || receiptRestoration(installmentId));
+        && (existing().status == 'Recebida' && incoming().status == 'A vencer'
+          ? receiptRestoration(installmentId)
+          : isValidInstallment(incoming()) && incoming().get('receiptReversalAuditId', '') == existing().get('receiptReversalAuditId', '')
+            && (existing().status != 'Recebida' || incoming().diff(existing()).affectedKeys().hasOnly([
+              'invoiceStatus', 'updatedBy', 'updatedAt'
+            ])));
       allow delete: if false;
     }
 
@@ -951,7 +950,7 @@ service cloud.firestore {
       let inverse = getAfter(/databases/$(database)/documents/transactions/$(inverseId)).data;
       let audit = getAfter(/databases/$(database)/documents/auditLogs/$(auditId)).data;
       let debtId = before.get('debtId', '');
-      return !hasReversalFields(before) && after.status == 'Estornado'
+      return !hasReversalFields(before) && after.status == 'Estornado' && isValidActor(after.updatedBy)
         && after.diff(before).affectedKeys().hasOnly(['status', 'reversalId', 'reversalAuditId', 'reversalReason', 'updatedBy', 'updatedAt'])
         && isValidId(inverseId) && isValidId(auditId)
         && isReversalReason(after.reversalReason) && audit.afterValue == after.reversalReason
@@ -970,6 +969,7 @@ service cloud.firestore {
       let before = get(/databases/$(database)/documents/transactions/$(originalId)).data;
       let after = getAfter(/databases/$(database)/documents/transactions/$(originalId)).data;
       return data.status == 'Estorno' && isValidId(originalId) && isValidId(data.reversalAuditId)
+        && hasAuditFields(data) && isValidNonEmptyStr(data.description, 200)
         && data.keys().hasOnly([
           'ownerUid', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt',
           'date', 'dueDate', 'description', 'entryKind', 'category', 'projectId', 'projectName',
@@ -981,30 +981,35 @@ service cloud.firestore {
         && data.amount == before.amount && data.entryKind == before.entryKind
         && data.projectId == before.projectId && data.category == before.category
         && data.date == before.date && data.isForecast == before.isForecast
+        && data.dueDate == (before.get('dueDate', '') == '' ? before.date : before.dueDate)
+        && data.projectName == before.get('projectName', '') && data.paymentMethod == before.get('paymentMethod', '')
         && data.invoiceStatus == 'Não se aplica';
     }
 
     match /transactions/{txId} {
       allow get: if isValidId(txId) && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
-      allow create: if isValidId(txId) && isSignedIn() && isValidTransaction(incoming())
-        && validNewReference(incoming(), 'projects', 'projectId')
-        && validNewReference(incoming(), 'quotes', 'quoteId')
-        && validNewReference(incoming(), 'employees', 'payrollEmployeeId')
+      allow create: if isValidId(txId) && isSignedIn()
         && incoming().createdAt == request.time && incoming().updatedAt == request.time
-        && (!hasReversalFields(incoming()) || validInverse(txId, incoming()));
-      allow update: if isValidId(txId) && isSignedIn() && isValidTransaction(incoming())
-        && validChangedReference('projects', 'projectId')
-        && validChangedReference('quotes', 'quoteId')
-        && validChangedReference('employees', 'payrollEmployeeId')
-        && existing().ownerUid == request.auth.uid
+        && (incoming().status == 'Estorno'
+          ? validInverse(txId, incoming())
+          : isValidTransaction(incoming()) && !hasReversalFields(incoming())
+            && validNewReference(incoming(), 'projects', 'projectId')
+            && validNewReference(incoming(), 'quotes', 'quoteId')
+            && validNewReference(incoming(), 'employees', 'payrollEmployeeId'));
+      allow update: if isValidId(txId) && isOwner(existing().ownerUid)
         && incoming().ownerUid == existing().ownerUid
         && incoming().createdAt == existing().createdAt
         && incoming().createdBy == existing().createdBy
         && incoming().updatedAt == request.time
-        && ((!hasReversalFields(existing()) && !hasReversalFields(incoming())
-          && (existing().isForecast || incoming().diff(existing()).affectedKeys().hasOnly(['invoiceStatus', 'updatedBy', 'updatedAt'])))
-          || validReversalUpdate(txId, existing(), incoming()));
+        && (incoming().status == 'Estornado'
+          ? validReversalUpdate(txId, existing(), incoming())
+          : !hasReversalFields(existing()) && !hasReversalFields(incoming())
+            && (existing().isForecast || incoming().diff(existing()).affectedKeys().hasOnly(['invoiceStatus', 'updatedBy', 'updatedAt']))
+            && isValidTransaction(incoming())
+            && validChangedReference('projects', 'projectId')
+            && validChangedReference('quotes', 'quoteId')
+            && validChangedReference('employees', 'payrollEmployeeId'));
       allow delete: if false;
     }
 

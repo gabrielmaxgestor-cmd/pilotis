@@ -658,6 +658,7 @@ export function FinancialView({
 
   const activeDreProject =
     data.projects.find((p) => p.id === selectedDreProjectId) || data.projects[0] || null;
+  const dreCorrected = data.transactions.some((row) => row.projectId === activeDreProject?.id && row.status === 'Estornado' && !row.isForecast);
   const consolidatedDre = data.projectClosures?.find((row) => row.projectId === activeDreProject?.id);
   const activeDre = useMemo(
     () => activeDreProject ? calcularDreAtualObra(activeDreProject, data) : null,
@@ -1374,7 +1375,7 @@ export function FinancialView({
                 </button>
               </div>
 
-              {consolidatedDre && <p className="text-sm font-semibold text-[#1F3A5F]">DRE consolidado no encerramento em {formatDateBR(consolidatedDre.date)}</p>}
+              {consolidatedDre && <p className="text-sm font-semibold text-[#1F3A5F]">{dreCorrected ? 'DRE atual com estornos · encerramento em ' : 'DRE consolidado no encerramento em '}{formatDateBR(consolidatedDre.date)}</p>}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <KpiCard

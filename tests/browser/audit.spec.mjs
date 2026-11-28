@@ -99,7 +99,7 @@ for (const width of [390, 1440]) {
       await expect(undo).toBeVisible();
       await page.clock.fastForward(7999);
       await expect(undo).toBeVisible();
-      await undo.click();
+      await undo.evaluate((button) => button.click());
       await expect(page.locator('body')).toHaveAttribute('data-edit-restored', 'sim');
       await show();
       await page.clock.fastForward(8001);

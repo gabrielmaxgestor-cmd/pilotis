@@ -10,7 +10,7 @@ import {
   StatusBadge,
 } from '../../components/ui/PilotisUI';
 import { simularPagamentoOrcamento } from '../../domain/orcamentos';
-import { updateRecord } from '../../services/pilotisService';
+import { saveContractSignature, updateRecord } from '../../services/pilotisService';
 import type {
   ActorRole,
   CompanySettings,
@@ -160,28 +160,7 @@ export function ContractModal({
     try {
       const isSigned =
         signStatus === 'Assinado pelo cliente' || signStatus === 'Assinado pelas partes';
-      const resolvedSignedDate = isSigned ? signedAt || todayISO() : '';
-      await updateRecord(
-        'quotes',
-        quote.id,
-        uid,
-        signActor,
-        {
-          contractSignStatus: signStatus,
-          contractSignedAt: resolvedSignedDate,
-        },
-        `Status do contrato ${quote.code}: ${signStatus}`
-      );
-      if (linkedProject) {
-        await updateRecord(
-          'projects',
-          linkedProject.id,
-          uid,
-          signActor,
-          { contractSigned: isSigned },
-          `Contrato da obra ${linkedProject.name}: ${signStatus}`
-        );
-      }
+      await saveContractSignature(uid, signActor, quote.id, signStatus, isSigned ? signedAt || todayISO() : '');
       setFeedback(`Status de assinatura salvo: ${signStatus}.`);
     } finally {
       setSavingSign(false);
