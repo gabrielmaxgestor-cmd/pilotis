@@ -111,6 +111,9 @@ async function loadConfirmationService(db) {
       ...await import('../src/services/archiveService.ts'),
       ...await import('../src/services/editUndo.ts'),
       ...await import('../src/server/recordDeletion.ts'),
+      ...await import('../src/server/workReportStore.ts'),
+      ...await import('../src/server/workReportRoutes.ts'),
+      ...await import('../src/domain/pdfDocument.ts'),
     };
   } finally {
     loader.deregister();
@@ -137,7 +140,8 @@ test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', {
     const { confirmQuoteAndGenerateProject, createProjectFromTemplate, recordFinancialTransaction, updateRecord,
       markInstallmentReceived, reverseFinancialMovement, undoInstallmentReceipt, setRecordArchived,
       prepareEditUndo, permanentRecordDeletion, saveCustomerMaterials, saveProjectStage, linkProjectClient,
-      recordWhatsAppSend, upsertCompanySettings, whatsappTemplates } =
+      recordWhatsAppSend, upsertCompanySettings, whatsappTemplates, createWorkReportStore, createWorkReportRouter,
+      showSharedWorkReport, pdfText } =
       await loadConfirmationService(db);
     const meta = {
       ownerUid: uid, createdBy: actor, updatedBy: actor, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
@@ -421,6 +425,101 @@ test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', {
         await setRecordArchived(uid, actor, entity, id, false);
         assert.equal((await getDocFromServer(ref)).data().archive, undefined);
       }
+      const jpeg = Buffer.from('/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAAYACADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD8qqKKKACiiigAooooAKKKKAP/2Q==', 'base64');
+      let serverNow = Date.parse('2027-01-29T15:00:00Z');
+      const reports = createWorkReportStore(adminDb, async () => jpeg, () => serverNow);
+      const reportLogId = 'report-test-' + randomUUID();
+      const logRef = adminDb.collection('dailyLogs').doc(reportLogId);
+      await logRef.set({
+        ownerUid: uid, projectId: modeledProjectId, date: '2027-01-20', photoIds: ['test-photo'], photoBackend: 'firestore',
+      });
+      await logRef.collection('photos').doc('test-photo').set({ ownerUid: uid, mimeType: 'image/jpeg', content: jpeg });
+      await adminDb.collection('companySettings').doc(uid).update({ companyName: 'Marca do emulador',
+        accentColor: '#1F3A5F', logoDataUrl: 'data:image/jpeg;base64,' + jpeg.toString('base64'), pdfShowLogo: true });
+      await adminDb.collection('stages').doc(firstStage.id).update({ status: 'Concluída', completedDate: '2027-01-18', progressPct: 100 });
+      const selected = [{ logId: reportLogId, photoId: 'test-photo', caption: 'Fundação executada' }];
+      await reports.saveApproval(uid, actor, modeledProjectId, { id: '', title: 'Aprovar acabamento', dueDate: '2027-02-05', approvedAt: '' });
+      await assert.rejects(reports.generate(uid, actor, modeledProjectId, '2027-01', selected, jpeg.toString('base64'), false), /autorização/);
+      await assert.rejects(reports.generate(uid, actor, originalParcel.projectId, '2027-01', selected, jpeg.toString('base64'), true), /diário da obra/);
+
+      const express = (await import('express')).default;
+      const httpApp = express();
+      httpApp.get('/relatorio', showSharedWorkReport);
+      httpApp.use('/api/work-reports', createWorkReportRouter({
+        store: () => reports, authorizedEmail: 'gabrielmaxgestor@gmail.com',
+        verifyToken: async (token) => ({ uid: token === 'company' ? uid : 'outro-usuario', email_verified: true,
+          email: 'gabrielmaxgestor@gmail.com' }),
+      }));
+      const http = httpApp.listen(0, '127.0.0.1');
+      try {
+        if (!http.listening) await new Promise((resolve) => http.once('listening', resolve));
+        const origin = 'http://127.0.0.1:' + http.address().port;
+        const api = origin + '/api/work-reports';
+        const endpoint = api + '/projects/' + modeledProjectId;
+        const send = (url, payload, token = '') => fetch(url, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+          body: JSON.stringify(payload),
+        });
+        const generation = { actor, month: '2027-01', photos: selected, photosAuthorized: true, logoJpeg: jpeg.toString('base64') };
+        assert.equal((await send(endpoint, generation)).status, 401);
+        assert.equal((await send(endpoint, generation, 'other')).status, 404);
+        const createdResponse = await send(endpoint, generation, 'company');
+        assert.equal(createdResponse.status, 201, await createdResponse.clone().text());
+        const created = await createdResponse.json();
+        assert.equal(created.month, '2027-01');
+        assert.equal(created.createdBy, actor);
+        const reportRef = doc(db, 'projects', modeledProjectId, 'workReports', created.id);
+        await assert.rejects(getDocFromServer(reportRef), denial);
+        await assert.rejects(getDocFromServer(doc(db, 'projects', modeledProjectId, 'workReports', created.id, 'pdf', '0')), denial);
+        const download = await fetch(endpoint + '/' + created.id + '/pdf', { headers: { Authorization: 'Bearer company' } });
+        assert.equal(download.status, 200);
+        const pdf = Buffer.from(await download.arrayBuffer());
+        const content = pdf.toString('ascii');
+        assert.ok(content.startsWith('%PDF-1.4'));
+        for (const label of ['Marca do emulador', 'Aprovar acabamento', 'Fundação executada', '20/01/2027', '18/01/2027']) {
+          assert.ok(content.includes(pdfText(label)), label);
+        }
+        assert.equal(content.match(/\/Subtype \/Image/g)?.length, 2);
+        assert.ok(!content.includes(pdfText('R$ 12.000,00')));
+        assert.ok(!content.includes(pdfText(modeledProjectId)));
+        assert.ok(!content.includes(pdfText('Confirmação no emulador')));
+
+        const sharing = endpoint + '/' + created.id;
+        const link = await (await send(sharing + '/share', { actor }, 'company')).json();
+        assert.match(link.token, /^[A-Za-z0-9_-]{43}$/);
+        assert.equal(Date.parse(link.report.shareExpiresAt) - serverNow, 30 * 86_400_000);
+        const stored = (await adminDb.doc('projects/' + modeledProjectId + '/workReports/' + created.id).get()).data();
+        assert.notEqual(stored.shareHash, link.token);
+        await assert.rejects(getDocFromServer(doc(db, 'workReportShares', stored.shareHash)), denial);
+        const publicAccess = (token) => send(api + '/public', { token });
+        const page = await fetch(origin + '/relatorio');
+        assert.match(page.headers.get('Content-Security-Policy'), /frame-ancestors 'none'/);
+        assert.match(await page.text(), /location\.hash/);
+        const response = await publicAccess(link.token);
+        assert.equal(response.status, 200);
+        assert.match(response.headers.get('Cache-Control'), /no-store/);
+        assert.deepEqual(Buffer.from(await response.arrayBuffer()), pdf);
+        assert.equal((await publicAccess('x'.repeat(43))).status, 404);
+        assert.equal((await publicAccess(created.id)).status, 404);
+        const sent = await (await send(sharing + '/sent', { actor }, 'company')).json();
+        assert.ok(sent.report.sentAt);
+        assert.equal(sent.report.sentBy, actor);
+        assert.equal((await send(sharing + '/revoke', { actor }, 'company')).status, 200);
+        assert.equal((await publicAccess(link.token)).status, 404);
+        const rotated = await (await send(sharing + '/share', { actor }, 'company')).json();
+        assert.notEqual(rotated.token, link.token);
+        serverNow += 30 * 86_400_000;
+        assert.equal((await publicAccess(rotated.token)).status, 404);
+        const listed = await (await fetch(endpoint, { headers: { Authorization: 'Bearer company' } })).json();
+        assert.equal(listed.reports[0].shareActive, false);
+        assert.equal(listed.reports[0].sentAt, sent.report.sentAt);
+        const audit = await adminDb.collection('auditLogs').where('entityId', '==', created.id).get();
+        assert.ok(audit.docs.some((row) => row.data().summary === 'Relatório gerado'));
+        assert.ok(audit.docs.some((row) => row.data().summary === 'Envio do relatório registrado'));
+      } finally {
+        await new Promise((resolve) => http.close(resolve));
+      }
+
       await adminDb.doc('projects/' + modeledProjectId).update({ status: 'Concluída' });
       const testimonialTarget = { model: 'testimonial', projectId: modeledProjectId, sourceId: modeledProjectId };
       await recordWhatsAppSend({ ...sendParams, messageId: 'test-testimonial', target: testimonialTarget });

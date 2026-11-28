@@ -1,3 +1,4 @@
+import { ProjectReportView } from './ProjectReportView';
 import { WhatsAppShortcut } from '../components/ui/WhatsAppShortcut';
 import { ProjectMaterialsView } from './ProjectMaterialsView';
 import { weeksToCalendarDays, withMaterialHold } from '../domain/customerMaterials';
@@ -78,6 +79,7 @@ const PLAN_TABS = [
   'Etapas em campo',
   'Encerramento',
   'Pós-obra',
+  'Relatórios',
 ];
 
 const TEMPLATE_OPTIONS: { type: ProjectType; description: string }[] = [
@@ -844,6 +846,7 @@ export function ProjectPlanningView({
             <ProjectClosureView key={activeProject.id} uid={uid} project={activeProject} data={data} onAftercare={() => setTab('Pós-obra')} />
           )}
           {tab === 'Pós-obra' && <PostConstructionView key={activeProject.id} uid={uid} data={data} projectId={activeProject.id} />}
+          {tab === 'Relatórios' && <ProjectReportView key={activeProject.id} project={activeProject} data={data} />}
         </>
       )}
 

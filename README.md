@@ -79,6 +79,12 @@ O comando `npm audit --omit=dev` registra avisos para revisão. Falhas de lint, 
 
 Em Configurações → WhatsApp, edite os modelos de parcela, material, marco e depoimento. Cada modelo lista as variáveis que aceita. Os atalhos usam o telefone do cadastro vinculado à obra, com DDD. Abra a conversa, envie pelo WhatsApp e volte ao Pilotis para confirmar o registro. O histórico fica no cadastro do cliente, na subcoleção `clients/{clientId}/whatsappHistory`, com data, modelo, responsável e referência de origem. Os textos preenchidos e os números de telefone ficam fora do histórico.
 
+## Relatórios de andamento
+
+No planejamento da obra, abra **Relatórios**, escolha o mês e selecione as fotos sincronizadas do diário para as quais há autorização de divulgação. Cada foto precisa de legenda. O PDF registra o progresso observado no mês selecionado, as conclusões datadas e a posição atual do cronograma e das pendências. Registre as aprovações do cliente na mesma aba.
+
+O servidor grava o PDF em `projects/{projectId}/workReports/{reportId}/pdf` e as aprovações em `projects/{projectId}/clientApprovals`. O link de leitura vale 30 dias, pode ser revogado e é resolvido pelo hash do token em `workReportShares`. Após enviar o PDF ou o link ao cliente, confirme em **Registrar envio**. Geração, gestão de links e confirmação de envio ficam na auditoria. Abertura de links exige o backend publicado. Quando as fotos estão no Firebase Storage, a conta de serviço do Cloud Run precisa de acesso de leitura aos objetos do diário.
+
 ## Publicação no Cloud Run
 
 1. Confirme o projeto, o banco nomeado e o e-mail corporativo. Use um projeto de homologação para o primeiro deploy.

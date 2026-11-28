@@ -46,6 +46,9 @@ export async function permanentRecordDeletion(db: Firestore, uid: string, entity
       .where(field, '==', id).where('ownerUid', '==', uid).limit(1));
     if (entity === 'employees') queries.push(ref.collection('occurrences').limit(1));
     if (entity === 'clients') queries.push(ref.collection('whatsappHistory').limit(1));
+    if (entity === 'projects') {
+      queries.push(ref.collection('workReports').limit(1), ref.collection('clientApprovals').limit(1));
+    }
     if (entity === 'clients' && row.name) {
       queries.push(db.collection('projects').where('clientName', '==', row.name).where('ownerUid', '==', uid).limit(1));
     }

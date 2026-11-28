@@ -1291,6 +1291,10 @@ export async function saveProjectStage(params: {
       : previous?.status === 'Concluída' && payload.progressPct === previous.progressPct ? 0 : payload.progressPct;
     payload = {
       ...payload, progressPct: forecastProgress,
+      completedDate: status === 'Concluída'
+        ? previous?.status === 'Concluída' ? previous.completedDate ?? ''
+          : params.restoringEdit ? (isValidISODate(payload.completedDate) ? payload.completedDate : '') : today
+        : '',
       delayCategory: normalizeDelayCategory(payload.delayCategory ?? ''),
       delayJustification: (payload.delayJustification ?? '').trim(),
     };
@@ -1372,7 +1376,7 @@ export async function saveProjectStage(params: {
     }
     if (receiptRef) tx.set(receiptRef, { ...auditFields(uid, actor), projectId: project.id, stageId });
     const scheduleRevision = (current.scheduleRevision ?? 0) + 1;
-    if (!previous || candidate.progressPct !== previous.progressPct) {
+    if (!previous || candidate.progressPct !== previous.progressPct || candidate.status !== previous.status) {
       const progress = calcularCurvaSObra(nextStages, schedule.referenceWeek, undefined, false, schedule.criticalPath);
       if (progress.possuiDados) {
         tx.set(doc(db, 'scheduleProgress', `${project.id}_r${scheduleRevision}`), {

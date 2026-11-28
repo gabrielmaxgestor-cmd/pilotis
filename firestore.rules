@@ -1,6 +1,17 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Report content, approvals and token hashes are handled exclusively by the Node backend.
+    match /projects/{id}/workReports/{document=**} {
+      allow read, write: if false;
+    }
+    match /projects/{id}/clientApprovals/{document=**} {
+      allow read, write: if false;
+    }
+    match /workReportShares/{document=**} {
+      allow read, write: if false;
+    }
+
     // AI conversations are accessible only through the authenticated Node backend.
     match /conversasIA/{uid}/{document=**} {
       allow read, write: if false;
@@ -255,7 +266,7 @@ service cloud.firestore {
       ])
         && data.keys().hasOnly([
           'ownerUid', 'projectId', 'wbsCode', 'phase', 'deliverable', 'name', 'responsible', 'durationWeeks',
-          'startWeek', 'baselineStartWeek', 'baselineDurationWeeks', 'baselineBudgetedCost', 'progressPct', 'budgetedCost',
+          'startWeek', 'baselineStartWeek', 'baselineDurationWeeks', 'baselineBudgetedCost', 'progressPct', 'completedDate', 'budgetedCost',
           'popId', 'dependsOn', 'isMilestone', 'status', 'materialExpectedDate', 'delayCategory',
           'delayJustification', 'checklistCompleted', 'popReview', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
         ])
@@ -273,6 +284,8 @@ service cloud.firestore {
         && (!('baselineBudgetedCost' in data) || isValidNonNegNum(data.baselineBudgetedCost))
         && (!('baselineDurationWeeks' in data) || isValidNonNegNum(data.baselineDurationWeeks))
         && (!('progressPct' in data) || (isValidNonNegNum(data.progressPct) && data.progressPct <= 100))
+        && (!('completedDate' in data) || (data.completedDate == '' ||
+          (data.status == 'Concluída' && validMaterialDate(data.completedDate))))
         && (!('budgetedCost' in data) || isValidNonNegNum(data.budgetedCost))
         && (!('popId' in data) || isValidStr(data.popId, 128))
         && (!('dependsOn' in data) || isValidStringList(data.dependsOn, 10, 128))

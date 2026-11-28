@@ -7,6 +7,10 @@ import { fileURLToPath, pathToFileURL } from 'url';
 import { GoogleGenAI } from '@google/genai';
 import { deleteApp, getApp, getApps, initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { getStorage } from 'firebase-admin/storage';
+import { createWorkReportRouter, showSharedWorkReport } from './src/server/workReportRoutes.ts';
+import { createWorkReportStore } from './src/server/workReportStore.ts';
+import { REPORT_SOURCE_PHOTO_BYTES } from './src/server/workReportPdf.ts';
 import { createRecordDeletionRouter } from './src/server/recordDeletion.ts';
 import { getAuth, type DecodedIdToken, type UserRecord } from 'firebase-admin/auth';
 import {
@@ -29,10 +33,10 @@ export const AI_RATE_LIMIT_WINDOW_MS = 60_000;
 
 function loadFirebaseTarget() {
   const raw = fs.readFileSync(path.resolve(__dirname, 'firebase-applet-config.json'), 'utf8');
-  const config = JSON.parse(raw) as { projectId?: string; firestoreDatabaseId?: string };
+  const config = JSON.parse(raw) as { projectId?: string; firestoreDatabaseId?: string; storageBucket?: string };
   const projectId = config.projectId?.trim();
   if (!projectId || projectId === 'remixed-project-id') throw new Error('Projeto Firebase não provisionado.');
-  return { projectId, databaseId: config.firestoreDatabaseId?.trim() || '(default)' };
+  return { projectId, databaseId: config.firestoreDatabaseId?.trim() || '(default)', storageBucket: config.storageBucket?.trim() };
 }
 
 function adminApp() {
@@ -284,6 +288,23 @@ export function createApiApp(options: AiChatRouterOptions = {}): express.Express
     database: () => getFirestore(adminApp(), loadFirebaseTarget().databaseId),
     verifyToken: options.verifyIdToken ?? ((token) => getAuth(adminApp()).verifyIdToken(token)),
     authorizedEmail: getAuthorizedCompanyEmail(options.authorizedCompanyEmail),
+  }));
+  app.get('/relatorio', showSharedWorkReport);
+  app.use('/api/work-reports', createWorkReportRouter({
+    authorizedEmail: getAuthorizedCompanyEmail(options.authorizedCompanyEmail),
+    verifyToken: options.verifyIdToken ?? ((token) => getAuth(adminApp()).verifyIdToken(token)),
+    store: () => {
+      const firebase = loadFirebaseTarget();
+      const admin = adminApp();
+      return createWorkReportStore(getFirestore(admin, firebase.databaseId), async (object) => {
+        if (!firebase.storageBucket) throw Error('Firebase Storage indisponível.');
+        const file = getStorage(admin).bucket(firebase.storageBucket).file(object);
+        const [metadata] = await file.getMetadata();
+        if (!Number.isFinite(Number(metadata.size)) || Number(metadata.size) > REPORT_SOURCE_PHOTO_BYTES) throw Error('Foto muito grande.');
+        const [content] = await file.download();
+        return content;
+      });
+    },
   }));
   app.use('/api', (_req, res) => { res.status(404).json({ error: 'Rota da API indisponível.' }); });
   return app;

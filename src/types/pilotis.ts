@@ -177,6 +177,7 @@ export interface ProjectStage extends AuditMeta {
   baselineDurationWeeks: number;
   baselineBudgetedCost?: number;
   progressPct: number;
+  completedDate?: string;
   budgetedCost: number;
   popId: string;
   dependsOn: string[];
