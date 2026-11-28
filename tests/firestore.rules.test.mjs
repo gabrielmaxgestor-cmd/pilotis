@@ -263,7 +263,8 @@ test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', {
     const materialProjectRef = doc(db, 'projects', modeledProjectId);
     let materialProject = { id: modeledProjectId, ...(await getDocFromServer(materialProjectRef)).data() };
     const materialStages = modeledStages.docs.map((entry) => ({ id: entry.id, ...entry.data() }));
-    const firstStage = materialStages.find((stage) => stage.wbsCode === '1.1');
+    const firstStage = materialStages.find((stage) => stage.startWeek === 0 && !stage.isMilestone);
+    assert.ok(firstStage, 'O modelo deve ter uma etapa de início');
     const materialInput = {
       stageId: firstStage.id, description: 'Material da etapa no emulador', quantity: 12, unit: 'm',
       leadDays: 2, promisedDate: '2027-01-13', deliveredDate: '', status: 'Comprado', clientContact: 'Cliente', notes: '',
