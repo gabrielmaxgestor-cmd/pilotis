@@ -109,6 +109,7 @@ for (const width of [390, 1440]) {
       expect(files['pacote-para-o-contador.xlsx']).toBeDefined();
       const xml = unzipSync(files['pacote-para-o-contador.xlsx']);
       expect(strFromU8(xml['xl/workbook.xml'])).toContain('Parcelas recebidas');
+      expect(strFromU8(xml['xl/worksheets/sheet2.xml'])).toContain('state="frozen"');
       const csvs = Object.keys(files).filter((file) => file.endsWith('.csv'));
       expect(csvs).toHaveLength(7);
       expect(csvs.every((file) => strFromU8(files[file]).includes('Sem dados'))).toBe(true);

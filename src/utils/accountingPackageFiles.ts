@@ -16,6 +16,7 @@ export function accountingCsv(table: AccountingTable) {
 export function accountingWorkbookSheets(tables: AccountingTable[]): Sheet<File | Blob | ArrayBuffer>[] {
   return tables.map((table) => ({
     sheet: table.title,
+    stickyRowsCount: 1,
     columns: table.headers.map((header) => ({ width: table.title === 'Resumo' && header === 'Referência' ? 60 : Math.max(18, header.length + 3) })),
     data: [
       table.headers.map((header): CellObject => ({ type: String, value: header, fontWeight: 'bold',

@@ -68,7 +68,7 @@ export function buildAccountingPackage(data: PilotisDataState, period: Accountin
   const { lancamentosUnicos } = deduplicarReceitasEParcelas(toDomainTransactions(data.transactions), toDomainInstallments(data.installments));
   const ledger = lancamentosUnicos.map((row) => ({ ...row, realized: isRealizedCashEntry(row),
     center: center(row.obraId, savedCenters.get(row.id)) }))
-    .filter((row) => contains(row.realized ? row.data : row.vencimento || row.data)).sort(byDateAndId);
+    .filter((row) => row.realized ? row.data <= referenceDate && contains(row.data) : contains(row.vencimento || row.data)).sort(byDateAndId);
   const realized = ledger.filter((row) => row.realized);
   const projected = ledger.filter((row) => !row.realized);
   const income = sum(realized.filter((row) => row.tipo === 'receita'), (row) => row.valor);
@@ -160,7 +160,7 @@ export function buildAccountingPackage(data: PilotisDataState, period: Accountin
   const summary = table('Resumo', 'resumo.csv', ['Item', 'Referência', 'Valor (R$)'], [
     ['Início do período', date(period.start), null], ['Fim do período', date(period.end), null],
     ['Gerado em (horário de Brasília)', details.generatedAt, null], ['Registrado por', details.actor, null],
-    ['Lançamentos', 'Movimento realizado por data ou previsto por vencimento. Estornos e espelhos de parcelas ficam fora dos totais.', null],
+    ['Lançamentos', 'Movimento realizado até a data de geração ou previsto por vencimento. Estornos e espelhos de parcelas ficam fora dos totais.', null],
     ['Parcelas', 'Data do recebimento. Para parcelas antigas sem essa data, usa-se o vencimento.', null],
     ['Notas fiscais', 'Situação atual dos recebimentos no período.', null],
     ['Folha e encargos', 'Folha calculada na Equipe para cada competência abrangida, com o mês completo e os totais por centro.', null],

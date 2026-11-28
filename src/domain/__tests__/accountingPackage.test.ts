@@ -32,6 +32,7 @@ test('confere caixa, recebimentos, impostos, folha e saldo devedor com os módul
       movement('reversed', 200, { status: 'Estornado' }),
       movement('reversal', 200, { status: 'Estorno' }),
       movement('outside', 500, { date: '2026-12-01' }),
+      movement('out-of-cutoff', 300, { date: '2026-11-30' }),
       movement('promised-tax', 35.67, { date: '2026-10-29', dueDate: '2026-11-25', entryKind: 'expense',
         status: 'A vencer', isForecast: true, category: 'Tributos' }),
     ], installments: [{
@@ -46,10 +47,11 @@ test('confere caixa, recebimentos, impostos, folha e saldo devedor com os módul
     debts: [{ id: 'loan-debt', principalBalance: 600, nextDueDate: '2026-11-30', monthlyCost: 12.5, debtType: 'Empréstimo bancário',
       creditor: 'Credor privado', status: 'Em dia', remainingInstallments: 2 } as Debt],
   };
-  const result = buildAccountingPackage(data, november, details, november.end);
+  const reference = '2026-11-28';
+  const result = buildAccountingPackage(data, november, details, reference);
   assert.equal(result.hasData, true);
   const summary = new Map(result.sheets[0].rows.map(([key, _ref, amount]) => [key, amount]));
-  const financial = calcularResumoFinanceiroPeriodo(data, november.end);
+  const financial = calcularResumoFinanceiroPeriodo(data, reference);
   assert.equal(summary.get('Receitas recebidas'), financial.entradasMes);
   assert.equal(summary.get('Despesas pagas'), financial.saidasMes);
   assert.equal(summary.get('Empréstimos recebidos'), 700);
