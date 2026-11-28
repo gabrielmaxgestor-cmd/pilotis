@@ -322,6 +322,24 @@ test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', {
       await assert.rejects(permanentRecordDeletion(adminDb, uid, 'clients', clientRef.id, actor), /vínculos/);
       await setRecordArchived(uid, actor, 'clients', clientRef.id, false);
       assert.equal((await getDocFromServer(clientRef)).data().archive, undefined);
+      const quote = (await getDocsFromServer(query(collection(db, 'quotes'),
+        where('ownerUid', '==', uid), limit(1)))).docs[0];
+      const employee = doc(collection(db, 'employees'));
+      await setDoc(employee, { ...meta, name: 'Colaborador do teste', role: 'Alvenaria', employmentType: 'CLT', baseSalary: 4000 });
+      for (const [entity, id] of [['quotes', quote.id], ['projects', modeledProjectId], ['employees', employee.id]]) {
+        const ref = doc(db, entity, id);
+        await setRecordArchived(uid, actor, entity, id, true);
+        const archived = (await getDocFromServer(ref)).data();
+        assert.equal(archived.archive.by, actor);
+        await assert.rejects(deleteDoc(ref), denial);
+        await setRecordArchived(uid, actor, entity, id, false);
+        assert.equal((await getDocFromServer(ref)).data().archive, undefined);
+      }
+      const legacy = adminDb.collection('parcelas').doc();
+      const currentParcel = (await adminDb.doc('parcelas/' + parcel.id).get()).data();
+      await legacy.set({ ...currentParcel, status: 'Recebida', transactionId: '', receivedDate: '2026-01-15' });
+      await undoInstallmentReceipt(uid, actor, legacy.id, 'Corrigir parcela legada');
+      assert.equal((await legacy.get()).data().status, 'A vencer');
       const unlinked = doc(collection(db, 'clients'));
       const unlinkedData = { ...meta, name: 'Cadastro independente no teste', origin: '', status: 'Potencial' };
       await setDoc(unlinked, unlinkedData);

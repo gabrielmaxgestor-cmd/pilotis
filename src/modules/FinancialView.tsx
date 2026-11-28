@@ -675,6 +675,7 @@ export function FinancialView({
   );
   const companyDreCategories = Object.entries(companyDre.despesasPorCategoria);
   const companyDreHasData =
+    companyDre.possuiRealizado ||
     companyDre.receitas.orcado > 0 ||
     companyDre.receitas.realizado > 0 ||
     companyDreCategories.length > 0;

@@ -2040,7 +2040,7 @@ export async function closeProject(
       status: 'Concluída', closureDate: date, warrantyStartDate: date,
       updatedBy: actor, updatedAt: serverTimestamp(),
     });
-    if (client?.exists() && client.data().ownerUid === uid) {
+    if (client?.exists() && client.data().ownerUid === uid && !client.data().archive) {
       tx.update(client.ref, { status: 'Em garantia', updatedBy: actor, updatedAt: serverTimestamp() });
     }
     tx.set(doc(db, 'auditLogs', generateId('aud')), {

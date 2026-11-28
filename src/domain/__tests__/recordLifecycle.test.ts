@@ -30,7 +30,9 @@ test('o par de estorno tem sinais opostos e zera caixa, resultado e DRE no perí
   assert.equal(finance.resultadoMes, 0);
   assert.equal(calcularIndicadoresDashboard(data, day).saldoRealizadoCaixa, 0);
   assert.equal(calcularIndicadoresDashboard(data, day).sistemaVazio, false);
-  assert.equal(calcularDreEmpresa(data, '2027-01-01', '2027-01-31').custosTotais.realizado, 0);
+  const dre = calcularDreEmpresa(data, '2027-01-01', '2027-01-31');
+  assert.equal(dre.custosTotais.realizado, 0);
+  assert.equal(dre.possuiRealizado, true);
 });
 
 test('arquivar retira a obra dos indicadores e conserva o dinheiro realizado', () => {

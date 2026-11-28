@@ -192,7 +192,8 @@ export function dreEmpresa(
 ): DreEmpresaResult {
   let receitaPrevista = 0;
   let receitaRealizada = 0;
-  let possuiRealizado = false;
+  let possuiRealizado = input.lancamentos.some((row) =>
+    row.status === 'Estornado' && row.tipo !== 'emprestimo' && !row.previsto && inPeriod(row.data, periodo));
 
   const parcelas = input.parcelas ?? [];
   const parcelaIds = new Set(parcelas.map((parcela) => parcela.id));

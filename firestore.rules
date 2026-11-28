@@ -601,10 +601,11 @@ service cloud.firestore {
       allow create: if isValidId(clientId) && isSignedIn() && isValidClient(incoming())
         && notDeleted('clients', clientId)
         && !incoming().keys().hasAny(['archive', 'archiveAuditId']) && incoming().createdAt == request.time && incoming().updatedAt == request.time;
-      allow update: if isValidId(clientId) && isSignedIn() && isValidClient(incoming())
+      allow update: if isValidId(clientId) && isSignedIn()
         && existing().ownerUid == request.auth.uid
         && !('archive' in existing()) && !('archive' in incoming())
         && incoming().get('archiveAuditId', '') == existing().get('archiveAuditId', '')
+        && isValidClient(incoming())
         && incoming().ownerUid == existing().ownerUid
         && incoming().createdAt == existing().createdAt
         && incoming().createdBy == existing().createdBy
@@ -707,12 +708,13 @@ service cloud.firestore {
         && validNewReference(incoming(), 'clients', 'clientId')
         && validNewReference(incoming(), 'quotes', 'quoteId')
         && !incoming().keys().hasAny(['archive', 'archiveAuditId']) && incoming().createdAt == request.time && incoming().updatedAt == request.time;
-      allow update: if isValidId(projectId) && isSignedIn() && isValidProject(incoming())
+      allow update: if isValidId(projectId) && isSignedIn()
         && validChangedReference('clients', 'clientId')
         && validChangedReference('quotes', 'quoteId')
         && existing().ownerUid == request.auth.uid
         && !('archive' in existing()) && !('archive' in incoming())
         && incoming().get('archiveAuditId', '') == existing().get('archiveAuditId', '')
+        && isValidProject(incoming())
         && incoming().ownerUid == existing().ownerUid
         && incoming().createdAt == existing().createdAt
         && incoming().createdBy == existing().createdBy
@@ -1034,11 +1036,12 @@ service cloud.firestore {
         && notDeleted('employees', employeeId)
         && validNewReference(incoming(), 'projects', 'currentProjectId')
         && !incoming().keys().hasAny(['archive', 'archiveAuditId']) && incoming().createdAt == request.time && incoming().updatedAt == request.time;
-      allow update: if isValidId(employeeId) && isSignedIn() && isValidEmployee(incoming())
+      allow update: if isValidId(employeeId) && isSignedIn()
         && validChangedReference('projects', 'currentProjectId')
         && existing().ownerUid == request.auth.uid
         && !('archive' in existing()) && !('archive' in incoming())
         && incoming().get('archiveAuditId', '') == existing().get('archiveAuditId', '')
+        && isValidEmployee(incoming())
         && incoming().ownerUid == existing().ownerUid
         && incoming().createdAt == existing().createdAt
         && incoming().createdBy == existing().createdBy
