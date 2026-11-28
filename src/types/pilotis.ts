@@ -125,6 +125,7 @@ export interface Project extends AuditMeta, ArchiveMeta {
   workInProgressLimit?: number;
   scheduleBaselineVersion?: number;
   scheduleStageIds?: string[];
+  customerMaterialIds?: string[];
   contractValue: number;
   contractPdf?: Bytes;
   downPaymentPct?: number;
@@ -175,6 +176,28 @@ export interface ProjectStage extends AuditMeta {
   delayJustification: string;
   checklistCompleted: string[];
   popReview?: StagePopReview | null;
+}
+
+export type CustomerMaterialStatus = 'A comprar' | 'Comprado' | 'Em transporte' | 'Entregue';
+
+export interface CustomerMaterialInput {
+  stageId: string;
+  description: string;
+  quantity: number | null;
+  unit: string;
+  leadDays: number;
+  promisedDate: string;
+  deliveredDate: string;
+  status: CustomerMaterialStatus;
+  clientContact: string;
+  notes: string;
+  templateKey?: string;
+}
+
+export interface CustomerMaterial extends AuditMeta, CustomerMaterialInput {
+  id: string;
+  projectId: string;
+  auditId: string;
 }
 
 export interface ScheduleBaselineStage {
@@ -498,6 +521,7 @@ export interface PilotisDataState {
   projects: Project[];
   installments: Installment[];
   stages: ProjectStage[];
+  customerMaterials?: CustomerMaterial[];
   projectRisks?: ProjectRisk[];
   baselines?: ScheduleBaseline[];
   scheduleProgress?: ScheduleProgress[];

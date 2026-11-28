@@ -1,3 +1,4 @@
+import { customerMaterialTemplate, describeMaterialDates, MATERIAL_STATUSES, withMaterialHold } from '../domain/customerMaterials';
 import { prepareEditUndo, publishEditUndo } from './editUndo';
 import {
   Bytes,
@@ -25,6 +26,8 @@ import type {
   CompanySettings,
   ComplianceItem,
   ComplianceFile,
+  CustomerMaterial,
+  CustomerMaterialInput,
   ContractSignStatus,
   DailyLog,
   Debt,
@@ -250,6 +253,7 @@ export function subscribePilotisCollections(
     { colName: 'projects', stateKey: 'projects' },
     { colName: 'parcelas', stateKey: 'installments' },
     { colName: 'stages', stateKey: 'stages' },
+    { colName: 'customerMaterials', stateKey: 'customerMaterials' },
     { colName: 'projectRisks', stateKey: 'projectRisks' },
     { colName: 'baselines', stateKey: 'baselines' },
     { colName: 'scheduleProgress', stateKey: 'scheduleProgress' },
@@ -1020,6 +1024,129 @@ async function readProjectStages(tx: Transaction, project: Project, knownStages:
   return stages;
 }
 
+async function readProjectCustomerMaterials(tx: Transaction, project: Project) {
+  const ids = project.customerMaterialIds ?? [];
+  const rows = await Promise.all(ids.map(async (id) => {
+    const snapshot = await tx.get(doc(db, 'customerMaterials', id));
+    const row = snapshot.data() as CustomerMaterial | undefined;
+    if (!row || row.ownerUid !== project.ownerUid || row.projectId !== project.id) {
+      throw new Error('A lista de materiais mudou. Reabra a obra para revisar os itens.');
+    }
+    return { ...row, id };
+  }));
+  return rows;
+}
+
+type CustomerMaterialMutation = {
+  uid: string; actor: ActorRole; project: Pick<Project, 'id' | 'scheduleRevision'>;
+  knownStages: Pick<ProjectStage, 'id'>[]; restoringEdit?: boolean;
+} & ({ itemId?: string; item: CustomerMaterialInput } | { templateLeadDays: number });
+
+function requireMaterialLeadDays(days: number) {
+  if (!Number.isInteger(days) || days < 0 || days > 3650) {
+    throw new Error('Informe uma antecedência em dias inteiros entre 0 e 3650.');
+  }
+}
+
+function normalizeMaterial(item: CustomerMaterialInput, today: string): CustomerMaterialInput {
+  requireMaterialLeadDays(item.leadDays);
+  const description = clampStr(item.description.trim(), 160);
+  const promisedDate = item.promisedDate.trim();
+  const deliveredDate = item.status === 'Entregue' ? item.deliveredDate.trim() : '';
+  if (!description) throw new Error('Informe a descrição do material.');
+  if (item.quantity !== null && (!Number.isFinite(item.quantity) || item.quantity <= 0)) {
+    throw new Error('Informe uma quantidade maior que zero ou deixe o campo em branco.');
+  }
+  if (!MATERIAL_STATUSES.includes(item.status)) throw new Error('Selecione a situação da compra.');
+  if (promisedDate && !isValidISODate(promisedDate)) throw new Error('Informe uma data prometida válida.');
+  if (item.status === 'Entregue' && (!isValidISODate(deliveredDate) || deliveredDate > today)) {
+    throw new Error('Informe a data efetiva da entrega, até hoje.');
+  }
+  return {
+    stageId: item.stageId, description, quantity: item.quantity, unit: clampStr(item.unit.trim(), 24),
+    leadDays: item.leadDays, promisedDate, deliveredDate, status: item.status,
+    clientContact: clampStr(item.clientContact.trim(), 140), notes: clampStr(item.notes.trim(), 600),
+    ...(item.templateKey ? { templateKey: item.templateKey } : {}),
+  };
+}
+
+export async function saveCustomerMaterials(params: CustomerMaterialMutation): Promise<number> {
+  const { uid, actor, project, knownStages } = params;
+  const today = planningTodayISO();
+  const projectRef = doc(db, 'projects', project.id);
+  const result = await runTransaction(db, async (tx) => {
+    const snapshot = await tx.get(projectRef);
+    const current = { ...snapshot.data(), id: project.id } as Project;
+    if (!snapshot.exists() || current.ownerUid !== uid || current.archive || current.status === 'Concluída') {
+      throw new Error('Selecione uma obra ativa para editar os materiais.');
+    }
+    if ((current.scheduleRevision ?? 0) !== (project.scheduleRevision ?? 0)) {
+      throw new Error('O cronograma ou a lista de materiais mudou. Reabra o formulário para revisar.');
+    }
+    const [stages, previousItems] = await Promise.all([
+      readProjectStages(tx, current, knownStages), readProjectCustomerMaterials(tx, current),
+    ]);
+    const before = getProjectSchedule(current, stages, today, previousItems);
+    if (!before.forecastEndDate) throw new Error('Defina as etapas e a data de início da obra antes de cadastrar materiais.');
+    const previous = 'item' in params && params.itemId ? previousItems.find((row) => row.id === params.itemId) : undefined;
+    if ('item' in params && params.itemId && !previous) throw new Error('Material indisponível.');
+
+    let inputs: CustomerMaterialInput[];
+    if ('item' in params) {
+      inputs = [{ ...params.item, templateKey: previous?.templateKey }];
+    } else {
+      requireMaterialLeadDays(params.templateLeadDays);
+      inputs = customerMaterialTemplate(current.type, stages, previousItems, params.templateLeadDays);
+    }
+    if (!inputs.length) return { count: 0 };
+    const rows = inputs.map((input) => {
+      const fields = normalizeMaterial(input, today);
+      const stage = stages.find((row) => row.id === fields.stageId);
+      if (!stage || (stage.status === 'Concluída' && previous?.stageId !== stage.id)) {
+        throw new Error('Selecione uma etapa ativa desta obra.');
+      }
+      return {
+        ...fields, id: previous?.id ?? generateId('mat'), projectId: current.id,
+        ownerUid: uid, createdBy: previous?.createdBy ?? actor, updatedBy: actor, auditId: generateId('aud'),
+      };
+    });
+    const nextItems = previousItems.filter((row) => row.id !== previous?.id).concat(rows);
+    const next = getProjectSchedule(current, stages, today, nextItems);
+    const necessaryBefore = new Map(before.materials.rows.map((row) => [row.item.id, row.necessaryDate]));
+    const necessaryAfter = new Map(next.materials.rows.map((row) => [row.item.id, row.necessaryDate]));
+
+    for (const row of rows) {
+      const { id, ownerUid, createdBy, updatedBy, ...fields } = row;
+      const ref = doc(db, 'customerMaterials', id);
+      if (previous) tx.update(ref, { ...fields, updatedBy: actor, updatedAt: serverTimestamp() });
+      else tx.set(ref, { ...fields, ...auditFields(uid, actor) });
+      tx.set(doc(db, 'auditLogs', row.auditId), {
+        ownerUid: uid, registeredBy: actor, action: previous ? 'Atualização' : 'Criação', entityType: 'customerMaterials',
+        entityId: id, summary: clampStr((params.restoringEdit ? 'Edição desfeita' : previous ? 'Material atualizado' : 'Material registrado') +
+          ' · ' + row.description, 240),
+        beforeValue: previous ? describeMaterialDates(previous, necessaryBefore.get(id) ?? null) : '',
+        afterValue: describeMaterialDates(row, necessaryAfter.get(id) ?? null),
+        createdAt: serverTimestamp(),
+      });
+    }
+    const revision = (current.scheduleRevision ?? 0) + 1;
+    tx.update(projectRef, {
+      customerMaterialIds: nextItems.map((row) => row.id),
+      forecastEndDate: next.forecastEndDate ?? current.forecastEndDate,
+      scheduleRevision: revision, updatedBy: actor, updatedAt: serverTimestamp(),
+    });
+    const undo = previous && !params.restoringEdit ? async () => {
+      await saveCustomerMaterials({
+        uid, actor, project: { id: current.id, scheduleRevision: revision }, knownStages: stages,
+        itemId: previous.id, item: previous, restoringEdit: true,
+      });
+    } : undefined;
+    return { count: rows.length, undo };
+  });
+  publishEditUndo(result.undo);
+  return result.count;
+}
+
 export async function replanProjectSchedule(params: {
   uid: string;
   actor: ActorRole;
@@ -1044,7 +1171,8 @@ export async function replanProjectSchedule(params: {
     const previousVersion = current.scheduleBaselineVersion ?? 1;
     const previousSnapshot = current.scheduleBaselineVersion ? await tx.get(scheduleBaselineRef(current.id, previousVersion)) : null;
     const previousBaseline = previousSnapshot?.data() as Omit<ScheduleBaseline, 'id'> | undefined;
-    const schedule = getProjectSchedule(current, stages);
+    const materials = await readProjectCustomerMaterials(tx, current);
+    const schedule = getProjectSchedule(current, stages, planningTodayISO(), materials);
     const cycle = describeScheduleCycle(stages, schedule.criticalPath);
     if (cycle) throw new Error(cycle);
     const endDate = schedule.forecastEndDate;
@@ -1121,6 +1249,9 @@ export async function saveProjectStage(params: {
       throw new Error('O cronograma foi atualizado. Feche e reabra a etapa para revisar a versão atual.');
     }
     const stages = await readProjectStages(tx, current, knownStages);
+    const materials = await readProjectCustomerMaterials(tx, current);
+    const today = planningTodayISO();
+    const beforeSchedule = getProjectSchedule(current, stages, today, materials);
     const previous = stages.find((stage) => stage.id === stageId);
     if (params.stageId && !previous) throw new Error('Etapa indisponível.');
     let payload: StagePayload;
@@ -1139,7 +1270,7 @@ export async function saveProjectStage(params: {
       if (!previous) throw new Error('Etapa indisponível.');
       const { id, ownerUid, createdAt, createdBy, updatedAt, updatedBy, ...fields } = previous;
       payload = { ...fields, status: params.moveTo, dependsOn: fields.dependsOn ?? [], checklistCompleted: fields.checklistCompleted ?? [] };
-      if (previous.status === params.moveTo) return;
+      if (previous.status === params.moveTo && !beforeSchedule.materials.blockedStages.has(stageId)) return;
     } else {
       payload = params.payload;
     }
@@ -1173,7 +1304,16 @@ export async function saveProjectStage(params: {
       createdBy: previous?.createdBy ?? actor, updatedBy: actor,
     };
     const nextStages = [...others, candidate];
-    const schedule = getProjectSchedule(current, nextStages);
+    const schedule = getProjectSchedule(current, nextStages, today, materials);
+    const guardSchedule = candidate.status === 'Concluída' && previous?.status !== 'Concluída'
+      ? getProjectSchedule(current, [...others, { ...candidate, status: 'A fazer' }], today, materials)
+      : schedule;
+    const advancing = ('moveTo' in params || candidate.status !== previous?.status) &&
+      ['Em andamento', 'Em conferência', 'Concluída'].includes(candidate.status);
+    if (guardSchedule.materials.blockedStages.has(stageId) &&
+      (advancing || (previous && candidate.progressPct > previous.progressPct))) {
+      throw new Error('A etapa está aguardando material do cliente. Atualize a entrega dos itens em atraso antes de avançar.');
+    }
     const cycle = describeScheduleCycle(nextStages, schedule.criticalPath);
     if (cycle) throw new Error(cycle);
     const changedPop = Boolean(candidate.popId && candidate.popId !== previous?.popId);
@@ -1188,10 +1328,11 @@ export async function saveProjectStage(params: {
     const popReview = candidate.status === 'Concluída'
       ? retainedReview ?? linkedPopChecklist({ ...candidate, popReview: null }, livePop) ?? null
       : null;
-    validateStageWorkflow(candidate, previous, others, current, popReview ?? undefined);
+    const effectiveOthers = others.map((stage) => withMaterialHold(stage, schedule.materials.blockedStages));
+    validateStageWorkflow(candidate, previous, effectiveOthers, current, popReview ?? undefined);
     if (popReview) payload.checklistCompleted = popReview.acceptanceCriteria.filter((item) => payload.checklistCompleted.includes(item));
 
-    const oldEnd = previous ? getProjectSchedule(current, stages).details.get(stageId)?.terminoMaisCedo : undefined;
+    const oldEnd = previous ? beforeSchedule.details.get(stageId)?.terminoMaisCedo : undefined;
     const newEnd = schedule.details.get(stageId)?.terminoMaisCedo;
     const baselineEnd = previous ? (previous.baselineStartWeek ?? previous.startWeek) + (previous.baselineDurationWeeks ?? previous.durationWeeks) : undefined;
     const delayChanged = !previous || payload.delayCategory !== normalizeDelayCategory(previous.delayCategory ?? '') ||
@@ -1220,7 +1361,7 @@ export async function saveProjectStage(params: {
     if (receiptRef) tx.set(receiptRef, { ...auditFields(uid, actor), projectId: project.id, stageId });
     const scheduleRevision = (current.scheduleRevision ?? 0) + 1;
     if (!previous || candidate.progressPct !== previous.progressPct) {
-      const progress = calcularCurvaSObra(nextStages, schedule.referenceWeek, undefined, false);
+      const progress = calcularCurvaSObra(nextStages, schedule.referenceWeek, undefined, false, schedule.criticalPath);
       if (progress.possuiDados) {
         tx.set(doc(db, 'scheduleProgress', `${project.id}_r${scheduleRevision}`), {
           ...auditFields(uid, actor), projectId: project.id, scheduleRevision,

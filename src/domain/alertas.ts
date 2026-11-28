@@ -13,6 +13,7 @@ export type AlertaCategoria =
   | 'certidao'
   | 'treinamento'
   | 'planejamento'
+  | 'material'
   | 'garantia';
 
 export type AlertaModulo =
@@ -29,6 +30,7 @@ export interface AlertaDominio {
   modulo: AlertaModulo;
   mensagem: string;
   referenciaId?: string;
+  obraId?: string;
 }
 
 export interface AlertasOpcoes {

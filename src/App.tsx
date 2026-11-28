@@ -79,6 +79,7 @@ const INITIAL_DATA_STATE: PilotisDataState = {
   projects: [],
   installments: [],
   stages: [],
+  customerMaterials: [],
   projectRisks: [],
   baselines: [],
   scheduleProgress: [],
@@ -208,7 +209,7 @@ function AuthenticatedShell({
 
   useEffect(() => {
     const dashboardPending = new Set([
-      'clients', 'quotes', 'projects', 'installments', 'stages', 'transactions',
+      'clients', 'quotes', 'projects', 'installments', 'stages', 'customerMaterials', 'transactions',
       'debts', 'employees', 'allocations', 'settings', 'complianceItems', 'warrantyCalls',
     ]);
     const unsub = subscribePilotisCollections(uid, (partial) => {
@@ -244,8 +245,8 @@ function AuthenticatedShell({
     window.scrollTo({ top: 0, behavior: 'auto' });
   }
 
-  function handleModuleNavigate(mod: ModuleKey, subTab?: string) {
-    navigateTo(mod, subTab);
+  function handleModuleNavigate(mod: ModuleKey, subTab?: string, selection?: Record<string, string>) {
+    navigateTo(mod, subTab, selection);
   }
 
   return (

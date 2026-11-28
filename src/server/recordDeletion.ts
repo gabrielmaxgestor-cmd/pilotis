@@ -8,7 +8,7 @@ const links: Record<ArchivableCollection, ReadonlyArray<readonly [string, string
   quotes: [['projects', 'quoteId'], ['parcelas', 'quoteId'], ['transactions', 'quoteId']],
   projects: [
     ['quotes', 'projectId'], ['parcelas', 'projectId'], ['transactions', 'projectId'],
-    ['stages', 'projectId'], ['allocations', 'projectId'], ['employees', 'currentProjectId'],
+    ['stages', 'projectId'], ['customerMaterials', 'projectId'], ['allocations', 'projectId'], ['employees', 'currentProjectId'],
     ['complianceItems', 'projectId'], ['dailyLogs', 'projectId'], ['fieldSync', 'projectId'],
     ['baselines', 'projectId'], ['scheduleProgress', 'projectId'], ['projectRisks', 'projectId'],
     ['projectClosures', 'projectId'], ['projectFollowUps', 'projectId'], ['warrantyCalls', 'projectId'],

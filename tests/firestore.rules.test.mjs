@@ -134,7 +134,7 @@ test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', {
   try {
     const { confirmQuoteAndGenerateProject, createProjectFromTemplate, recordFinancialTransaction, updateRecord,
       markInstallmentReceived, reverseFinancialMovement, undoInstallmentReceipt, setRecordArchived,
-      prepareEditUndo, permanentRecordDeletion } =
+      prepareEditUndo, permanentRecordDeletion, saveCustomerMaterials, saveProjectStage } =
       await loadConfirmationService(db);
     const meta = {
       ownerUid: uid, createdBy: actor, updatedBy: actor, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
@@ -259,6 +259,35 @@ test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', {
     assert.ok(modeledStages.size > 1);
     const linkedStage = modeledStages.docs.find((item) => item.data().phase.endsWith('Instalações'));
     assert.equal(linkedStage?.data().popId, popRef.id);
+
+    const materialProjectRef = doc(db, 'projects', modeledProjectId);
+    let materialProject = { id: modeledProjectId, ...(await getDocFromServer(materialProjectRef)).data() };
+    const materialStages = modeledStages.docs.map((entry) => ({ id: entry.id, ...entry.data() }));
+    const firstStage = materialStages.find((stage) => stage.wbsCode === '1.1');
+    const materialInput = {
+      stageId: firstStage.id, description: 'Material da etapa no emulador', quantity: 12, unit: 'm',
+      leadDays: 2, promisedDate: '2027-01-13', deliveredDate: '', status: 'Comprado', clientContact: 'Cliente', notes: '',
+    };
+    const originalForecast = materialProject.forecastEndDate;
+    const materialParams = { uid, actor, knownStages: materialStages };
+    assert.equal(await saveCustomerMaterials({ ...materialParams, project: materialProject, item: materialInput }), 1);
+    materialProject = { id: modeledProjectId, ...(await getDocFromServer(materialProjectRef)).data() };
+    const materialRef = doc(db, 'customerMaterials', materialProject.customerMaterialIds[0]);
+    await assert.rejects(updateDoc(materialRef, { leadDays: 3, updatedAt: serverTimestamp() }), { code: 'permission-denied' });
+    await saveCustomerMaterials({ ...materialParams, project: materialProject, itemId: materialRef.id,
+      item: { ...materialInput, promisedDate: '2027-01-20' } });
+    materialProject = { id: modeledProjectId, ...(await getDocFromServer(materialProjectRef)).data() };
+    assert.ok(materialProject.forecastEndDate > originalForecast);
+    const material = (await getDocFromServer(materialRef)).data();
+    const dateAudit = (await getDocFromServer(doc(db, 'auditLogs', material.auditId))).data();
+    assert.match(dateAudit.beforeValue, /Prometida: 13\/01\/2027/);
+    assert.match(dateAudit.afterValue, /Prometida: 20\/01\/2027/);
+    await assert.rejects(saveProjectStage({
+      uid, actor, project: materialProject, knownStages: materialStages, stageId: firstStage.id, moveTo: 'Em andamento',
+    }), /aguardando material do cliente/);
+    assert.equal(await saveCustomerMaterials({ ...materialParams, project: materialProject, templateLeadDays: 7 }), 3);
+    materialProject = { id: modeledProjectId, ...(await getDocFromServer(materialProjectRef)).data() };
+    assert.equal(await saveCustomerMaterials({ ...materialParams, project: materialProject, templateLeadDays: 7 }), 0);
 
     const denial = { code: 'permission-denied' };
     const loanId = loans.docs[0].id;

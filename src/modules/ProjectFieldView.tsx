@@ -1,3 +1,4 @@
+import { withMaterialHold, type CustomerMaterialPlan } from '../domain/customerMaterials';
 import { useEffect, useState } from 'react';
 import { ListToolbar, useListFilters } from '../components/ui/ListFilters';
 import type { ListSchema } from '../domain/listQuery';
@@ -279,9 +280,9 @@ export function ProjectDiary({ uid, project, logs }: { uid: string; project: Pro
   );
 }
 
-export function FieldStages({ uid, project, stages, pops, stageSchema, projects, onSelectProject }: {
+export function FieldStages({ uid, project, stages, pops, stageSchema, projects, onSelectProject, materialBlocks }: {
   uid: string; project: Project; stages: ProjectStage[]; pops: Pop[];
-  stageSchema: ListSchema<ProjectStage>; projects: Project[]; onSelectProject: (id: string) => void;
+  stageSchema: ListSchema<ProjectStage>; projects: Project[]; onSelectProject: (id: string) => void; materialBlocks?: CustomerMaterialPlan['blockedStages'];
 }) {
   const queue = useFieldQueue(uid);
   const [editing, setEditing] = useState<ProjectStage | null>(null);
@@ -302,12 +303,14 @@ export function FieldStages({ uid, project, stages, pops, stageSchema, projects,
     try { displayStages.set(stage.id, applyFieldStageUpdate(stage, job.update)); }
     catch { paused.add(job.stageId); }
   }
-  const visible = useListFilters('etapas', [...displayStages.values()], stageSchema);
+  const visible = useListFilters('etapas', [...displayStages.values()]
+    .map((stage) => materialBlocks ? withMaterialHold(stage, materialBlocks) : stage), stageSchema);
   const pop = pops.find((item) => item.id === editing?.popId);
   const review = editing ? linkedPopChecklist(editing, pop) : undefined;
 
+  const waitingForMaterial = Boolean(editing && materialBlocks?.has(editing.id));
   async function save(complete: boolean) {
-    if (!editing) return;
+    if (!editing || (complete && waitingForMaterial)) return;
     setError(''); setFeedback('');
     const progressPct = Number(progress);
     if (!progress.trim() || !Number.isFinite(progressPct) || progressPct < 0 || progressPct > 100) {
@@ -358,7 +361,7 @@ export function FieldStages({ uid, project, stages, pops, stageSchema, projects,
             {pending.some((job) => job.stageId === stage.id) && <p className="text-xs font-medium text-[#704509]">Atualização na fila do aparelho</p>}
             <button type="button" className={secondary + ' justify-self-start'} onClick={() => {
               const fields = getFieldStageFields(stage);
-              setEditing(stage); setProgress(String(fields.progressPct)); setMaterial(fields.materialExpectedDate);
+              setEditing(displayStages.get(stage.id) ?? stage); setProgress(String(fields.progressPct)); setMaterial(fields.materialExpectedDate);
               setChecklist(fields.checklistCompleted); setError(''); setFeedback('');
             }}>Atualizar etapa</button>
           </li>)}
@@ -368,7 +371,7 @@ export function FieldStages({ uid, project, stages, pops, stageSchema, projects,
         <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); void save(false); }}>
           <label className="grid gap-1 text-sm font-semibold">Progresso (%)
             <input type="number" inputMode="decimal" min={0} max={100} step="any" className={input}
-              value={progress} onChange={(event) => setProgress(event.target.value)} disabled={editing?.status === 'Concluída'} />
+              value={progress} onChange={(event) => setProgress(event.target.value)} disabled={waitingForMaterial || editing?.status === 'Concluída'} />
           </label>
           <label className="grid gap-1 text-sm font-semibold">Data prometida do material do cliente
             <input type="date" className={input} value={material} onChange={(event) => setMaterial(event.target.value)} />
@@ -384,11 +387,12 @@ export function FieldStages({ uid, project, stages, pops, stageSchema, projects,
             ))}
           </fieldset>}
           {editing?.popId && !review && <p className="text-sm text-[#704509]">Checklist do POP indisponível no aparelho.</p>}
+          {waitingForMaterial && <p className="text-sm text-[#8A5200]">Etapa aguardando material do cliente. Confira os itens em atraso na aba Materiais do cliente.</p>}
           <RegisteredBySelect id="field-stage-actor" value={actor} onChange={setActor} />
           {error && <p role="alert" className="text-sm text-[#B42318]">{error}</p>}
           <div className="flex flex-wrap justify-end gap-2">
             <button type="submit" className={secondary} disabled={saving}>{saving ? 'Salvando...' : 'Salvar atualização'}</button>
-            {editing?.status !== 'Concluída' && <button type="button" className={primary} disabled={saving} onClick={() => void save(true)}>
+            {editing?.status !== 'Concluída' && <button type="button" className={primary} disabled={saving || waitingForMaterial} onClick={() => void save(true)}>
               Marcar como concluída
             </button>}
           </div>

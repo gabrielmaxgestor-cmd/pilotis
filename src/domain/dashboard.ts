@@ -1,3 +1,4 @@
+import { weeksToCalendarDays } from './customerMaterials';
 import type { PilotisDataState, Project, Quote } from '../types/pilotis';
 import { addDaysISO, addMonthsISO, formatMonthLabelBR, isValidISODate, monthKey } from './formatters';
 import {
@@ -64,14 +65,14 @@ export function calcularPainelDashboard(data: PilotisDataState, referenceDate = 
   const lateStages = new Map<string, number>();
   const work = data.projects.filter(isActiveProject).map((project) => {
     const stages = data.stages.filter((stage) => stage.projectId === project.id);
-    const schedule = getProjectSchedule(project, stages, referenceDate);
+    const schedule = getProjectSchedule(project, stages, referenceDate, data.customerMaterials);
     const dates = projectDates(project, schedule.forecastEndDate);
     const window: ContractWindow = { start: dates.start, end: dates.end && dates.end >= referenceDate ? dates.end : null };
     if (!schedule.criticalPath.cicloDetectado && schedule.todayWeek !== null) {
       for (const stage of stages) {
         const plannedEnd = schedule.details.get(stage.id)?.terminoMaisCedo;
         if (stage.status === 'Concluída' || plannedEnd === undefined) continue;
-        const delay = Math.round(schedule.todayWeek * 7) - Math.ceil(plannedEnd * 7);
+        const delay = Math.round(schedule.todayWeek * 7) - weeksToCalendarDays(plannedEnd);
         if (delay > 0) lateStages.set(stage.id, delay);
       }
     }
@@ -81,7 +82,7 @@ export function calcularPainelDashboard(data: PilotisDataState, referenceDate = 
       progress: calcularProgressoObra(project.id, stages),
       nextStage: schedule.nextStage?.name,
       completion: dates.end,
-      delayedStagesCount: stages.filter((stage) => stage.status !== 'Concluída' && (lateStages.has(stage.id) || stage.delayJustification)).length,
+      delayedStagesCount: stages.filter((stage) => stage.status !== 'Concluída' && (lateStages.has(stage.id) || stage.delayJustification || schedule.materials.blockedStages.has(stage.id))).length,
     };
   });
 

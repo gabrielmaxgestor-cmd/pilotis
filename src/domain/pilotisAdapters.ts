@@ -1,3 +1,5 @@
+import { materialScheduleRows, materialStartConstraints, weeksToCalendarDays, withMaterialHold } from './customerMaterials';
+import type { CustomerMaterial } from '../types/pilotis';
 import { effectiveTransactions } from './recordLifecycle';
 import type {
   CompanySettings,
@@ -509,9 +511,9 @@ export function calcularResumoDividas(debts: Debt[]): ResumoDividasResult {
 }
 
 export function calcularCaminhoCriticoObra(
-  stages: ProjectStage[],
+  stages: ProjectStage[], minimumStart?: ReadonlyMap<string, number>,
 ): CaminhoCriticoResult {
-  return caminhoCritico(toDomainStages(stages));
+  return caminhoCritico(toDomainStages(stages), minimumStart);
 }
 
 export function calcularCurvaSObra(
@@ -519,8 +521,9 @@ export function calcularCurvaSObra(
   semanaReferencia?: number,
   baseline?: ScheduleBaseline,
   includePoints = true,
+  schedulePath?: CaminhoCriticoResult,
 ): CurvaSResult {
-  const schedule = calcularCaminhoCriticoObra(stages);
+  const schedule = schedulePath ?? calcularCaminhoCriticoObra(stages);
   const starts = new Map(schedule.detalhes.map((item) => [item.etapaId, item.inicioMaisCedo]));
   return curvaS(
     toDomainStages(stages).map((stage) => ({
@@ -589,7 +592,19 @@ export function calcularAlertasSistema(
   const { obrigacoes, certidoes } = toDomainComplianceCollections(
     data.complianceItems,
   );
-  return alertas(
+  const materialAlerts: AlertaDominio[] = data.projects.flatMap((project) => {
+    if (project.status === 'Concluída' || project.archive) return [];
+    const items = (data.customerMaterials ?? []).filter((row) => row.projectId === project.id);
+    if (!items.length) return [];
+    const stages = data.stages.filter((stage) => stage.projectId === project.id);
+    const { materials } = getProjectSchedule(project, stages, dataReferencia, items);
+    return materials.rows.filter((row) => row.status === 'Atrasado' && row.stage?.status !== 'Concluída').map((row) => ({
+      id: 'customer-material-' + row.item.id, nivel: row.critical ? 'Urgente' : 'Atenção',
+      categoria: 'material', modulo: 'planning', obraId: project.id, referenciaId: row.item.id,
+      mensagem: 'Material do cliente em atraso · ' + row.item.description + ' · ' + project.name,
+    }));
+  });
+  return [...materialAlerts, ...alertas(
     {
       lancamentos: toDomainTransactions(data.transactions),
       parcelas: toDomainInstallments(data.installments),
@@ -605,7 +620,7 @@ export function calcularAlertasSistema(
       forecast: options.forecast ?? calcularPrevisaoCaixa(data, 5, dataReferencia),
       lateStages: options.lateStages,
     },
-  );
+  )];
 }
 
 export function conciliarExtratoPilotis(
@@ -650,10 +665,14 @@ export function planningTodayISO(date = new Date()): string {
   return planningDateFormatter.format(date);
 }
 
-export function getProjectSchedule(project: Project, stages: ProjectStage[], referenceDate = planningTodayISO()) {
-  const criticalPath = calcularCaminhoCriticoObra(stages);
+export function getProjectSchedule(project: Project, stages: ProjectStage[], referenceDate = planningTodayISO(),
+  customerMaterials: readonly CustomerMaterial[] = []) {
+  const originalPath = calcularCaminhoCriticoObra(stages);
+  const limits = materialStartConstraints(project, stages, customerMaterials, referenceDate);
+  const criticalPath = limits.size ? calcularCaminhoCriticoObra(stages, limits) : originalPath;
+  const materials = materialScheduleRows(project, stages, customerMaterials, referenceDate, criticalPath, originalPath);
   const details = new Map(criticalPath.detalhes.map((detail) => [detail.etapaId, detail]));
-  const ordered = [...stages].sort((a, b) =>
+  const ordered = stages.map((stage) => withMaterialHold(stage, materials.blockedStages)).sort((a, b) =>
     (details.get(a.id)?.inicioMaisCedo ?? a.startWeek) - (details.get(b.id)?.inicioMaisCedo ?? b.startWeek)
     || a.wbsCode.localeCompare(b.wbsCode, 'pt-BR', { numeric: true }));
   const pending = ordered.filter((stage) => stage.status !== 'Concluída');
@@ -663,14 +682,14 @@ export function getProjectSchedule(project: Project, stages: ProjectStage[], ref
     ?? pending[0];
   const elapsedDays = diffDaysISO(referenceDate, project.startDate);
   const forecastEndDate = stages.length && !criticalPath.cicloDetectado && elapsedDays !== null
-    ? addDaysISO(project.startDate, Math.ceil(criticalPath.duracaoTotal * 7))
+    ? addDaysISO(project.startDate, weeksToCalendarDays(criticalPath.duracaoTotal))
     : null;
   const milestones = pending.filter((stage) => stage.isMilestone && details.has(stage.id)).map((stage) => ({
     stage,
-    date: elapsedDays === null ? null : addDaysISO(project.startDate, Math.ceil(details.get(stage.id)!.terminoMaisCedo * 7)),
+    date: elapsedDays === null ? null : addDaysISO(project.startDate, weeksToCalendarDays(details.get(stage.id)!.terminoMaisCedo)),
   })).sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''));
   const todayWeek = elapsedDays === null ? null : elapsedDays / 7;
-  return { criticalPath, details, nextStage, milestones, forecastEndDate, todayWeek, referenceWeek: Math.max(0, todayWeek ?? 0) };
+  return { criticalPath, details, materials, nextStage, milestones, forecastEndDate, todayWeek, referenceWeek: Math.max(0, todayWeek ?? 0) };
 }
 
 export function getScheduleBaselineStages(

@@ -1,3 +1,4 @@
+import { weeksToCalendarDays } from './customerMaterials';
 import type { ModuleKey, PilotisDataState } from '../types/pilotis';
 import { resolverStatusConformidade } from './conformidade';
 import { deduplicarReceitasEParcelas, resolverStatusDivida, resolverStatusLancamento, resolverStatusParcela } from './financeiro';
@@ -132,7 +133,7 @@ export function buildAgendaEvents(data: PilotisDataState, today = planningTodayI
   }
   for (const project of data.projects) {
     const stages = stagesByProject.get(project.id) ?? [];
-    const schedule = stages.length ? getProjectSchedule(project, stages, today) : undefined;
+    const schedule = stages.length ? getProjectSchedule(project, stages, today, data.customerMaterials) : undefined;
     const delivery = project.status === 'Concluída' && isValidISODate(project.closureDate) ? project.closureDate
       : schedule?.forecastEndDate || project.forecastEndDate || project.baselineEndDate;
     add({ id: 'delivery-' + project.id, type: 'milestone', title: 'Entrega · ' + project.name, start: delivery,
@@ -143,11 +144,18 @@ export function buildAgendaEvents(data: PilotisDataState, today = planningTodayI
       const target = planning(project.id, 'Cronograma', stage.id);
       if (finish !== undefined && Number.isFinite(finish) && !schedule?.criticalPath.cicloDetectado && isValidISODate(project.startDate)) {
         add({ id: 'stage-' + stage.id, type: stage.isMilestone ? 'milestone' : 'stage',
-          title: label, start: addDaysISO(project.startDate, Math.ceil(finish * 7)),
+          title: label, start: addDaysISO(project.startDate, weeksToCalendarDays(finish)),
           projectId: project.id, status: stage.status, target });
       }
       add({ id: 'material-' + stage.id, type: 'material', title: 'Material · ' + label, start: stage.materialExpectedDate,
         projectId: project.id, status: stage.status, target });
+    }
+    for (const { item, necessaryDate, status } of schedule?.materials.rows ?? []) {
+      const target = planning(project.id, 'Materiais do cliente', item.id);
+      if (necessaryDate) add({ id: 'material-needed-' + item.id, type: 'material', title: 'Material necessário · ' + item.description,
+        start: necessaryDate, projectId: project.id, status, target });
+      if (item.promisedDate !== necessaryDate) add({ id: 'material-promised-' + item.id, type: 'material',
+        title: 'Entrega prometida · ' + item.description, start: item.promisedDate, projectId: project.id, status, target });
     }
     const warranty = getWarrantyWindow(project, today);
     if (warranty) add({ id: 'warranty-' + project.id, type: 'warranty', title: 'Fim da garantia · ' + project.name,

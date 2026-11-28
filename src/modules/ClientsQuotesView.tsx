@@ -2033,6 +2033,8 @@ export function ClientsQuotesView({
         uid={uid}
         projects={data.projects}
         complianceItems={data.complianceItems}
+        customerMaterials={data.customerMaterials}
+        stages={data.stages}
         installmentsCountByProject={installmentsCountByProject}
         onNavigateToPlanning={onProjectCreated}
         onNavigateToReceivables={onNavigateToReceivables}

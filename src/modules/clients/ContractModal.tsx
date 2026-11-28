@@ -1,3 +1,5 @@
+import { PurchasingScheduleButton } from '../../components/ui/PurchasingScheduleButton';
+import { getProjectSchedule, planningTodayISO } from '../../domain/pilotisAdapters';
 import { useEffect, useMemo, useState } from 'react';
 import { CompanyPdfHeader } from '../../components/ui/CompanyPdfHeader';
 import {
@@ -16,6 +18,8 @@ import type {
   CompanySettings,
   ComplianceItem,
   ContractSignStatus,
+  CustomerMaterial,
+  ProjectStage,
   Project,
   Quote,
 } from '../../types/pilotis';
@@ -46,6 +50,8 @@ export function ContractModal({
   uid,
   projects = [],
   complianceItems = [],
+  customerMaterials = [],
+  stages = [],
   installmentsCountByProject,
   onNavigateToPlanning,
   onNavigateToReceivables,
@@ -59,6 +65,8 @@ export function ContractModal({
   uid: string;
   projects?: Project[];
   complianceItems?: ComplianceItem[];
+  customerMaterials?: CustomerMaterial[];
+  stages?: ProjectStage[];
   installmentsCountByProject?: Map<string, number>;
   onNavigateToPlanning?: (projectId: string) => void;
   onNavigateToReceivables?: () => void;
@@ -117,6 +125,9 @@ export function ContractModal({
     );
   }, [quote, projects]);
 
+  const purchaseRows = open && linkedProject && customerMaterials.some((item) => item.projectId === linkedProject.id)
+    ? getProjectSchedule(linkedProject, stages.filter((stage) => stage.projectId === linkedProject.id),
+      planningTodayISO(), customerMaterials).materials.rows : [];
   const projectChecklist = useMemo(() => {
     if (!linkedProject) return [];
     return complianceItems.filter(
@@ -505,6 +516,9 @@ export function ContractModal({
                 <Button variant={linkedProject?.contractPdf ? 'secondary' : 'primary'} fullWidth onClick={() => window.print()}>
                     Imprimir / Salvar PDF
                   </Button>
+
+                  {linkedProject && purchaseRows.length > 0 && <PurchasingScheduleButton rows={purchaseRows}
+                    projectId={linkedProject.id} projectName={linkedProject.name} companyName={settings?.companyName} contractCode={quote.code} />}
 
                   <form onSubmit={handleSaveSignStatus} className="flex flex-col gap-3 pt-2 border-t border-[#F0EEE9]">
                     <Select

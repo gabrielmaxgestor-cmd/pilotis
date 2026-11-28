@@ -5,7 +5,7 @@ import {
 } from '../domain';
 import type { ModuleKey, PilotisDataState } from '../types/pilotis';
 
-type Navigate = (module: ModuleKey, subTab?: string) => void;
+type Navigate = (module: ModuleKey, subTab?: string, params?: Record<string, string>) => void;
 type Dashboard = ReturnType<typeof calcularPainelDashboard>;
 
 const panel = 'grid min-w-0 content-start gap-4 rounded-xl border border-[#E4E1DA] bg-white p-4 sm:p-5';
@@ -130,6 +130,7 @@ function alertDestination(alert: AlertaDominio) {
     case 'tributo': return alert.id.startsWith('tax-debt-') ? 'Dívidas e crédito' : 'A pagar';
     case 'certidao': return 'Certidões';
     case 'garantia': return 'Pós-obra';
+    case 'material': return 'Materiais do cliente';
     case 'treinamento': return 'Segurança e capacitação';
     case 'vencimento':
       if (alert.modulo === 'compliance') return 'Obrigações';
@@ -184,7 +185,8 @@ export function DashboardView({
               : <ul className="grid gap-1">
                 {alerts.map((alert) => <li key={alert.id}>
                   <button type="button" className={'flex w-full flex-wrap items-start gap-x-2 gap-y-1 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-[#F6F5F2] ' + focus}
-                    onClick={() => onNavigate(alert.modulo, alertDestination(alert))}>
+                    onClick={() => onNavigate(alert.modulo, alertDestination(alert), alert.obraId
+                      ? { 'planning.obra': alert.obraId, registro: alert.referenciaId ?? '' } : undefined)}>
                     <StatusBadge label={alert.nivel} /><span className="min-w-0 flex-1 break-words">{alert.mensagem}</span>
                   </button>
                 </li>)}

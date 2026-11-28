@@ -78,8 +78,9 @@ function Fixture() {
       downPaymentPct: 40, installmentsCount: 1, probabilityPct: 50, status: 'Em negociação', discardReason: '', projectId: '',
     }],
   };
+  const fromMaterials = params.get('materials') === 'delayed';
   const fromAgenda = params.get('agenda') === 'events';
-  const agendaData: PilotisDataState = fromAgenda ? {
+  const agendaData: PilotisDataState = fromAgenda || fromMaterials ? {
     ...planningData,
     projects: [...planningData.projects, {
       ...planningData.projects[0], id: 'closed', name: 'Obra encerrada', status: 'Concluída',
@@ -113,6 +114,17 @@ function Fixture() {
       competence: '2026-11', dueDate: '2026-11-27', issuedDate: '', fileName: '', mandatory: true, status: 'Pendente', notes: '',
     }],
   } : data;
+  const materialsData: PilotisDataState = fromMaterials ? {
+    ...planningData,
+    projects: [{ ...planningData.projects[0], planningStatus: 'Cronograma criado' }],
+    stages: [{ ...agendaData.stages[0], status: 'A fazer', materialExpectedDate: '' }],
+    customerMaterials: [{
+      id: 'material-fixture', ownerUid: 'browser-test', createdBy: 'Sócio', updatedBy: 'Sócio',
+      projectId: 'construction', stageId: 'agenda-stage', auditId: 'fixture-audit',
+      description: 'Tubos hidráulicos', quantity: 12, unit: 'm', leadDays: 2, promisedDate: '2026-12-02',
+      deliveredDate: '', status: 'Comprado', clientContact: 'Contato do cliente', notes: '',
+    }],
+  } : data;
   const finance = fromAgenda ? agendaData : params.get('finance') === 'charts' ? chartData : params.get('finance') === 'empty' ? data : financeData;
   const title = route === 'financial' ? 'Financeiro' : route === 'planning' ? 'Obras'
      : route === 'settings' ? 'Configurações' : route === 'agenda' ? 'Agenda' : route === 'more' ? 'Mais' : 'Dashboard';
@@ -122,7 +134,7 @@ function Fixture() {
       <MobileTopBar onSearch={showSearch} title={title} onGoHome={() => navigate('dashboard')} onGoMore={() => navigate('more')} />
       <main id="main-content" tabIndex={-1} className="flex-1 min-w-0 px-4 py-4 pb-24 md:px-8 md:py-6 md:pb-8 max-w-[1360px]">
         <div className="hidden md:flex md:justify-end"><SearchButton onClick={showSearch} /></div>
-        {route === 'dashboard' && <DashboardView data={data} onNavigate={navigate}
+        {route === 'dashboard' && <DashboardView data={materialsData} onNavigate={navigate}
           onOpenProject={noAction} onOpenNewTransaction={() => { navigate('financial'); setNewExpense(true); }}
           onOpenNewQuote={noAction} />}
         {route === 'more' && <MaisView onSelect={navigate} onLogout={noAction} />}
@@ -130,7 +142,7 @@ function Fixture() {
         {route === 'compliance' && <ComplianceView uid="browser-test" data={agendaData} />}
         {route === 'financial' && <FinancialView uid="browser-test" data={finance} externalNewTxOpen={newExpense}
           onCloseExternalNewTx={() => setNewExpense(false)} />}
-        {route === 'planning' && <ProjectPlanningView uid="browser-test" data={fromAgenda ? agendaData : planningData}
+        {route === 'planning' && <ProjectPlanningView uid="browser-test" data={fromMaterials ? materialsData : fromAgenda ? agendaData : planningData}
           selectedProjectId={fromAgenda ? params.get('planning.obra') ?? '' : 'construction'} onSelectProject={noAction} />}
         {route === 'settings' && <SettingsView uid="browser-test" data={data} initialTab="Importar dados" />}
       </main>

@@ -1,3 +1,5 @@
+import { ProjectMaterialsView } from './ProjectMaterialsView';
+import { weeksToCalendarDays, withMaterialHold } from '../domain/customerMaterials';
 import { RecordLifecycleButton } from '../components/ui/ArchivedRecords';
 import { useEffect, useMemo, useState } from 'react';
 import { ListToolbar, useListFilters } from '../components/ui/ListFilters';
@@ -66,6 +68,7 @@ const PLAN_TABS = [
   'EAP',
   'Cronograma',
   'Kanban',
+  'Materiais do cliente',
   'Recursos',
   'Riscos',
   'Diário de obra',
@@ -203,20 +206,22 @@ export function ProjectPlanningView({
 
   const scheduleDate = planningTodayISO();
   const schedule = useMemo(
-    () => activeProject ? getProjectSchedule(activeProject, projectStages, scheduleDate) : null,
-    [activeProject, projectStages, scheduleDate],
+    () => activeProject ? getProjectSchedule(activeProject, projectStages, scheduleDate, data.customerMaterials) : null,
+    [activeProject, projectStages, scheduleDate, data.customerMaterials],
   );
+  const visibleProjectStages = useMemo(() => schedule
+    ? projectStages.map((stage) => withMaterialHold(stage, schedule.materials.blockedStages))
+    : projectStages, [projectStages, schedule]);
   const originalBaseline = data.baselines?.find((baseline) => baseline.projectId === activeProject?.id && baseline.version === 1);
   const criticalIds = new Set(schedule?.criticalPath.etapasCriticas ?? []);
   const stageDeadline = (stage: ProjectStage) => isValidISODate(activeProject?.startDate)
-    ? addDaysISO(activeProject.startDate, Math.ceil((schedule?.details.get(stage.id)?.terminoMaisCedo
-      ?? stage.startWeek + stage.durationWeeks) * 7)) : '';
+    ? addDaysISO(activeProject.startDate, weeksToCalendarDays(schedule?.details.get(stage.id)?.terminoMaisCedo ?? stage.startWeek + stage.durationWeeks)) : '';
   const stageSchema: ListSchema<ProjectStage> = {
     text: (row) => [row.wbsCode, row.name, row.phase, row.deliverable, row.responsible,
       data.pops.find((pop) => pop.id === row.popId)?.title],
     status: (row) => row.status, projects: (row) => row.projectId, dates: stageDeadline,
     interval: (row) => isValidISODate(activeProject?.startDate) ? [
-      addDaysISO(activeProject.startDate, Math.floor((schedule?.details.get(row.id)?.inicioMaisCedo ?? row.startWeek) * 7)),
+      addDaysISO(activeProject.startDate, weeksToCalendarDays(schedule?.details.get(row.id)?.inicioMaisCedo ?? row.startWeek)),
       stageDeadline(row),
     ] : undefined,
     columns: [
@@ -230,12 +235,12 @@ export function ProjectPlanningView({
       { key: 'status', label: 'Situação', value: (row) => row.status },
     ],
   };
-  const linkedStage = tab === 'Cronograma' ? projectStages.find((stage) => stage.id === recordId) : undefined;
-  const stages = useListFilters('etapas', projectStages, stageSchema);
+  const linkedStage = tab === 'Cronograma' ? visibleProjectStages.find((stage) => stage.id === recordId) : undefined;
+  const stages = useListFilters('etapas', visibleProjectStages, stageSchema);
   const projectProgress = activeProject ? calcularProgressoObra(activeProject.id, projectStages) : null;
   const curvaSData = useMemo(() => calcularCurvaSObra(
-    projectStages, schedule?.referenceWeek, originalBaseline, tab === 'Visão geral',
-  ), [projectStages, schedule?.referenceWeek, originalBaseline, tab]);
+    projectStages, schedule?.referenceWeek, originalBaseline, tab === 'Visão geral', schedule?.criticalPath,
+  ), [projectStages, schedule?.referenceWeek, originalBaseline, tab, schedule?.criticalPath]);
   const progressObservations = activeProject && tab === 'Visão geral' && curvaSData.possuiDados
     ? getRecordedScheduleProgress(activeProject, data.scheduleProgress ?? [], scheduleDate, curvaSData.progressoRealizadoPct)
     : [];
@@ -278,7 +283,8 @@ export function ProjectPlanningView({
     setStageModalOpen(true);
   }
 
-  function openEditStage(st: ProjectStage) {
+  function openEditStage(selected: ProjectStage) {
+    const st = projectStages.find((stage) => stage.id === selected.id) ?? selected;
     setEditingStage(st);
     setStWbs(st.wbsCode);
     setStPhase(st.phase);
@@ -401,7 +407,7 @@ export function ProjectPlanningView({
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
                 {filteredProjects.map((project) => {
                   const stages = data.stages.filter((stage) => stage.projectId === project.id);
-                  const next = getProjectSchedule(project, stages).nextStage;
+                  const next = getProjectSchedule(project, stages, scheduleDate, data.customerMaterials).nextStage;
                   const progress = calcularProgressoObra(project.id, stages);
                   const dre = calcularDreObra(project, data.transactions, stages);
                   return (
@@ -796,13 +802,16 @@ export function ProjectPlanningView({
           )}
 
           {tab === 'Kanban' && schedule && (
-            <ProjectKanban key={activeProject.id} uid={uid} project={activeProject} stages={projectStages} visibleStages={stages.rows.filter((stage) => !selectedPhase || stage.phase === selectedPhase)} data={data} schedule={schedule} onEdit={openEditStage} />
+            <ProjectKanban key={activeProject.id} uid={uid} project={activeProject} stages={visibleProjectStages} visibleStages={stages.rows.filter((stage) => !selectedPhase || stage.phase === selectedPhase)} data={data} schedule={schedule} onEdit={openEditStage} />
+          )}
+          {tab === 'Materiais do cliente' && schedule && (
+            <ProjectMaterialsView key={activeProject.id} uid={uid} project={activeProject} stages={projectStages} schedule={schedule} data={data} />
           )}
           {tab === 'Recursos' && (
             <ProjectResources key={activeProject.id} uid={uid} project={activeProject} stages={projectStages} data={data} />
           )}
           {tab === 'Riscos' && schedule && (
-            <ProjectRisks key={activeProject.id} uid={uid} project={activeProject} stages={projectStages} data={data} schedule={schedule} onEdit={openEditStage} onSchedule={() => setTab('Cronograma')} />
+            <ProjectRisks key={activeProject.id} uid={uid} project={activeProject} stages={visibleProjectStages} data={data} schedule={schedule} onEdit={openEditStage} onSchedule={() => setTab('Cronograma')} />
           )}
 
           {tab === 'Diário de obra' && (
@@ -810,7 +819,7 @@ export function ProjectPlanningView({
           )}
           {tab === 'Etapas em campo' && (
             <FieldStages key={activeProject.id} uid={uid} project={activeProject} stages={projectStages} pops={data.pops}
-              stageSchema={stageSchema} projects={data.projects} onSelectProject={onSelectProject} />
+              stageSchema={stageSchema} projects={data.projects} onSelectProject={onSelectProject} materialBlocks={schedule?.materials.blockedStages} />
           )}
 
           {tab === 'Encerramento' && (
@@ -969,6 +978,7 @@ export function ProjectPlanningView({
         title={linkedStage ? 'Etapa · ' + linkedStage.name : 'Etapa'}>
         {linkedStage && <div className="grid gap-3 text-sm">
           <StatusBadge label={linkedStage.status} />
+          {schedule?.materials.blockedStages.has(linkedStage.id) && <p>Categoria do atraso · Material do cliente</p>}
           <dl className="grid gap-2 sm:grid-cols-2">
             <div><dt>Obra</dt><dd>{activeProject?.name}</dd></div>
             <div><dt>Código EAP</dt><dd>{linkedStage.wbsCode}</dd></div>

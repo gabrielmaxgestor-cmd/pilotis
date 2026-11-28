@@ -52,6 +52,28 @@ for (const width of [390, 1440]) {
       await checkAccessibility(page);
     });
 
+    test('Material em atraso bloqueia a etapa, atualiza o prazo e exporta o anexo', async ({ page }) => {
+      await page.clock.setFixedTime(new Date('2026-11-27T12:00:00Z'));
+      await page.goto('/tests/browser/index.html?materials=delayed');
+      await page.getByRole('button', { name: /Material do cliente em atraso.*Tubos hidráulicos/ }).click();
+      const item = page.getByRole('dialog', { name: 'Tubos hidráulicos' });
+      await expect(item.getByText('Atrasado', { exact: true })).toBeVisible();
+      await expect(item.getByText('25/11/2026', { exact: true })).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(item).toHaveCount(0);
+      const downloadEvent = page.waitForEvent('download');
+      await page.getByRole('button', { name: /Cronograma de compras em PDF/ }).click();
+      const download = await downloadEvent;
+      expect(download.suggestedFilename()).toBe('cronograma-compras-construction.pdf');
+      const bytes = await readFile(await download.path());
+      expect(bytes.subarray(0, 8).toString('ascii')).toBe('%PDF-1.4');
+      await page.getByRole('tab', { name: 'Kanban' }).click();
+      await expect(page.getByRole('region', { name: 'Aguardando', exact: true })
+        .getByRole('button', { name: /Alvenaria/ })).toBeVisible();
+      await page.getByRole('tab', { name: 'Cronograma' }).click();
+      await expect(page.getByText('11/12/2026', { exact: true }).first()).toBeVisible();
+    });
+
     test('Agenda filtra vencimentos, abre o registro e baixa somente os eventos selecionados', async ({ page }) => {
       await page.clock.setFixedTime(new Date('2026-11-27T12:00:00Z'));
       await page.goto('/tests/browser/index.html?agenda=events');

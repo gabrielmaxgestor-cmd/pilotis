@@ -1,3 +1,4 @@
+import { weeksToCalendarDays } from '../domain/customerMaterials';
 import { useState } from 'react';
 import { AlertNote, Modal, ProgressBar, RegisteredBySelect, StatusBadge } from '../components/ui/PilotisUI';
 import {
@@ -75,7 +76,7 @@ export function ProjectKanban({ uid, project, stages, visibleStages = stages, sc
                 {cards.length === 0 && <p className="text-xs text-[#5B6472]">Sem etapas nesta coluna.</p>}
                 {cards.map((stage) => {
                   const detail = schedule.details.get(stage.id);
-                  const deadline = detail && schedule.forecastEndDate ? addDaysISO(project.startDate, Math.ceil(detail.terminoMaisCedo * 7)) : null;
+                  const deadline = detail && schedule.forecastEndDate ? addDaysISO(project.startDate, weeksToCalendarDays(detail.terminoMaisCedo)) : null;
                   const people = data.employees.filter((employee) => {
                     const cell = resolveTeamWeek(employee, currentWeek, data);
                     return cell.allocation?.stageId === stage.id && !cell.vacation && !cell.conflict && cell.started;

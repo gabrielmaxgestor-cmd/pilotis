@@ -6,6 +6,7 @@ export interface CpmEtapaDetalhe {
   nome: string;
   duracaoSemanas: number;
   inicioMaisCedo: number;
+  inicioAntesDaRestricao?: number;
   terminoMaisCedo: number;
   inicioMaisTarde: number;
   terminoMaisTarde: number;
@@ -29,6 +30,7 @@ export function caminhoCritico(
       'id' | 'nome' | 'semanaInicio' | 'duracaoSemanas' | 'dependencias' | 'marco'
     >
   >,
+  minimumStart?: ReadonlyMap<string, number>,
 ): CaminhoCriticoResult {
   if (etapas.length === 0) {
     return {
@@ -116,6 +118,7 @@ export function caminhoCritico(
   }
 
   // 3. Passagem direta (Forward pass)
+  const availableStart = new Map<string, number>();
   const esMap = new Map<string, number>();
   const efMap = new Map<string, number>();
   const successorsMap = new Map<string, string[]>();
@@ -135,7 +138,9 @@ export function caminhoCritico(
     const etapa = byId.get(id)!;
     const deps = (etapa.dependencias ?? []).filter((d) => byId.has(d));
     const maxPredEF = deps.reduce((m, depId) => Math.max(m, efMap.get(depId) ?? 0), 0);
-    const es = Math.max(etapa.semanaInicio || 0, maxPredEF);
+    const start = Math.max(etapa.semanaInicio || 0, maxPredEF);
+    if (minimumStart) availableStart.set(id, start);
+    const es = Math.max(start, minimumStart?.get(id) ?? 0);
     const dur = Math.max(0, etapa.duracaoSemanas || 0);
     const ef = es + dur;
     esMap.set(id, es);
@@ -183,6 +188,7 @@ export function caminhoCritico(
       nome: etapa.nome,
       duracaoSemanas: etapa.duracaoSemanas,
       inicioMaisCedo: es,
+      ...(minimumStart ? { inicioAntesDaRestricao: availableStart.get(etapa.id) } : {}),
       terminoMaisCedo: ef,
       inicioMaisTarde: ls,
       terminoMaisTarde: lf,

@@ -39,6 +39,7 @@ export function activePilotisData(data: PilotisDataState): PilotisDataState {
     projects: data.projects.filter((row) => !isArchived(row)),
     employees: data.employees.filter((row) => !isArchived(row)),
     stages: data.stages.filter(onActiveProject),
+    customerMaterials: data.customerMaterials?.filter(onActiveProject),
     allocations: data.allocations.filter((row) => onActiveProject(row) && !archivedEmployees.has(row.employeeId)),
     baselines: data.baselines?.filter(onActiveProject),
     scheduleProgress: data.scheduleProgress?.filter(onActiveProject),

@@ -176,7 +176,7 @@ service cloud.firestore {
         'ownerUid', 'name', 'type', 'contractValue', 'status', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
       ])
         && data.keys().hasOnly([
-          'ownerUid', 'name', 'quoteId', 'clientId', 'clientName', 'type', 'contractKind', 'planningStatus', 'scheduleRevision', 'scheduleBaselineVersion', 'scheduleStageIds', 'workInProgressLimit',
+          'ownerUid', 'name', 'quoteId', 'clientId', 'clientName', 'type', 'contractKind', 'planningStatus', 'scheduleRevision', 'scheduleBaselineVersion', 'scheduleStageIds', 'customerMaterialIds', 'workInProgressLimit',
           'contractValue', 'contractPdf', 'downPaymentPct', 'installmentsCount', 'addendaTotalValue',
           'budgetedLabor', 'budgetedSubcontract', 'budgetedEquipment', 'budgetedBdi', 'budgetedTax',
           'startDate', 'baselineEndDate', 'forecastEndDate', 'status', 'contractSigned',
@@ -707,7 +707,7 @@ service cloud.firestore {
         && notDeleted('projects', projectId)
         && validNewReference(incoming(), 'clients', 'clientId')
         && validNewReference(incoming(), 'quotes', 'quoteId')
-        && !incoming().keys().hasAny(['archive', 'archiveAuditId']) && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+        && !incoming().keys().hasAny(['archive', 'archiveAuditId', 'customerMaterialIds']) && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(projectId) && isSignedIn()
         && validChangedReference('clients', 'clientId')
         && validChangedReference('quotes', 'quoteId')
@@ -715,6 +715,11 @@ service cloud.firestore {
         && !('archive' in existing()) && !('archive' in incoming())
         && incoming().get('archiveAuditId', '') == existing().get('archiveAuditId', '')
         && isValidProject(incoming())
+        && (incoming().get('customerMaterialIds', []) == existing().get('customerMaterialIds', [])
+          || (incoming().customerMaterialIds is list
+            && incoming().customerMaterialIds.hasAll(existing().get('customerMaterialIds', []))
+            && existing().status != 'Concluída'
+            && incoming().scheduleRevision == existing().get('scheduleRevision', 0) + 1))
         && incoming().ownerUid == existing().ownerUid
         && incoming().createdAt == existing().createdAt
         && incoming().createdBy == existing().createdBy
@@ -859,6 +864,438 @@ service cloud.firestore {
         && incoming().get('baselineDurationWeeks', null) == existing().get('baselineDurationWeeks', incoming().get('baselineDurationWeeks', null))
         && incoming().get('baselineBudgetedCost', null) == existing().get('baselineBudgetedCost', incoming().get('baselineBudgetedCost', null));
       allow delete: if isValidId(stageId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+    }
+
+    function validMaterialDate(value) {
+      return value is string && (value == '' || value.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2} {
+      allow get: if isValidId(logId) && isSignedIn() && (resource == null || existing().ownerUid == request.auth.uid);
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(logId) && isSignedIn() && isValidDailyLog(incoming())
+        && validNewReference(incoming(), 'projects', 'projectId')
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
+        && get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.ownerUid == request.auth.uid;
+      allow update: if isValidId(logId) && isSignedIn() && isValidDailyLog(incoming())
+        && validChangedReference('projects', 'projectId')
+        && existing().ownerUid == request.auth.uid
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().projectId == existing().projectId
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(logId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+
+      match /photos/{photoId} {
+        allow get: if isValidId(photoId) && isOwner(existing().ownerUid)
+          && get(/databases/$(database)/documents/dailyLogs/$(logId)).data.ownerUid == request.auth.uid;
+        allow create: if isValidId(photoId) && isSignedIn()
+          && incoming().keys().hasOnly(['ownerUid', 'mimeType', 'content', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+          && hasAuditFields(incoming()) && incoming().createdAt == request.time && incoming().updatedAt == request.time
+          && incoming().mimeType == 'image/jpeg' && incoming().content is bytes
+          && incoming().content.size() > 0 && incoming().content.size() <= 393216
+          && getAfter(/databases/$(database)/documents/dailyLogs/$(logId)).data.ownerUid == request.auth.uid
+          && getAfter(/databases/$(database)/documents/dailyLogs/$(logId)).data.photoBackend == 'firestore'
+          && photoId in getAfter(/databases/$(database)/documents/dailyLogs/$(logId)).data.photoIds;
+      }
+    }
+
+    match /fieldSync/{operationId} {
+      allow get: if isValidId(operationId) && isSignedIn() && (resource == null || existing().ownerUid == request.auth.uid);
+      allow create: if isValidId(operationId) && isSignedIn()
+        && validNewReference(incoming(), 'projects', 'projectId')
+        && incoming().keys().hasOnly(['ownerUid', 'projectId', 'stageId', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+        && hasAuditFields(incoming()) && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && isValidId(incoming().projectId) && isValidId(incoming().stageId)
+        && getAfter(/databases/$(database)/documents/stages/$(incoming().stageId)).data.projectId == incoming().projectId
+        && getAfter(/databases/$(database)/documents/stages/$(incoming().stageId)).data.ownerUid == request.auth.uid;
+    }
+
+    function isReversalReason(value) {
+      return isValidNonEmptyStr(value, 200) && value.trim().size() > 0;
+    }
+
+    function hasReversalFields(data) {
+      return data.status in ['Estorno', 'Estornado']
+        || data.keys().hasAny(['reversalId', 'reversalOfId', 'reversalReason', 'reversalAuditId']);
+    }
+
+    function receiptRestoration(installmentId) {
+      let auditId = incoming().get('receiptReversalAuditId', '');
+      let linked = existing().get('transactionId', '');
+      return existing().status == 'Recebida' && incoming().status == 'A vencer'
+        && incoming().receivedDate == '' && incoming().transactionId == ''
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'status', 'receivedDate', 'transactionId', 'receiptReversalAuditId', 'updatedAt', 'updatedBy'
+        ])
+        && isValidId(auditId) && currentAudit(auditId, 'parcelas', installmentId, incoming().updatedBy)
+        && isReversalReason(getAfter(/databases/$(database)/documents/auditLogs/$(auditId)).data.afterValue)
+        && (linked == '' || (
+          get(/databases/$(database)/documents/transactions/$(linked)).data.status == 'Recebido'
+          && getAfter(/databases/$(database)/documents/transactions/$(linked)).data.status == 'Estornado'
+          && getAfter(/databases/$(database)/documents/transactions/$(linked)).data.reversalAuditId == auditId
+        ));
+    }
+
+    function undoneReceiptMatches(installmentId, originalId, before, auditId) {
+      let parcel = get(/databases/$(database)/documents/parcelas/$(installmentId)).data;
+      let restored = getAfter(/databases/$(database)/documents/parcelas/$(installmentId)).data;
+      return parcel.ownerUid == request.auth.uid && parcel.status == 'Recebida' && parcel.transactionId == originalId
+        && before.status == 'Recebido' && before.entryKind == 'income' && before.isForecast == false
+        && before.projectId == parcel.projectId && before.get('installmentId', '') in ['', installmentId]
+        && restored.status == 'A vencer' && restored.receiptReversalAuditId == auditId;
+    }
+
+    function reversedDebtMatches(debtId, originalId, before) {
+      let debt = get(/databases/$(database)/documents/debts/$(debtId)).data;
+      let after = getAfter(/databases/$(database)/documents/debts/$(debtId)).data;
+      let unmodified = debtId == 'debt-' + originalId && debt.status == 'Em uso' && debt.principalBalance == before.amount;
+      return debt.ownerUid == request.auth.uid && (unmodified
+        ? after.status == 'Quitada' && after.principalBalance == 0 && after.updatedAt == request.time
+        : after == debt);
+    }
+
+    function validReversalUpdate(originalId, before, after) {
+      let inverseId = after.get('reversalId', '');
+      let auditId = after.get('reversalAuditId', '');
+      let inverse = getAfter(/databases/$(database)/documents/transactions/$(inverseId)).data;
+      let audit = getAfter(/databases/$(database)/documents/auditLogs/$(auditId)).data;
+      let debtId = before.get('debtId', '');
+      return !hasReversalFields(before) && after.status == 'Estornado' && isValidActor(after.updatedBy)
+        && after.diff(before).affectedKeys().hasOnly(['status', 'reversalId', 'reversalAuditId', 'reversalReason', 'updatedBy', 'updatedAt'])
+        && isValidId(inverseId) && isValidId(auditId)
+        && isReversalReason(after.reversalReason) && audit.afterValue == after.reversalReason
+        && inverse.status == 'Estorno' && inverse.reversalOfId == originalId && inverse.reversalAuditId == auditId
+        && inverse.createdAt == request.time
+        && (debtId == '' || reversedDebtMatches(debtId, originalId, before))
+        && ((audit.entityType == 'transactions' && before.get('installmentId', '') == ''
+          && currentAudit(auditId, 'transactions', originalId, after.updatedBy))
+          || (audit.entityType == 'parcelas' && isValidId(audit.entityId)
+            && currentAudit(auditId, 'parcelas', audit.entityId, after.updatedBy)
+            && undoneReceiptMatches(audit.entityId, originalId, before, auditId)));
+    }
+
+    function validInverse(txId, data) {
+      let originalId = data.get('reversalOfId', '');
+      let before = get(/databases/$(database)/documents/transactions/$(originalId)).data;
+      let after = getAfter(/databases/$(database)/documents/transactions/$(originalId)).data;
+      return data.status == 'Estorno' && isValidId(originalId) && isValidId(data.reversalAuditId)
+        && hasAuditFields(data) && isValidNonEmptyStr(data.description, 200)
+        && data.keys().hasOnly([
+          'ownerUid', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt',
+          'date', 'dueDate', 'description', 'entryKind', 'category', 'projectId', 'projectName',
+          'amount', 'isForecast', 'status', 'invoiceStatus', 'paymentMethod', 'reversalOfId', 'reversalAuditId'
+        ])
+        && before.ownerUid == request.auth.uid && !hasReversalFields(before)
+        && after.status == 'Estornado' && after.reversalId == txId && after.reversalAuditId == data.reversalAuditId
+        && after.updatedAt == request.time && data.createdBy == after.updatedBy && data.updatedBy == after.updatedBy
+        && data.amount == before.amount && data.entryKind == before.entryKind
+        && data.projectId == before.projectId && data.category == before.category
+        && data.date == before.date && data.isForecast == before.isForecast
+        && data.dueDate == (before.get('dueDate', '') == '' ? before.date : before.dueDate)
+        && data.projectName == before.get('projectName', '') && data.paymentMethod == before.get('paymentMethod', '')
+        && data.invoiceStatus == 'Não se aplica';
+    }
+
+    match /transactions/{txId} {
+      allow get: if isValidId(txId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(txId) && isSignedIn()
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && (incoming().status == 'Estorno'
+          ? validInverse(txId, incoming())
+          : isValidTransaction(incoming()) && !hasReversalFields(incoming())
+            && validNewReference(incoming(), 'projects', 'projectId')
+            && validNewReference(incoming(), 'quotes', 'quoteId')
+            && validNewReference(incoming(), 'employees', 'payrollEmployeeId'));
+      allow update: if isValidId(txId) && isOwner(existing().ownerUid)
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time
+        && (incoming().status == 'Estornado'
+          ? validReversalUpdate(txId, existing(), incoming())
+          : !hasReversalFields(existing()) && !hasReversalFields(incoming())
+            && (existing().isForecast || incoming().diff(existing()).affectedKeys().hasOnly(['invoiceStatus', 'updatedBy', 'updatedAt']))
+            && isValidTransaction(incoming())
+            && validChangedReference('projects', 'projectId')
+            && validChangedReference('quotes', 'quoteId')
+            && validChangedReference('employees', 'payrollEmployeeId'));
+      allow delete: if false;
+    }
+
+    match /debts/{debtId} {
+      allow get: if isValidId(debtId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(debtId) && isSignedIn() && isValidDebt(incoming())
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(debtId) && isSignedIn() && isValidDebt(incoming())
+        && existing().ownerUid == request.auth.uid
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(debtId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+    }
+
+    match /employees/{employeeId} {
+      allow get: if isValidId(employeeId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(employeeId) && isSignedIn() && isValidEmployee(incoming())
+        && notDeleted('employees', employeeId)
+        && validNewReference(incoming(), 'projects', 'currentProjectId')
+        && !incoming().keys().hasAny(['archive', 'archiveAuditId']) && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(employeeId) && isSignedIn()
+        && validChangedReference('projects', 'currentProjectId')
+        && existing().ownerUid == request.auth.uid
+        && !('archive' in existing()) && !('archive' in incoming())
+        && incoming().get('archiveAuditId', '') == existing().get('archiveAuditId', '')
+        && isValidEmployee(incoming())
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(employeeId) && isOwner(existing().ownerUid)
+        && archivalChange('employees', employeeId);
+      allow delete: if false;
+    }
+
+    match /employees/{employeeId}/occurrences/{occurrenceId} {
+      allow get: if isOwner(existing().ownerUid);
+      allow list: if isBoundedList() && isOwner(existing().ownerUid);
+      allow create: if isSignedIn() && isValidId(occurrenceId)
+        && get(/databases/$(database)/documents/employees/$(employeeId)).data.ownerUid == request.auth.uid
+        && incoming().keys().hasOnly(['ownerUid', 'kind', 'date', 'description', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+        && hasAuditFields(incoming())
+        && incoming().kind in ['Elogio', 'Registro', 'Advertência', 'Acidente', 'Quase acidente']
+        && isValidNonEmptyStr(incoming().date, 10)
+        && isValidNonEmptyStr(incoming().description, 1000)
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+    }
+
+    match /allocations/{allocationId} {
+      allow get: if isValidId(allocationId) && isSignedIn() && (resource == null || existing().ownerUid == request.auth.uid);
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(allocationId) && isSignedIn() && isValidAllocation(incoming())
+        && validNewReference(incoming(), 'projects', 'projectId')
+        && validNewReference(incoming(), 'employees', 'employeeId')
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/employees/$(incoming().employeeId))
+        && get(/databases/$(database)/documents/employees/$(incoming().employeeId)).data.ownerUid == request.auth.uid;
+      allow update: if isValidId(allocationId) && isSignedIn() && isValidAllocation(incoming())
+        && validChangedReference('projects', 'projectId')
+        && validChangedReference('employees', 'employeeId')
+        && existing().ownerUid == request.auth.uid
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().employeeId == existing().employeeId
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(allocationId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+    }
+
+    match /pops/{popId} {
+      allow get: if isValidId(popId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(popId) && isSignedIn() && isValidPop(incoming())
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(popId) && isSignedIn() && isValidPop(incoming())
+        && existing().ownerUid == request.auth.uid
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(popId) && isOwner(existing().ownerUid) && !('publicationNumber' in existing());
+    }
+
+
+    match /popVersions/{versionId} {
+      allow get: if isOwner(existing().ownerUid);
+      allow list: if isBoundedList() && isOwner(existing().ownerUid);
+      allow create: if isValidId(versionId) && isSignedIn() && hasAuditFields(incoming())
+        && incoming().keys().hasOnly(['ownerUid', 'popId', 'version', 'publicationNumber', 'title', 'serviceType',
+          'linkedStagePhase', 'objective', 'materialsAndEpi', 'tools', 'protectiveEquipment', 'steps', 'acceptanceCriteria',
+          'usedInOnboarding', 'attachments', 'approvedBy', 'publishedOn', 'changeSummary',
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+        && hasPopContent(incoming()) && hasPopApproval(incoming())
+        && isValidId(incoming().popId) && isValidNonEmptyStr(incoming().version, 20)
+        && incoming().publicationNumber is int && incoming().publicationNumber > 0
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && getAfter(/databases/$(database)/documents/pops/$(incoming().popId)).data.ownerUid == request.auth.uid;
+    }
+
+    match /popMediaChunks/{chunkId} {
+      allow get: if isValidId(chunkId) && isOwner(existing().ownerUid);
+      allow create: if isValidId(chunkId) && isSignedIn() && hasAuditFields(incoming())
+        && incoming().keys().hasOnly(['ownerUid', 'popId', 'attachmentId', 'index', 'content',
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+        && isValidId(incoming().popId) && isValidId(incoming().attachmentId)
+        && incoming().index is int && incoming().index >= 0 && incoming().index < 8
+        && incoming().content is bytes && incoming().content.size() > 0 && incoming().content.size() <= 655360
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && getAfter(/databases/$(database)/documents/pops/$(incoming().popId)).data.ownerUid == request.auth.uid;
+    }
+
+    match /complianceItems/{itemId} {
+      allow get: if isValidId(itemId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(itemId) && isSignedIn() && isValidComplianceItem(incoming(), itemId)
+        && validNewReference(incoming(), 'projects', 'projectId')
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(itemId) && isSignedIn() && isValidComplianceItem(incoming(), itemId)
+        && validChangedReference('projects', 'projectId')
+        && existing().ownerUid == request.auth.uid
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(itemId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+    }
+
+    match /complianceFiles/{attachmentId} {
+      allow get: if isValidId(attachmentId) && isOwner(existing().ownerUid);
+      allow create: if isValidId(attachmentId) && isSignedIn() && hasAuditFields(incoming())
+        && incoming().keys().hasOnly(['ownerUid', 'itemId', 'name', 'mimeType', 'content',
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && isValidId(incoming().itemId) && isValidNonEmptyStr(incoming().name, 160)
+        && incoming().mimeType in ['application/pdf', 'image/png', 'image/jpeg']
+        && incoming().content is bytes && incoming().content.size() > 0 && incoming().content.size() <= 716800
+        && getAfter(/databases/$(database)/documents/complianceItems/$(incoming().itemId)).data.ownerUid == request.auth.uid
+        && getAfter(/databases/$(database)/documents/complianceItems/$(incoming().itemId)).data.attachmentId == attachmentId;
+    }
+
+    match /tenders/{tenderId} {
+      allow get: if isValidId(tenderId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(tenderId) && isSignedIn() && isValidTender(incoming())
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(tenderId) && isSignedIn() && isValidTender(incoming())
+        && existing().ownerUid == request.auth.uid
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(tenderId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+    }
+
+    match /projectClosures/{projectId} {
+      allow get: if isOwner(existing().ownerUid);
+      allow list: if isBoundedList() && isOwner(existing().ownerUid);
+      allow create: if isValidId(projectId) && isSignedIn() && hasAuditFields(incoming())
+        && validNewReference(incoming(), 'projects', 'projectId')
+        && incoming().keys().hasOnly(['ownerUid', 'projectId', 'date', 'dre', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+        && incoming().projectId == projectId && isValidNonEmptyStr(incoming().date, 10)
+        && incoming().dre is map && incoming().dre.obraId == projectId
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && getAfter(/databases/$(database)/documents/projects/$(projectId)).data.ownerUid == request.auth.uid
+        && getAfter(/databases/$(database)/documents/projects/$(projectId)).data.status == 'Concluída'
+        && getAfter(/databases/$(database)/documents/projects/$(projectId)).data.closureDate == incoming().date;
+    }
+
+    function validFollowUp(data, projectId) {
+      return hasAuditFields(data) && data.projectId == projectId
+        && data.keys().hasOnly(['ownerUid', 'projectId', 'testimonialRequestedAt', 'referralRequestedAt',
+          'testimonial', 'referrals', 'marketingPhotos', 'authorizationNote', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+        && isValidStr(data.testimonialRequestedAt, 10) && isValidStr(data.referralRequestedAt, 10)
+        && isValidStr(data.testimonial, 3000) && isValidStr(data.referrals, 2000) && isValidStr(data.authorizationNote, 500)
+        && data.marketingPhotos is list && data.marketingPhotos.size() <= 100
+        && (data.marketingPhotos.size() == 0 || !data.authorizationNote.matches('^\\s*$'))
+        && getAfter(/databases/$(database)/documents/projects/$(projectId)).data.ownerUid == request.auth.uid
+        && getAfter(/databases/$(database)/documents/projects/$(projectId)).data.status == 'Concluída';
+    }
+
+    match /projectFollowUps/{projectId} {
+      allow get: if isValidId(projectId) && isSignedIn() && (resource == null || isOwner(existing().ownerUid));
+      allow list: if isBoundedList() && isOwner(existing().ownerUid);
+      allow create: if isValidId(projectId) && isSignedIn() && validFollowUp(incoming(), projectId)
+        && validNewReference(incoming(), 'projects', 'projectId')
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(projectId) && isOwner(existing().ownerUid) && validFollowUp(incoming(), projectId)
+        && validChangedReference('projects', 'projectId')
+        && incoming().createdAt == existing().createdAt && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time;
+    }
+
+    match /warrantyCalls/{callId} {
+      allow get: if isValidId(callId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(callId) && isSignedIn() && isValidWarrantyCall(incoming())
+        && validNewReference(incoming(), 'projects', 'projectId')
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
+        && get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.ownerUid == request.auth.uid
+        && get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.status == 'Concluída'
+        && isValidNonEmptyStr(incoming().openedDate, 10)
+        && isValidNonEmptyStr(incoming().deadlineDate, 10)
+        && isValidNonEmptyStr(get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.warrantyStartDate, 10);
+      allow update: if isValidId(callId) && isSignedIn() && isValidWarrantyCall(incoming())
+        && validChangedReference('projects', 'projectId')
+        && existing().ownerUid == request.auth.uid
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().projectId == existing().projectId
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdBy == existing().createdBy
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(callId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+    }
+
+    match /auditLogs/{logId} {
+      allow get: if isValidId(logId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow create: if isValidId(logId) && isSignedIn() && isValidAuditLog(incoming())
+        && incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+  }
+}
+));
+    }
+
+    function validCustomerMaterial(data) {
+      return data.keys().hasAll([
+        'ownerUid', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt', 'projectId', 'stageId', 'auditId',
+        'description', 'quantity', 'unit', 'leadDays', 'promisedDate', 'deliveredDate', 'status', 'clientContact', 'notes'
+      ])
+        && data.keys().hasOnly([
+          'ownerUid', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt', 'projectId', 'stageId', 'auditId',
+          'description', 'quantity', 'unit', 'leadDays', 'promisedDate', 'deliveredDate', 'status', 'clientContact', 'notes', 'templateKey'
+        ])
+        && hasAuditFields(data) && isValidId(data.projectId) && isValidId(data.stageId) && isValidId(data.auditId)
+        && isValidNonEmptyStr(data.description, 160)
+        && (data.quantity == null || (isValidNum(data.quantity) && data.quantity > 0))
+        && isValidStr(data.unit, 24) && data.leadDays is int && data.leadDays >= 0 && data.leadDays <= 3650
+        && data.status in ['A comprar', 'Comprado', 'Em transporte', 'Entregue']
+        && validMaterialDate(data.promisedDate) && validMaterialDate(data.deliveredDate)
+        && (data.status == 'Entregue' ? data.deliveredDate != '' : data.deliveredDate == '')
+        && isValidStr(data.clientContact, 140) && isValidStr(data.notes, 600)
+        && (!('templateKey' in data) || isValidId(data.templateKey));
+    }
+
+    function validMaterialMutation(materialId, data, action, previousStage) {
+      let project = getAfter(/databases/$(database)/documents/projects/$(data.projectId)).data;
+      let stage = getAfter(/databases/$(database)/documents/stages/$(data.stageId)).data;
+      let audit = getAfter(/databases/$(database)/documents/auditLogs/$(data.auditId)).data;
+      return project.ownerUid == request.auth.uid && project.status != 'Concluída' && !('archive' in project)
+        && project.updatedAt == request.time && project.customerMaterialIds.hasAny([materialId])
+        && stage.ownerUid == request.auth.uid && stage.projectId == data.projectId
+        && (stage.status != 'Concluída' || previousStage == data.stageId)
+        && audit.ownerUid == request.auth.uid && audit.createdAt == request.time
+        && audit.entityType == 'customerMaterials' && audit.entityId == materialId && audit.action == action
+        && audit.registeredBy == data.updatedBy && isValidNonEmptyStr(audit.afterValue, 500);
+    }
+
+    match /customerMaterials/{materialId} {
+      allow get: if isValidId(materialId) && isOwner(existing().ownerUid);
+      allow list: if isBoundedList() && isOwner(existing().ownerUid);
+      allow create: if isValidId(materialId) && isSignedIn() && validCustomerMaterial(incoming())
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && validMaterialMutation(materialId, incoming(), 'Criação', '');
+      allow update: if isValidId(materialId) && isOwner(existing().ownerUid) && validCustomerMaterial(incoming())
+        && incoming().projectId == existing().projectId && incoming().ownerUid == existing().ownerUid
+        && incoming().createdBy == existing().createdBy && incoming().createdAt == existing().createdAt
+        && incoming().get('templateKey', '') == existing().get('templateKey', '')
+        && incoming().updatedAt == request.time && validMaterialMutation(materialId, incoming(), 'Atualização', existing().stageId);
+      allow delete: if false;
     }
 
     match /dailyLogs/{logId} {
