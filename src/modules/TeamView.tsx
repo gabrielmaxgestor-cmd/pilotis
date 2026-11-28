@@ -34,6 +34,8 @@ import type {
   PilotisDataState,
 } from '../types/pilotis';
 import {
+  addDaysISO,
+  addMonthsISO,
   avaliarValidadeSst,
   calcularEncargosColaborador,
   calcularPendenciasSegurancaEquipe,
@@ -191,7 +193,11 @@ export function TeamView({
   const employeeStatus = (row: Employee) => {
     if (tab === 'Férias') return vacationStatus(row);
     if (tab === 'Segurança e capacitação') return safetyStatus(row);
-    if (tab === 'Alocação') return resolveTeamWeek(row, weeks[0] ?? todayStr, data).label;
+    if (tab === 'Alocação') {
+      const assignment = resolveTeamWeek(row, weeks[0] ?? todayStr, data);
+      if (assignment.conflict || assignment.vacation || !assignment.started || !assignment.project) return assignment.label;
+      return assignment.project.contractKind === 'Satélite' || assignment.project.type === 'Obra satélite' ? 'Satélite' : 'Obra';
+    }
     return row.employmentType;
   };
   const roster = useListFilters('equipe.' + normalizeSearch(tab).replace(/\W+/g, '-'), data.employees, {
@@ -202,7 +208,6 @@ export function TeamView({
       .filter((item) => !projectId || item.projectId === projectId).map((item) => item.weekStart)
       : tab === 'Segurança e capacitação' ? [row.asoExpiry, row.nr18Expiry, row.nr35Expiry, row.epiExpiry || '']
       : tab === 'Férias' ? [row.vacationStart || '', row.vacationEnd || '']
-      : tab === 'Folha e encargos' ? payrollMonth + '-01'
       : row.startDate || recordDay(row.createdAt),
     interval: (row) => tab === 'Férias' && row.vacationStart && row.vacationEnd
       ? [row.vacationStart, row.vacationEnd] : undefined,
@@ -229,9 +234,24 @@ export function TeamView({
     ],
   });
   const filteredEmployees = roster.rows;
-  const employeeOrder = new Map(filteredEmployees.map((employee, index) => [employee.id, index]));
-  const payrollRows = monthlyPayroll.lines.filter((row) => employeeOrder.has(row.employeeId))
-    .sort((a, b) => employeeOrder.get(a.employeeId)! - employeeOrder.get(b.employeeId)!);
+  const employeesById = new Map(data.employees.map((employee) => [employee.id, employee]));
+  const payrollStart = payrollMonth + '-01';
+  const payrollEnd = addDaysISO(addMonthsISO(payrollStart, 1), -1);
+  const payrollList = useListFilters('equipe.folha', monthlyPayroll.lines, {
+    text: (row) => [row.employeeName, row.projectName, row.category, employeesById.get(row.employeeId)?.role],
+    status: (row) => row.vacation ? 'Férias' : employeesById.get(row.employeeId)?.employmentType || 'Sem vínculo registrado',
+    projects: (row) => row.projectId,
+    dates: () => payrollStart,
+    interval: () => [payrollStart, payrollEnd],
+    columns: [
+      { key: 'person', label: 'Colaborador', value: (row) => row.employeeName },
+      { key: 'center', label: 'Centro de custo', value: (row) => row.projectName },
+      { key: 'base', label: 'Remuneração', value: (row) => row.base },
+      { key: 'charges', label: 'Encargos', value: (row) => row.charges },
+      { key: 'provisions', label: 'Provisões de férias e 13º', value: (row) => row.provisions },
+      { key: 'total', label: 'Custo previsto', value: (row) => row.charges === null ? null : row.amount },
+    ],
+  });
 
   const expiringTrainingCount = useMemo(
     () => calcularPendenciasSegurancaEquipe(data.employees, todayStr),
@@ -1115,7 +1135,9 @@ export function TeamView({
       )}
 
       <Tabs items={TEAM_TABS} active={tab} onChange={setTab} />
-      <ListToolbar label="colaboradores" list={roster} projects={data.projects} />
+      {tab === 'Folha e encargos'
+        ? <ListToolbar key="folha" label="lançamentos da folha" list={payrollList} projects={[{ id: 'Empresa', name: 'Empresa' }, ...data.projects]} />
+        : <ListToolbar key={tab} label="colaboradores" list={roster} projects={data.projects} />}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <KpiCard
@@ -1601,7 +1623,7 @@ export function TeamView({
                   {monthlyPayroll.conflicts.join(', ')}. Corrija as semanas na aba Alocação.
                 </AlertNote>
               )}
-              <DataList rows={payrollRows} keyExtractor={(row, index) => row.employeeId + '-' + index} emptyTitle="Sem dados"
+              <DataList rows={payrollList.rows} sort={payrollList.sort} keyExtractor={(row, index) => row.employeeId + '-' + index} emptyTitle="Sem dados"
                 columns={[
                   { key: 'person', header: 'Colaborador', render: (row) => row.employeeName },
                   { key: 'center', header: 'Centro de custo', render: (row) => row.projectName + (row.vacation ? ' · Férias' : '') },

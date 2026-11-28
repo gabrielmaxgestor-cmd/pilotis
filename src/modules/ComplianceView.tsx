@@ -326,7 +326,7 @@ export function ComplianceView({ uid, data, companyEmail, initialTab }: {
       {tab === 'Notas fiscais' && <>
         <section className={panel}>
           <h2 className="text-base font-semibold">Recebimentos sem nota emitida</h2>
-          <p className="text-sm">Total pendente no recorte · <strong>{formatBRL(receipts.length ? sumPendingInvoices(invoiceList.rows) : null)}</strong></p>
+          <p className="text-sm">Total pendente no recorte · <strong>{formatBRL(invoiceList.rows.length ? sumPendingInvoices(invoiceList.rows) : null)}</strong></p>
         </section>
         <DataList rows={invoiceList.rows} columns={invoiceColumns} sort={invoiceList.sort} keyExtractor={(row) => row.key}
           emptyTitle="Sem recebimentos pendentes de nota no recorte" emptyDescription="Os registros vêm dos recebimentos realizados no Financeiro."

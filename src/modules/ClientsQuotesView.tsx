@@ -107,12 +107,14 @@ export function ClientsQuotesView({
   const [selectedClientId, setSelectedClientId] = useViewParam('clients.cliente');
   const [recordId, setRecordId] = useViewParam('registro');
   const linkedQuote = data.quotes.find((quote) => quote.id === recordId);
+  const linkedDiscardedQuote = linkedQuote?.status === 'Descartado' ? linkedQuote : undefined;
+  const linkedEditableQuote = linkedDiscardedQuote ? undefined : linkedQuote;
 
   // Quote Editor Modal (Create / Edit / Nova versão)
   const [quoteModalOpen, setQuoteModalOpen] = useState(false);
   const [editingQuote, setEditingQuote] = useState<Quote | null>(null);
   const [preselectedQuoteClientId, setPreselectedQuoteClientId] = useState<string>('');
-  const isQuoteModalOpen = Boolean(linkedQuote) || quoteModalOpen || Boolean(externalNewQuoteOpen);
+  const isQuoteModalOpen = Boolean(linkedEditableQuote) || quoteModalOpen || Boolean(externalNewQuoteOpen);
 
   // Contract Modal
   const [confirmingQuoteId, setConfirmingQuoteId] = useState<string | null>(null);
@@ -1962,12 +1964,28 @@ export function ClientsQuotesView({
         </form>
       </Modal>
 
+      <Modal open={Boolean(linkedDiscardedQuote)} onClose={() => setRecordId('')}
+        title={linkedDiscardedQuote?.title ?? 'Rascunho descartado'}>
+        {linkedDiscardedQuote && <div className="grid gap-3 text-sm">
+          <p>{linkedDiscardedQuote.code} · {linkedDiscardedQuote.clientName}</p>
+          <StatusBadge label="Descartado" />
+          <p>Valor · {formatBRL(linkedDiscardedQuote.totalValue)}</p>
+          <p className="break-words">Motivo · {linkedDiscardedQuote.discardReason || 'Sem dados'}</p>
+          <Button variant="secondary" onClick={() => {
+            setRecordId('');
+            setReactivateQuote(linkedDiscardedQuote);
+            setReactivateStatus('Em negociação');
+            setReactivateActor('Sócio');
+          }}>Reativar orçamento</Button>
+        </div>}
+      </Modal>
+
       {/* MODAL: ORÇAMENTO (Novo / Editar / Nova versão / Simulador) */}
       <QuoteEditorModal
         open={isQuoteModalOpen}
         onClose={closeQuoteModal}
         uid={uid}
-        editingQuote={linkedQuote ?? editingQuote}
+        editingQuote={linkedEditableQuote ?? editingQuote}
         preselectedClientId={preselectedQuoteClientId}
         clients={data.clients}
         quotesCount={data.quotes.length}
@@ -1977,7 +1995,7 @@ export function ClientsQuotesView({
           setSelectedQuoteId(id);
           showToast({
             tone: 'success',
-            title: (linkedQuote || editingQuote) ? 'Orçamento atualizado.' : 'Orçamento criado.',
+            title: (linkedEditableQuote || editingQuote) ? 'Orçamento atualizado.' : 'Orçamento criado.',
           });
         }}
         onRequestNewClient={openNewClientModal}
