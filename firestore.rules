@@ -76,11 +76,19 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function validWhatsAppTemplates(templates) {
+      let models = ['installmentDue', 'installmentOverdue', 'material', 'milestone', 'testimonial'];
+      return templates is map && templates.keys().hasAll(models) && templates.keys().hasOnly(models)
+        && isValidNonEmptyStr(templates.installmentDue, 500) && isValidNonEmptyStr(templates.installmentOverdue, 500)
+        && isValidNonEmptyStr(templates.material, 500) && isValidNonEmptyStr(templates.milestone, 500)
+        && isValidNonEmptyStr(templates.testimonial, 500);
+    }
+
     function isValidCompanySettings(data) {
       return data.keys().hasAll(['ownerUid', 'companyName', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
         && data.keys().hasOnly([
           'ownerUid', 'companyName', 'cnpj', 'fiscalAddress', 'city', 'email', 'phone',
-          'accentColor', 'logoDataUrl', 'pdfShowLogo', 'popPdfHeader', 'popPdfFooter', 'inssRate', 'fgtsRate', 'vacationRate',
+          'accentColor', 'logoDataUrl', 'pdfShowLogo', 'popPdfHeader', 'popPdfFooter', 'whatsappTemplates', 'inssRate', 'fgtsRate', 'vacationRate',
           'thirteenthRate', 'targetMarginPct', 'taxParamsEffectiveDate', 'taxParamsSource',
           'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
         ])
@@ -96,6 +104,7 @@ service cloud.firestore {
         && (!('pdfShowLogo' in data) || data.pdfShowLogo is bool)
         && (!('popPdfHeader' in data) || isValidStr(data.popPdfHeader, 120))
         && (!('popPdfFooter' in data) || isValidStr(data.popPdfFooter, 120))
+        && (!('whatsappTemplates' in data) || validWhatsAppTemplates(data.whatsappTemplates))
         && (!('inssRate' in data) || isValidNonNegNum(data.inssRate))
         && (!('fgtsRate' in data) || isValidNonNegNum(data.fgtsRate))
         && (!('vacationRate' in data) || isValidNonNegNum(data.vacationRate))
@@ -221,7 +230,7 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'ownerUid', 'projectId', 'projectName', 'quoteId', 'clientId', 'clientName',
           'number', 'label', 'dueDate', 'amount', 'status', 'invoiceStatus', 'receivedDate',
-          'transactionId', 'receiptReversalAuditId', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+          'transactionId', 'receiptReversalAuditId', 'reminderMessageId', 'reminderSentAt', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
         ])
         && hasAuditFields(data)
         && isValidId(data.projectId)
@@ -615,6 +624,53 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    function isInstallmentWhatsAppModel(model) {
+      return model in ['installmentDue', 'installmentOverdue'];
+    }
+
+    function whatsappHistoryOwner(clientId) {
+      return isValidId(clientId) && isOwner(get(/databases/$(database)/documents/clients/$(clientId)).data.ownerUid);
+    }
+
+    function whatsappParcelMatches(clientId, messageId, data) {
+      let parcel = getAfter(/databases/$(database)/documents/parcelas/$(data.sourceId)).data;
+      return parcel.ownerUid == request.auth.uid && parcel.clientId == clientId && parcel.projectId == data.projectId
+        && parcel.status == 'A vencer' && parcel.reminderMessageId == messageId && parcel.reminderSentAt == request.time;
+    }
+
+    function whatsappMaterialMatches(data) {
+      let row = get(/databases/$(database)/documents/customerMaterials/$(data.sourceId)).data;
+      return row.ownerUid == request.auth.uid && row.projectId == data.projectId && row.status != 'Entregue';
+    }
+
+    function whatsappMilestoneMatches(data) {
+      let row = get(/databases/$(database)/documents/stages/$(data.sourceId)).data;
+      return row.ownerUid == request.auth.uid && row.projectId == data.projectId && row.get('isMilestone', false) == true;
+    }
+
+    function whatsappSourceBelongsToClient(clientId, messageId, data) {
+      let project = get(/databases/$(database)/documents/projects/$(data.projectId)).data;
+      return project.ownerUid == request.auth.uid && project.clientId == clientId && !('archive' in project)
+        && (isInstallmentWhatsAppModel(data.model) ? whatsappParcelMatches(clientId, messageId, data)
+          : data.model == 'testimonial' ? project.status == 'Concluída' && data.projectId == data.sourceId
+          : project.status != 'Concluída' && (data.model == 'material' ? whatsappMaterialMatches(data)
+            : whatsappMilestoneMatches(data)));
+    }
+
+    match /clients/{clientId}/whatsappHistory/{messageId} {
+      allow get: if isValidId(messageId) && isSignedIn() && whatsappHistoryOwner(clientId);
+      allow list: if isBoundedList() && isSignedIn() && whatsappHistoryOwner(clientId);
+      allow create: if isValidId(messageId) && isSignedIn() && whatsappHistoryOwner(clientId)
+        && !('archive' in get(/databases/$(database)/documents/clients/$(clientId)).data)
+        && incoming().keys().hasOnly(['ownerUid', 'model', 'projectId', 'sourceId', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+        && hasAuditFields(incoming()) && incoming().createdBy == incoming().updatedBy
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && isValidId(incoming().projectId) && isValidId(incoming().sourceId)
+        && incoming().model in ['installmentDue', 'installmentOverdue', 'material', 'milestone', 'testimonial']
+        && whatsappSourceBelongsToClient(clientId, messageId, incoming());
+      allow update, delete: if false;
+    }
+
     function confirmedProjectMatches(quoteId, quote) {
       let project = getAfter(/databases/$(database)/documents/projects/$(quote.projectId)).data;
       return project.ownerUid == request.auth.uid
@@ -745,13 +801,24 @@ service cloud.firestore {
       return project != null && project.data.ownerUid == request.auth.uid;
     }
 
+    function validInstallmentReminder(installmentId, before, after) {
+      let id = after.reminderMessageId;
+      let send = getAfter(/databases/$(database)/documents/clients/$(before.clientId)/whatsappHistory/$(id)).data;
+      return before.status == 'A vencer' && after.reminderSentAt == request.time
+        && after.diff(before).affectedKeys().hasOnly(['reminderMessageId', 'reminderSentAt', 'updatedAt', 'updatedBy'])
+        && isValidId(id) && isValidActor(after.updatedBy) && after.updatedAt == request.time
+        && send.ownerUid == request.auth.uid && send.createdAt == request.time && send.createdBy == after.updatedBy
+        && send.projectId == before.projectId && send.sourceId == installmentId && isInstallmentWhatsAppModel(send.model);
+    }
+
     match /parcelas/{installmentId} {
       allow get: if isValidId(installmentId) && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(installmentId) && isSignedIn() && isValidInstallment(incoming())
         && validNewReference(incoming(), 'clients', 'clientId')
         && validNewReference(incoming(), 'quotes', 'quoteId')
-        && !('receiptReversalAuditId' in incoming()) && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && !incoming().keys().hasAny(['receiptReversalAuditId', 'reminderMessageId', 'reminderSentAt'])
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
         && installmentProjectBelongsToCompany(incoming().projectId);
       allow update: if isValidId(installmentId) && isSignedIn() && existing().ownerUid == request.auth.uid
         && incoming().ownerUid == existing().ownerUid
@@ -763,10 +830,14 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && (existing().status == 'Recebida' && incoming().status == 'A vencer'
           ? receiptRestoration(installmentId)
-          : isValidInstallment(incoming()) && incoming().get('receiptReversalAuditId', '') == existing().get('receiptReversalAuditId', '')
+          : !incoming().diff(existing()).affectedKeys().hasAny(['reminderMessageId', 'reminderSentAt'])
+            && isValidInstallment(incoming()) && incoming().get('receiptReversalAuditId', '') == existing().get('receiptReversalAuditId', '')
             && (existing().status != 'Recebida' || incoming().diff(existing()).affectedKeys().hasOnly([
               'invoiceStatus', 'updatedBy', 'updatedAt'
             ])));
+      allow update: if isValidId(installmentId) && isOwner(existing().ownerUid)
+        && incoming().get('reminderSentAt', null) == request.time
+        && validInstallmentReminder(installmentId, existing(), incoming());
       allow delete: if false;
     }
 

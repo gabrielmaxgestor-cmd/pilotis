@@ -1,3 +1,4 @@
+import { WhatsAppShortcut } from '../components/ui/WhatsAppShortcut';
 import { useState } from 'react';
 import { Button, Modal, RegisteredBySelect, StatusBadge } from '../components/ui/PilotisUI';
 import { DataList } from '../components/ui/DataList';
@@ -116,6 +117,7 @@ export function ProjectMaterialsView({ uid, project, stages, schedule, data }: {
       return timestamp(b.createdAt) - timestamp(a.createdAt);
     });
   const active = project.status !== 'Concluída';
+  const client = data.clients.find((row) => row.id === project.clientId);
   const mayCreate = active && Boolean(schedule.forecastEndDate) && stages.some((stage) => stage.status !== 'Concluída');
   const proposals = template ? customerMaterialTemplate(project.type, stages, rows.map((row) => row.item), templateLead) : [];
   const late = rows.filter((row) => row.status === 'Atrasado' && row.stage?.status !== 'Concluída').length;
@@ -153,6 +155,10 @@ export function ProjectMaterialsView({ uid, project, stages, schedule, data }: {
         { key: 'promised', header: 'Data prometida', render: ({ item }) => formatDateBR(item.promisedDate) },
         { key: 'status', header: 'Situação', render: (row) => <StatusBadge label={row.status} tone={row.status === 'Atrasado' ? 'bad' : 'neutral'} /> },
         { key: 'contact', header: 'Responsável do cliente', render: ({ item }) => item.clientContact || 'Sem dados' },
+        { key: 'whatsapp', header: 'WhatsApp', render: ({ item, necessaryDate }) => active && item.status !== 'Entregue' &&
+          <WhatsAppShortcut uid={uid} client={client} templates={data.settings?.whatsappTemplates} label="Cobrar entrega"
+            target={{ model: 'material', projectId: project.id, sourceId: item.id }}
+            values={{ obra: project.name, material: item.description, vencimento: necessaryDate ? formatDateBR(necessaryDate) : undefined }} /> },
       ]} />
 
     <Modal open={Boolean(selected)} title={selected?.item.description ?? 'Material do cliente'} onClose={() => setRecordId('')}>

@@ -1,3 +1,4 @@
+import { WhatsAppShortcut } from '../components/ui/WhatsAppShortcut';
 import { ProjectMaterialsView } from './ProjectMaterialsView';
 import { weeksToCalendarDays, withMaterialHold } from '../domain/customerMaterials';
 import { RecordLifecycleButton } from '../components/ui/ArchivedRecords';
@@ -16,6 +17,7 @@ import {
   KpiCard,
   Modal,
   PageHeader,
+  Button,
   ProgressBar,
   RegisteredBySelect,
   SegmentedControl,
@@ -26,6 +28,7 @@ import {
   applyScheduleTemplateToProject,
   createProjectFromTemplate,
   createRecord,
+  linkProjectClient,
   saveProjectStage,
 } from '../services/pilotisService';
 import type {
@@ -135,6 +138,11 @@ export function ProjectPlanningView({
   const [newProjModal, setNewProjModal] = useState(false);
   const [npName, setNpName] = useState('');
   const [npClientName, setNpClientName] = useState('');
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkClient, setLinkClient] = useState('');
+  const [linkActor, setLinkActor] = useState<ActorRole>('Sócio');
+  const [linkSaving, setLinkSaving] = useState(false);
+  const [linkError, setLinkError] = useState('');
   const [npType, setNpType] = useState<ProjectType>('Casa residencial');
   const [npContractKind, setNpContractKind] = useState<ProjectContractKind>('Principal');
   const [npValue, setNpValue] = useState('');
@@ -440,6 +448,9 @@ export function ProjectPlanningView({
               {activeProject.clientName && (
                 <span className="text-xs text-[#5B6472]">· Cliente: {activeProject.clientName}</span>
               )}
+              {!activeProject.clientId && <Button size="sm" variant="secondary" onClick={() => {
+                setLinkClient(''); setLinkError(''); setLinkOpen(true);
+              }}>Vincular cadastro do cliente</Button>}
               <span className="text-xs text-[#5B6472] tabular-nums">
                 · Contrato {formatBRL(activeProject.contractValue)}
               </span>
@@ -729,9 +740,16 @@ export function ProjectPlanningView({
                     {schedule?.milestones.length ? (
                       <ul className="grid gap-2">
                         {schedule.milestones.slice(0, 5).map(({ stage, date }) => (
-                          <li key={stage.id} className="flex justify-between gap-3 text-sm">
-                            <span>{stage.wbsCode} · {stage.name}</span>
-                            <span className="shrink-0 text-[#5B6472]">{date ? formatDateBR(date) : 'Sem dados'}</span>
+                          <li key={stage.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                            <div className="grid gap-0.5">
+                              <span>{stage.wbsCode} · {stage.name}</span>
+                              <span className="text-[#5B6472]">{date ? formatDateBR(date) : 'Sem dados'}</span>
+                            </div>
+                            {date && activeProject.status !== 'Concluída' &&
+                              <WhatsAppShortcut uid={uid} client={data.clients.find((row) => row.id === activeProject.clientId)}
+                                templates={data.settings?.whatsappTemplates} label="Avisar pelo WhatsApp"
+                                target={{ model: 'milestone', projectId: activeProject.id, sourceId: stage.id }}
+                                values={{ obra: activeProject.name, marco: stage.name, vencimento: formatDateBR(date) }} />}
                           </li>
                         ))}
                       </ul>
@@ -974,6 +992,33 @@ export function ProjectPlanningView({
         </form>
       </Modal>
 
+      <Modal open={linkOpen && Boolean(activeProject)} onClose={() => setLinkOpen(false)} title="Vincular cadastro do cliente">
+        <form className="grid gap-3 text-sm" onSubmit={async (event) => {
+          event.preventDefault();
+          if (!activeProject || !linkClient || linkSaving) return;
+          setLinkSaving(true); setLinkError('');
+          try {
+            await linkProjectClient(uid, linkActor, activeProject.id, linkClient);
+            setLinkOpen(false);
+          } catch (error) {
+            setLinkError(error instanceof Error ? error.message : 'Não foi possível vincular o cliente.');
+          } finally { setLinkSaving(false); }
+        }}>
+          <label className="grid gap-1 font-semibold">Cliente cadastrado
+            <select required className="min-w-0 rounded-lg border border-[#E4E1DA] p-2 text-sm" value={linkClient}
+              onChange={(event) => setLinkClient(event.target.value)}>
+              <option value="">Selecione o cliente</option>
+              {data.clients.map((client) => <option key={client.id} value={client.id}>
+                {[client.name, client.city, client.phone].filter(Boolean).join(' · ')}
+              </option>)}
+            </select>
+          </label>
+          <RegisteredBySelect value={linkActor} onChange={setLinkActor} id="project-link-client-actor" />
+          {linkError && <p role="alert" className="text-[#B42318]">{linkError}</p>}
+          <Button type="submit" disabled={!linkClient || linkSaving} className="justify-self-start">Vincular cliente</Button>
+        </form>
+      </Modal>
+
       <Modal open={Boolean(linkedStage)} onClose={() => setRecordId('')}
         title={linkedStage ? 'Etapa · ' + linkedStage.name : 'Etapa'}>
         {linkedStage && <div className="grid gap-3 text-sm">
@@ -986,6 +1031,13 @@ export function ProjectPlanningView({
             <div><dt>{linkedStage.isMilestone ? 'Data do marco' : 'Término previsto'}</dt><dd>{formatDateBR(stageDeadline(linkedStage))}</dd></div>
             {linkedStage.materialExpectedDate && <div><dt>Material prometido para</dt><dd>{formatDateBR(linkedStage.materialExpectedDate)}</dd></div>}
           </dl>
+          {linkedStage.isMilestone && activeProject && activeProject.status !== 'Concluída' && stageDeadline(linkedStage) &&
+            <div className="justify-self-start">
+              <WhatsAppShortcut uid={uid} client={data.clients.find((row) => row.id === activeProject.clientId)}
+                templates={data.settings?.whatsappTemplates} label="Avisar pelo WhatsApp"
+                target={{ model: 'milestone', projectId: activeProject.id, sourceId: linkedStage.id }}
+                values={{ obra: activeProject.name, marco: linkedStage.name, vencimento: formatDateBR(stageDeadline(linkedStage)) }} />
+            </div>}
           {activeProject?.status !== 'Concluída' && <button type="button" className="justify-self-start font-semibold text-[#1F3A5F] underline"
             onClick={() => { setRecordId(''); openEditStage(linkedStage); }}>Editar etapa</button>}
         </div>}

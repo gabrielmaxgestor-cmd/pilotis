@@ -1,3 +1,6 @@
+import { installmentWhatsAppContext } from '../domain/whatsapp';
+import { formatTimestampBR } from '../domain/formatters';
+import { WhatsAppShortcut } from '../components/ui/WhatsAppShortcut';
 import { useEffect, useMemo, useState } from 'react';
 import { ListToolbar, SortHeading, useListFilters } from '../components/ui/ListFilters';
 import { useViewParam, useViewTab } from '../hooks/useViewUrl';
@@ -198,6 +201,20 @@ export function FinancialView({
 
   // DRE da empresa (período)
   const todayStr = planningTodayISO();
+  const clientById = useMemo(() => new Map(data.clients.map((client) => [client.id, client])), [data.clients]);
+  const projectsById = useMemo(() => new Map(data.projects.map((project) => [project.id, project])), [data.projects]);
+
+  function renderInstallmentReminder(row: Installment) {
+    const context = installmentWhatsAppContext(row, todayStr);
+    const project = projectsById.get(row.projectId);
+    return <>
+      {context && project && <WhatsAppShortcut uid={uid} client={clientById.get(row.clientId)}
+        templates={data.settings?.whatsappTemplates} label="Lembrete pelo WhatsApp"
+        target={{ model: context.model, projectId: row.projectId, sourceId: row.id }}
+        values={{ ...context.values, obra: project.name }} />}
+      {row.reminderSentAt ? <p className="text-xs text-[#424D5D]">Lembrete enviado em {formatTimestampBR(row.reminderSentAt)}</p> : null}
+    </>;
+  }
   const [drePeriodStart, setDrePeriodStart] = useState(`${monthKey(todayStr)}-01`);
   const [drePeriodEnd, setDrePeriodEnd] = useState(addDaysISO(addMonthsISO(`${monthKey(todayStr)}-01`, 1), -1));
 
@@ -1072,13 +1089,14 @@ export function FinancialView({
                     { key: 'amount', header: 'Valor', numeric: true, align: 'right', render: (row) => formatBRL(row.amount) },
                     { key: 'invoice', header: 'Nota fiscal', render: (row) => <StatusBadge label={row.invoiceStatus || 'A emitir'} /> },
                     { key: 'status', header: 'Status', render: (row) => <StatusBadge label={resolverStatusParcela({ status: row.status, vencimento: row.dueDate }, todayStr)} /> },
-                    { key: 'receipt', header: 'Recebimento', render: (row) => row.status === 'Recebida'
-                      ? <div className="grid gap-1">
+                    { key: 'receipt', header: 'Recebimento', render: (row) => <div className="grid justify-items-start gap-1">
+                      {row.status === 'Recebida' ? <>
                         <span>{formatDateBR(row.receivedDate)}</span>
                         <button type="button" className="text-left text-sm font-semibold text-[#1F3A5F] underline"
                           onClick={() => setReversalTarget({ id: row.id, title: row.label, kind: 'installment' })}>Desfazer recebimento</button>
-                      </div>
-                      : <button type="button" className="text-sm font-semibold text-[#1F3A5F] underline" onClick={() => openInstallmentReceipt(row)}>Receber</button> },
+                      </> : <button type="button" className="text-sm font-semibold text-[#1F3A5F] underline" onClick={() => openInstallmentReceipt(row)}>Receber</button>}
+                      {renderInstallmentReminder(row)}
+                    </div> },
                   ]}
                 />
               )}
@@ -1546,6 +1564,7 @@ export function FinancialView({
           {linkedInstallment.status !== 'Recebida' && <button type="button"
             className="justify-self-start font-semibold text-[#1F3A5F] underline"
             onClick={() => { setRecordId(''); openInstallmentReceipt(linkedInstallment); }}>Receber parcela</button>}
+          <div className="grid justify-items-start gap-1">{renderInstallmentReminder(linkedInstallment)}</div>
         </div>}
       </Modal>
       <Modal open={Boolean(linkedDebt)} onClose={() => setRecordId('')}

@@ -819,7 +819,8 @@ export function Modal({
   return (
     <dialog ref={dialogRef} aria-labelledby={titleId}
       onKeyDown={(event) => {
-        if (event.key !== 'Tab') return;
+        if (event.key !== 'Tab' || (event.target instanceof Element &&
+          event.target.closest('dialog') !== event.currentTarget)) return;
         const dialog = event.currentTarget;
         const stops = [...dialog.querySelectorAll<HTMLElement>(
           'a[href], button, input, select, textarea, summary, [tabindex], [contenteditable="true"]',
@@ -833,7 +834,11 @@ export function Modal({
           (event.shiftKey ? last ?? titleRef.current : first ?? titleRef.current)?.focus();
         }
       }}
-      onCancel={(event) => { event.preventDefault(); onClose(); }}
+      onCancel={(event) => {
+        if (event.target !== event.currentTarget) return;
+        event.preventDefault();
+        onClose();
+      }}
       className="fixed inset-0 m-0 h-full max-h-none w-full max-w-none bg-transparent p-0 backdrop:bg-[#101828]/55">
       <div className="flex min-h-full items-end justify-center md:items-center md:p-4"
         onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>

@@ -1,3 +1,4 @@
+import { whatsappTemplates, WHATSAPP_MODELS, WHATSAPP_MODEL_KEYS, WHATSAPP_TEMPLATE_LIMIT } from '../domain/whatsapp';
 import { useEffect, useMemo, useState } from 'react';
 import {
   EmailAuthProvider,
@@ -65,6 +66,7 @@ import {
 
 const SETTINGS_TABS = [
   'Dados da empresa',
+  'WhatsApp',
   'Encargos e meta',
   'Importar dados',
   'Segurança e auditoria',
@@ -92,6 +94,10 @@ export function SettingsView({
     initialTab && SETTINGS_TABS.includes(initialTab) ? initialTab : 'Dados da empresa'
   );
   const [saving, setSaving] = useState(false);
+  const savedWhatsApp = data.settings?.whatsappTemplates;
+  const [messages, setMessages] = useState(() => whatsappTemplates(savedWhatsApp));
+  const [messageActor, setMessageActor] = useState<ActorRole>('Sócio');
+  useEffect(() => setMessages(whatsappTemplates(savedWhatsApp)), [savedWhatsApp]);
   const [feedback, setFeedback] = useState<{
     tone: 'ok' | 'bad' | 'info' | 'warn';
     title: string;
@@ -852,6 +858,35 @@ export function SettingsView({
       )}
 
       {/* 2. Parâmetros de encargos e meta de margem */}
+      {tab === 'WhatsApp' && <Card title="Modelos de WhatsApp">
+        <form className="grid gap-4" onSubmit={async (event) => {
+          event.preventDefault();
+          if (saving) return;
+          setSaving(true);
+          setFeedback(null);
+          try {
+            await upsertCompanySettings(uid, messageActor, data.settings, { whatsappTemplates: messages });
+            setFeedback({ tone: 'ok', title: 'Modelos salvos', text: 'Os atalhos do WhatsApp já usam os novos textos.' });
+          } catch (error) {
+            setFeedback({ tone: 'bad', title: 'Verifique os modelos', text: error instanceof Error ? error.message : 'Não foi possível salvar os modelos.' });
+          } finally { setSaving(false); }
+        }}>
+          <p className="text-sm text-[#424D5D]">Use as variáveis indicadas em cada modelo. {'{cliente}'} usa o primeiro nome. {'{vencimento}'} usa a data da parcela, do marco ou da necessidade do material.</p>
+          {WHATSAPP_MODEL_KEYS.map((model) => <label key={model} className="grid gap-1.5 text-sm font-semibold">
+            {WHATSAPP_MODELS[model].label}
+            <textarea className="min-w-0 rounded-lg border border-[#E4E1DA] p-2 text-sm font-normal focus-visible:ring-2 focus-visible:ring-[#1F3A5F]"
+              rows={3} required maxLength={WHATSAPP_TEMPLATE_LIMIT} value={messages[model]}
+              aria-describedby={'whatsapp-variables-' + model}
+              onChange={(event) => setMessages((current) => ({ ...current, [model]: event.target.value }))} />
+            <span id={'whatsapp-variables-' + model} className="text-xs font-normal text-[#424D5D]">
+              {WHATSAPP_MODELS[model].variables.map((variable) => '{' + variable + '}').join(' · ')}
+            </span>
+          </label>)}
+          <RegisteredBySelect id="whatsapp-templates-actor" value={messageActor} onChange={setMessageActor} />
+          <Button type="submit" disabled={saving} className="justify-self-start">{saving ? 'Salvando…' : 'Salvar modelos'}</Button>
+        </form>
+      </Card>}
+
       {tab === 'Encargos e meta' && (
         <form
           onSubmit={handleSaveParameters}

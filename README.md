@@ -75,6 +75,10 @@ Para aplicar esse bloqueio no GitHub, a proteção da branch `main` deve exigir 
 
 O comando `npm audit --omit=dev` registra avisos para revisão. Falhas de lint, de teste ou de build bloqueiam o CI.
 
+## WhatsApp
+
+Em Configurações → WhatsApp, edite os modelos de parcela, material, marco e depoimento. Cada modelo lista as variáveis que aceita. Os atalhos usam o telefone do cadastro vinculado à obra, com DDD. Abra a conversa, envie pelo WhatsApp e volte ao Pilotis para confirmar o registro. O histórico fica no cadastro do cliente, na subcoleção `clients/{clientId}/whatsappHistory`, com data, modelo, responsável e referência de origem. Os textos preenchidos e os números de telefone ficam fora do histórico.
+
 ## Publicação no Cloud Run
 
 1. Confirme o projeto, o banco nomeado e o e-mail corporativo. Use um projeto de homologação para o primeiro deploy.

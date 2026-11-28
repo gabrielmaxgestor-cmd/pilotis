@@ -22,6 +22,16 @@ export interface AuditMeta {
   updatedAt?: unknown;
 }
 
+export type WhatsAppModel = 'installmentDue' | 'installmentOverdue' | 'material' | 'milestone' | 'testimonial';
+export type WhatsAppTemplates = Record<WhatsAppModel, string>;
+
+export interface WhatsAppSend extends AuditMeta {
+  id: string;
+  model: WhatsAppModel;
+  projectId: string;
+  sourceId: string;
+}
+
 export interface CompanySettings extends AuditMeta {
   id: string;
   companyName: string;
@@ -35,6 +45,7 @@ export interface CompanySettings extends AuditMeta {
   pdfShowLogo: boolean;
   popPdfHeader?: string;
   popPdfFooter?: string;
+  whatsappTemplates?: WhatsAppTemplates;
   inssRate: number;
   fgtsRate: number;
   vacationRate: number;
@@ -266,6 +277,8 @@ export interface Installment extends AuditMeta {
   receivedDate: string;
   transactionId: string;
   receiptReversalAuditId?: string;
+  reminderMessageId?: string;
+  reminderSentAt?: unknown;
 }
 
 export interface FinancialTransaction extends AuditMeta {

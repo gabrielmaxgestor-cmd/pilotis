@@ -1,3 +1,4 @@
+import { WhatsAppShortcut } from '../components/ui/WhatsAppShortcut';
 import { useViewParam } from '../hooks/useViewUrl';
 import { useEffect, useState } from 'react';
 import { Modal, RegisteredBySelect, StatusBadge } from '../components/ui/PilotisUI';
@@ -319,6 +320,8 @@ function FollowUp({ uid, project, data }: { uid: string; project: Project; data:
                 catch { setCopied('Selecione e copie o texto da solicitação.'); }
               })();
             }}>Copiar texto</button>
+            <WhatsAppShortcut uid={uid} client={client} templates={data.settings?.whatsappTemplates} label="Pedir depoimento pelo WhatsApp"
+              target={{ model: 'testimonial', projectId: project.id, sourceId: project.id }} values={{ obra: project.name }} />
             {client?.email && <a className={secondary} href={'mailto:' + encodeURIComponent(client.email).replace('%40', '@') +
               '?subject=' + encodeURIComponent('Pós-obra · Pilotis') + '&body=' + encodeURIComponent(message)}>Abrir e-mail</a>}
           </div>

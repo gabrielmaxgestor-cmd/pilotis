@@ -1,4 +1,5 @@
 import { customerMaterialTemplate, describeMaterialDates, MATERIAL_STATUSES, withMaterialHold } from '../domain/customerMaterials';
+import { validateWhatsAppTemplate, WHATSAPP_MODEL_KEYS } from '../domain/whatsapp';
 import { prepareEditUndo, publishEditUndo } from './editUndo';
 import {
   Bytes,
@@ -24,6 +25,7 @@ import type {
   Allocation,
   Employee,
   CompanySettings,
+  Client,
   ComplianceItem,
   ComplianceFile,
   CustomerMaterial,
@@ -189,7 +191,7 @@ function buildRecordDiff(
   const afterParts: string[] = [];
 
   for (const [key, nextVal] of Object.entries(nextData)) {
-    if (nextVal === undefined) continue;
+    if (nextVal === undefined || (collectionName === 'companySettings' && key === 'whatsappTemplates')) continue;
     let meta = FINANCIAL_AUDIT_FIELDS[key];
     if (!meta && key === 'status' && COLLECTIONS_WITH_STATUS_FINANCIAL_AUDIT.has(collectionName)) {
       meta = { label: 'Status', format: 'text' };
@@ -435,6 +437,11 @@ export async function upsertCompanySettings(
 ): Promise<void> {
   const ref = doc(db, 'companySettings', uid);
   const auditRef = doc(db, 'auditLogs', generateId('aud'));
+  if (data.whatsappTemplates !== undefined) {
+    const templates = data.whatsappTemplates;
+    data = { ...data, whatsappTemplates: Object.fromEntries(WHATSAPP_MODEL_KEYS.map((model) =>
+      [model, validateWhatsAppTemplate(model, templates[model] ?? '')])) as typeof templates };
+  }
   try {
     const batch = writeBatch(db);
     let beforeValue = '';
@@ -455,6 +462,7 @@ export async function upsertCompanySettings(
         pdfShowLogo: data.pdfShowLogo ?? true,
         popPdfHeader: clampStr(data.popPdfHeader || '', 120),
         popPdfFooter: clampStr(data.popPdfFooter || '', 120),
+        ...(data.whatsappTemplates ? { whatsappTemplates: data.whatsappTemplates } : {}),
         inssRate: data.inssRate ?? 0,
         fgtsRate: data.fgtsRate ?? 0,
         vacationRate: data.vacationRate ?? 0,
@@ -481,6 +489,10 @@ export async function upsertCompanySettings(
         summary = 'Parâmetros financeiros e encargos atualizados';
       } else {
         const changedLabels: string[] = [];
+        if (data.whatsappTemplates) {
+          summary = 'Modelos do WhatsApp atualizados';
+          changedLabels.push('Modelos do WhatsApp');
+        }
         if (data.companyName !== undefined && data.companyName !== existing.companyName) {
           changedLabels.push(`Nome: ${data.companyName}`);
         }
@@ -1803,6 +1815,28 @@ export async function readComplianceFile(item: Pick<ComplianceItem, 'id' | 'atta
   const file = (await getDoc(doc(db, 'complianceFiles', item.attachmentId))).data() as ComplianceFile | undefined;
   if (!file || file.itemId !== item.id) throw new Error('Anexo indisponível.');
   return file;
+}
+
+export async function linkProjectClient(uid: string, actor: ActorRole, projectId: string, clientId: string) {
+  const ref = doc(db, 'projects', projectId);
+  const clientRef = doc(db, 'clients', clientId);
+  const undo = await runTransaction(db, async (tx) => {
+    const [projectSnap, clientSnap] = await Promise.all([tx.get(ref), tx.get(clientRef)]);
+    const project = projectSnap.data() as Project | undefined;
+    const client = clientSnap.data() as Client | undefined;
+    if (!project || project.ownerUid !== uid || project.archive || project.clientId) {
+      throw new Error('Selecione uma obra ativa sem cadastro de cliente vinculado.');
+    }
+    if (!client || client.ownerUid !== uid || client.archive) throw new Error('Selecione um cliente ativo.');
+    const change = { clientId, clientName: client.name };
+    tx.update(ref, { ...change, updatedBy: actor, updatedAt: serverTimestamp() });
+    tx.set(doc(db, 'auditLogs', generateId('aud')), {
+      ownerUid: uid, registeredBy: actor, action: 'Atualização', entityType: 'projects', entityId: projectId,
+      summary: 'Cliente vinculado à obra', beforeValue: project.clientName || '', afterValue: client.name, createdAt: serverTimestamp(),
+    });
+    return prepareEditUndo(uid, actor, [{ ref, before: project, after: change }]);
+  });
+  publishEditUndo(undo);
 }
 
 export async function createProjectFromTemplate(

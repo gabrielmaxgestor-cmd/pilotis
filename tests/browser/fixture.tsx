@@ -79,8 +79,9 @@ function Fixture() {
     }],
   };
   const fromMaterials = params.get('materials') === 'delayed';
+  const fromWhatsApp = params.get('finance') === 'whatsapp';
   const fromAgenda = params.get('agenda') === 'events';
-  const agendaData: PilotisDataState = fromAgenda || fromMaterials ? {
+  const agendaData: PilotisDataState = fromAgenda || fromMaterials || fromWhatsApp ? {
     ...planningData,
     projects: [...planningData.projects, {
       ...planningData.projects[0], id: 'closed', name: 'Obra encerrada', status: 'Concluída',
@@ -125,7 +126,15 @@ function Fixture() {
       deliveredDate: '', status: 'Comprado', clientContact: 'Contato do cliente', notes: '',
     }],
   } : data;
-  const finance = fromAgenda ? agendaData : params.get('finance') === 'charts' ? chartData : params.get('finance') === 'empty' ? data : financeData;
+  const whatsappData: PilotisDataState = fromWhatsApp ? {
+    ...agendaData,
+    clients: [{
+      id: 'client', ownerUid: 'browser-test', createdBy: 'Sócio', updatedBy: 'Sócio', name: 'Lívia do teste',
+      origin: 'Indicação', city: 'Valença', phone: '(24) 99999-1212', email: '', notes: '',
+      status: 'Ativo', referralsCount: 0, testimonialStatus: '',
+    }],
+  } : data;
+  const finance = fromWhatsApp ? whatsappData : fromAgenda ? agendaData : params.get('finance') === 'charts' ? chartData : params.get('finance') === 'empty' ? data : financeData;
   const title = route === 'financial' ? 'Financeiro' : route === 'planning' ? 'Obras'
      : route === 'settings' ? 'Configurações' : route === 'agenda' ? 'Agenda' : route === 'more' ? 'Mais' : 'Dashboard';
   return (

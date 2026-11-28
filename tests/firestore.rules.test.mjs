@@ -106,6 +106,8 @@ async function loadConfirmationService(db) {
   try {
     return {
       ...await import('../src/services/pilotisService.ts'),
+      ...await import('../src/services/whatsappService.ts'),
+      ...await import('../src/domain/whatsapp.ts'),
       ...await import('../src/services/archiveService.ts'),
       ...await import('../src/services/editUndo.ts'),
       ...await import('../src/server/recordDeletion.ts'),
@@ -134,7 +136,8 @@ test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', {
   try {
     const { confirmQuoteAndGenerateProject, createProjectFromTemplate, recordFinancialTransaction, updateRecord,
       markInstallmentReceived, reverseFinancialMovement, undoInstallmentReceipt, setRecordArchived,
-      prepareEditUndo, permanentRecordDeletion, saveCustomerMaterials, saveProjectStage } =
+      prepareEditUndo, permanentRecordDeletion, saveCustomerMaterials, saveProjectStage, linkProjectClient,
+      recordWhatsAppSend, upsertCompanySettings, whatsappTemplates } =
       await loadConfirmationService(db);
     const meta = {
       ownerUid: uid, createdBy: actor, updatedBy: actor, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
@@ -144,7 +147,7 @@ test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', {
     const clientRef = doc(collection(db, 'clients'));
     await setDoc(clientRef, {
       ...meta, name: 'Cliente do teste', origin: 'Indicação', status: 'Potencial',
-      city: 'Valença', referredBy: '', phone: '', email: '', notes: '', referralsCount: 0,
+      city: 'Valença', referredBy: '', phone: '(24) 99999-1212', email: '', notes: '', referralsCount: 0,
       testimonialStatus: 'Aguardando conclusão',
     });
     const matching = (name, projectId) => getDocsFromServer(query(collection(db, name),
@@ -324,6 +327,47 @@ test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', {
 
     const parcel = (await getDocsFromServer(query(collection(db, 'parcelas'), where('ownerUid', '==', uid), limit(1)))).docs[0];
     const originalParcel = { id: parcel.id, ...parcel.data() };
+    const openedPhone = '5524999991212';
+    const history = collection(clientRef, 'whatsappHistory');
+    const sendParams = { uid, actor, clientId: clientRef.id, openedPhone };
+    const reminderId = 'test-reminder';
+    const reminderTarget = { model: 'installmentDue', projectId: originalParcel.projectId, sourceId: parcel.id };
+    const reminderRef = doc(history, reminderId);
+    await assert.rejects(updateDoc(parcel.ref, {
+      reminderMessageId: reminderId, reminderSentAt: serverTimestamp(), updatedAt: serverTimestamp(),
+    }), denial);
+    await assert.rejects(setDoc(reminderRef, { ...meta, ...reminderTarget }), denial);
+    await assert.rejects(recordWhatsAppSend({ ...sendParams, openedPhone: '5524999990055', messageId: reminderId,
+      target: reminderTarget }), /contato do cliente mudou/);
+    await recordWhatsAppSend({ ...sendParams, messageId: reminderId, target: reminderTarget });
+    await recordWhatsAppSend({ ...sendParams, messageId: reminderId, target: reminderTarget });
+    const reminder = (await getDocFromServer(reminderRef)).data();
+    const remindedParcel = (await getDocFromServer(parcel.ref)).data();
+    assert.equal(reminder.model, 'installmentDue');
+    assert.equal(reminder.createdBy, actor);
+    assert.equal(remindedParcel.reminderMessageId, reminderId);
+    assert.equal(remindedParcel.reminderSentAt.toMillis(), reminder.createdAt.toMillis());
+    assert.deepEqual(Object.keys(reminder).sort(),
+      ['createdAt', 'createdBy', 'model', 'ownerUid', 'projectId', 'sourceId', 'updatedAt', 'updatedBy'].sort());
+    await assert.rejects(updateDoc(reminderRef, { model: 'installmentOverdue' }), denial);
+    await assert.rejects(deleteDoc(reminderRef), denial);
+    await assert.rejects(getDocsFromServer(history), denial);
+    assert.equal((await getDocsFromServer(query(history, limit(25)))).size, 1);
+
+    const settingsRef = doc(db, 'companySettings', uid);
+    const settings = (await getDocFromServer(settingsRef)).data();
+    const templates = { ...whatsappTemplates(), installmentDue: 'Olá, {cliente}. A parcela vence em {vencimento}.' };
+    await upsertCompanySettings(uid, actor, settings, { whatsappTemplates: templates });
+    assert.deepEqual((await getDocFromServer(settingsRef)).data().whatsappTemplates, templates);
+    await assert.rejects(updateDoc(settingsRef, { 'whatsappTemplates.unexpected': 'x', updatedAt: serverTimestamp() }), denial);
+
+    await linkProjectClient(uid, actor, modeledProjectId, clientRef.id);
+    const milestone = materialStages.find((stage) => stage.isMilestone);
+    assert.ok(milestone);
+    for (const [model, sourceId] of [['material', materialRef.id], ['milestone', milestone.id]]) {
+      await recordWhatsAppSend({ ...sendParams, messageId: 'test-' + model, target: { model, projectId: modeledProjectId, sourceId } });
+      assert.equal((await getDocFromServer(doc(history, 'test-' + model))).data().model, model);
+    }
     await markInstallmentReceived(uid, actor, originalParcel, '2026-01-15', 'Pix');
     const received = (await getDocFromServer(parcel.ref)).data();
     await assert.rejects(updateDoc(parcel.ref, { status: 'A vencer', updatedAt: serverTimestamp() }), denial);
@@ -334,6 +378,7 @@ test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', {
     assert.equal(reopened.receivedDate, '');
     assert.equal(reopened.transactionId, '');
     assert.equal(reopened.amount, originalParcel.amount);
+    assert.equal(reopened.reminderMessageId, reminderId);
     const reversedReceipt = (await getDocFromServer(doc(db, 'transactions', received.transactionId))).data();
     assert.equal(reversedReceipt.status, 'Estornado');
     assert.equal(reversedReceipt.reversalAuditId, reopened.receiptReversalAuditId);
@@ -376,6 +421,13 @@ test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', {
         await setRecordArchived(uid, actor, entity, id, false);
         assert.equal((await getDocFromServer(ref)).data().archive, undefined);
       }
+      await adminDb.doc('projects/' + modeledProjectId).update({ status: 'Concluída' });
+      const testimonialTarget = { model: 'testimonial', projectId: modeledProjectId, sourceId: modeledProjectId };
+      await recordWhatsAppSend({ ...sendParams, messageId: 'test-testimonial', target: testimonialTarget });
+      assert.equal((await getDocFromServer(doc(history, 'test-testimonial'))).data().model, 'testimonial');
+      assert.match((await getDocFromServer(doc(db, 'projectFollowUps', modeledProjectId))).data().testimonialRequestedAt, /^\d{4}-\d{2}-\d{2}$/);
+      assert.equal((await getDocFromServer(clientRef)).data().testimonialStatus, 'Solicitado');
+
       const legacy = adminDb.collection('parcelas').doc();
       const currentParcel = (await adminDb.doc('parcelas/' + parcel.id).get()).data();
       await legacy.set({ ...currentParcel, status: 'Recebida', transactionId: '', receivedDate: '2026-01-15' });

@@ -1,3 +1,4 @@
+import { WhatsAppHistory } from './clients/WhatsAppHistory';
 import { RecordLifecycleButton } from '../components/ui/ArchivedRecords';
 import { useMemo, useState } from 'react';
 import { ListToolbar, useListFilters } from '../components/ui/ListFilters';
@@ -1667,6 +1668,7 @@ export function ClientsQuotesView({
                 </Card>
               </div>
 
+              <WhatsAppHistory key={activeClient.id} clientId={activeClient.id} projects={clientProjects} />
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <Card
                   title="Garantia (1 ano pós-conclusão)"

@@ -52,6 +52,32 @@ for (const width of [390, 1440]) {
       await checkAccessibility(page);
     });
 
+    test('WhatsApp abre a conversa com o texto preenchido e pede confirmação do envio', async ({ page }) => {
+      await page.clock.setFixedTime(new Date('2026-11-28T12:00:00Z'));
+      await page.context().route('https://wa.me/**', (route) => route.fulfill({ body: 'WhatsApp', contentType: 'text/plain' }));
+      await page.goto('/tests/browser/index.html?route=financial&financial.aba=A+receber&finance=whatsapp');
+      const trigger = page.getByRole('button', { name: 'Lembrete pelo WhatsApp' });
+      await trigger.click();
+      const dialog = page.getByRole('dialog', { name: 'Parcela vencida pelo WhatsApp' });
+      const link = dialog.getByRole('link', { name: 'Abrir WhatsApp' });
+      const button = dialog.getByRole('button', { name: 'Confirmar mensagem enviada' });
+      await expect(button).toBeDisabled();
+      const href = new URL(await link.getAttribute('href'));
+      expect(href.host + href.pathname).toBe('wa.me/5524999991212');
+      expect(href.searchParams.get('text')).toMatch(/Olá, Lívia!.*Obra contratada.*27\/11\/2026/);
+      await checkAccessibility(page);
+      const opening = page.waitForEvent('popup');
+      await link.click();
+      const popup = await opening;
+      await expect(popup).toHaveURL(href.toString());
+      await popup.close();
+      await expect(button).toBeEnabled();
+      await page.keyboard.press('Escape');
+      await expect(dialog).toHaveCount(0);
+      await expect(trigger).toBeFocused();
+      await checkPageWidth(page);
+    });
+
     test('Material em atraso bloqueia a etapa, atualiza o prazo e exporta o anexo', async ({ page }) => {
       await page.clock.setFixedTime(new Date('2026-11-27T12:00:00Z'));
       await page.goto('/tests/browser/index.html?materials=delayed');
