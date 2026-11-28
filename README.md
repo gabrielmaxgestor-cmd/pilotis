@@ -67,6 +67,12 @@ npx firebase-tools emulators:exec --only firestore --project demo-pilotis "node 
 
 No navegador, repita a conferência em 390 px e 1440 px. Percorra navegação, abas e ações com Tab, Shift+Tab, setas, Enter e Escape. Confira foco visível, retorno do foco após fechar modais, texto dos status, colunas convertidas em listas e a movimentação de cartões do Kanban pelo botão **Mover**. Faça a primeira abertura da PWA online. Os registros e fotos capturados offline permanecem em fila até o servidor confirmar a gravação.
 
+## Integração contínua
+
+A `main` só recebe merge quando os jobs **Aplicação (Node 22)** e **Regras do Firestore** estiverem verdes no workflow **CI**. O workflow roda em pull requests e em pushes na `main`. O job de Aplicação executa lint, testes de domínio e de integração e o build. O job de Regras usa o emulador com o projeto `demo-pilotis`.
+
+O comando `npm audit --omit=dev` registra avisos para revisão. Falhas de lint, de teste ou de build bloqueiam o CI.
+
 ## Publicação no Cloud Run
 
 1. Confirme o projeto, o banco nomeado e o e-mail corporativo. Use um projeto de homologação para o primeiro deploy.
