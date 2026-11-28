@@ -280,6 +280,17 @@ test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', {
     assert.equal((await getDocFromServer(doc(db, 'debts', loan.debtId))).data().principalBalance, 0);
     await assert.rejects(updateDoc(inverseRef, { amount: 700, updatedAt: serverTimestamp() }), denial);
     await assert.rejects(reverseFinancialMovement(uid, actor, loanId, 'Tentativa repetida'), /indisponível/);
+    await recordFinancialTransaction(uid, actor, {
+      date: loan.date, description: 'Crédito com baixa parcial', entryKind: 'loan', category: 'Empréstimo',
+      projectId: 'Empresa', amount: loan.amount, isForecast: false, status: 'Não é receita', paymentMethod: 'Pix',
+    }, undefined, { creditor: 'Credor do teste', debtType: 'Empréstimo bancário' });
+    const posted = (await getDocsFromServer(query(collection(db, 'transactions'),
+      where('ownerUid', '==', uid), where('description', '==', 'Crédito com baixa parcial'), limit(1)))).docs[0];
+    const changedDebt = doc(db, 'debts', posted.data().debtId);
+    await updateDoc(changedDebt, { principalBalance: 900, status: 'Em dia', updatedAt: serverTimestamp() });
+    await reverseFinancialMovement(uid, actor, posted.id, 'Corrigir o lançamento original');
+    assert.equal((await getDocFromServer(posted.ref)).data().status, 'Estornado');
+    assert.equal((await getDocFromServer(changedDebt)).data().principalBalance, 900);
 
     const parcel = (await getDocsFromServer(query(collection(db, 'parcelas'), where('ownerUid', '==', uid), limit(1)))).docs[0];
     const originalParcel = { id: parcel.id, ...parcel.data() };

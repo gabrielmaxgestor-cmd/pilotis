@@ -939,11 +939,13 @@ service cloud.firestore {
         && restored.status == 'A vencer' && restored.receiptReversalAuditId == auditId;
     }
 
-    function reversedDebtMatches(debtId, before) {
+    function reversedDebtMatches(debtId, originalId, before) {
       let debt = get(/databases/$(database)/documents/debts/$(debtId)).data;
-      let settled = getAfter(/databases/$(database)/documents/debts/$(debtId)).data;
-      return debt.ownerUid == request.auth.uid && debt.status == 'Em uso' && debt.principalBalance == before.amount
-        && settled.status == 'Quitada' && settled.principalBalance == 0 && settled.updatedAt == request.time;
+      let after = getAfter(/databases/$(database)/documents/debts/$(debtId)).data;
+      let unmodified = debtId == 'debt-' + originalId && debt.status == 'Em uso' && debt.principalBalance == before.amount;
+      return debt.ownerUid == request.auth.uid && (unmodified
+        ? after.status == 'Quitada' && after.principalBalance == 0 && after.updatedAt == request.time
+        : after == debt);
     }
 
     function validReversalUpdate(originalId, before, after) {
@@ -958,7 +960,7 @@ service cloud.firestore {
         && isReversalReason(after.reversalReason) && audit.afterValue == after.reversalReason
         && inverse.status == 'Estorno' && inverse.reversalOfId == originalId && inverse.reversalAuditId == auditId
         && inverse.createdAt == request.time
-        && (debtId == '' || reversedDebtMatches(debtId, before))
+        && (debtId == '' || reversedDebtMatches(debtId, originalId, before))
         && ((audit.entityType == 'transactions' && before.get('installmentId', '') == ''
           && currentAudit(auditId, 'transactions', originalId, after.updatedBy))
           || (audit.entityType == 'parcelas' && isValidId(audit.entityId)

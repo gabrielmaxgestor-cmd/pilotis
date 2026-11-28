@@ -1474,19 +1474,22 @@ export async function reverseFinancialMovement(uid: string, actor: ActorRole, id
       throw new Error('Lançamento indisponível para estorno. Se for uma parcela, use Desfazer recebimento.');
     }
     const debtRef = original.debtId ? doc(db, 'debts', original.debtId) : null;
+    let debtKept = false;
     if (debtRef) {
       const debt = (await tx.get(debtRef)).data() as Debt | undefined;
-      if (!debt || debt.ownerUid !== uid || debt.status !== 'Em uso' || debt.principalBalance !== original.amount) {
-        throw new Error('A dívida vinculada já teve movimentação. Revise a dívida antes de estornar o empréstimo.');
+      if (!debt || debt.ownerUid !== uid) throw new Error('A dívida vinculada está indisponível.');
+      debtKept = debtRef.id !== 'debt-' + id || debt.status !== 'Em uso' || debt.principalBalance !== original.amount;
+      if (!debtKept) {
+        tx.update(debtRef, {
+          status: 'Quitada', principalBalance: 0, remainingInstallments: 0,
+          updatedBy: actor, updatedAt: serverTimestamp(),
+        });
       }
-      tx.update(debtRef, {
-        status: 'Quitada', principalBalance: 0, remainingInstallments: 0,
-        updatedBy: actor, updatedAt: serverTimestamp(),
-      });
     }
     writeReversal(tx, uid, actor, id, original, reversalId, auditId, detail);
     writeReversalAudit(tx, uid, actor, auditId, 'transactions', id,
-      'Estorno · ' + original.description, original.status + ' · ' + formatBRL(original.amount), detail);
+      (debtKept ? 'Estorno com dívida vinculada preservada · ' : 'Estorno · ') + original.description,
+      original.status + ' · ' + formatBRL(original.amount), detail);
   });
 }
 
