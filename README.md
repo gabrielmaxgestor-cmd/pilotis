@@ -32,7 +32,7 @@ O app usa o projeto e o banco de `firebase-applet-config.json`. O banco de `fire
 
 A conta do Pilotis é `gabrielmaxgestor@gmail.com`. Ela precisa existir no Firebase Authentication do projeto indicado em `firebase-applet-config.json`, com o provedor **E-mail/senha** e o e-mail verificado. A senha é definida no Firebase Authentication.
 
-Para ativar a mudança em um ambiente já publicado, atualize `VITE_COMPANY_EMAIL` e `COMPANY_EMAIL` se estiverem definidas na hospedagem. Faça um novo build e publique as regras do Firestore no banco nomeado. Publique também `storage.rules` se as fotos usam Firebase Storage. Coordene as publicações na mesma janela para manter o cliente e as regras com o mesmo e-mail.
+Para ativar a mudança em um ambiente já publicado, atualize `VITE_COMPANY_EMAIL` e `COMPANY_EMAIL` se estiverem definidas na hospedagem. Faça um novo build e publique as regras do Firestore no banco nomeado. Publique também `storage.rules` para os anexos de Conformidade e, quando configurado, para as fotos do diário. Coordene as publicações na mesma janela para manter o cliente e as regras com o mesmo e-mail.
 
 Os registros pertencem ao UID que os criou. Se a conta autorizada for trocada por uma conta com outro UID, a alteração do e-mail autorizado por si só não transfere os registros.
 
@@ -120,7 +120,7 @@ gcloud run deploy pilotis \
 A URL da interface é pública. O Firebase Authentication protege os módulos e o endpoint de IA exige o ID token da conta verificada. O servidor lê a porta `PORT` fornecida pelo Cloud Run. Consulte `/healthz` após o deploy e verifique que `/api/ai/chat` sem token retorna 401.
 
 4. Confirme que o cliente novo já está servindo as consultas paginadas antes de publicar as regras com limite obrigatório. Em produção, oriente usuários com uma aba antiga aberta a recarregar. Execute `npx firebase-tools deploy --only firestore:rules --project "$PROJECT_ID"`.
-5. Confira o domínio do Cloud Run no Firebase Authentication e valide login, recebimentos, planejamento e IA. Aplique `storage.rules` somente se usar o modo Storage para as fotos. O modo padrão gravará JPEGs na subcoleção do Firestore. Para Storage, configure também CORS e gere a imagem com `VITE_DAILY_LOG_PHOTO_BACKEND=storage`.
+5. Confira o domínio do Cloud Run no Firebase Authentication e valide login, recebimentos, planejamento e IA. Aplique `storage.rules` para habilitar o acesso aos anexos de Conformidade e às fotos que usam o Storage. O modo padrão gravará JPEGs na subcoleção do Firestore. Para Storage, configure também CORS e gere a imagem com `VITE_DAILY_LOG_PHOTO_BACKEND=storage`.
 
 Referências oficiais de publicação do [Cloud Run](https://cloud.google.com/run/docs/deploying-source-code) e de [segredos no Cloud Run](https://cloud.google.com/run/docs/configuring/services/secrets).
 
