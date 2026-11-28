@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { SortHeading, type ColumnSort } from './ListFilters';
 import { EmptyState } from './PilotisUI';
 
 export interface DataListColumn<T> {
@@ -21,6 +22,7 @@ export interface DataListProps<T> {
   emptyActionLabel?: string;
   onEmptyAction?: () => void;
   caption?: string;
+  sort?: ColumnSort;
 }
 
 export function DataList<T>({
@@ -34,6 +36,7 @@ export function DataList<T>({
   emptyActionLabel,
   onEmptyAction,
   caption,
+  sort,
 }: DataListProps<T>) {
   if (rows.length === 0) {
     return (
@@ -56,15 +59,13 @@ export function DataList<T>({
             <thead>
               <tr className="bg-[#F0EEE9] border-b border-[#E4E1DA]">
                 {columns.map((col) => (
-                  <th
+                  <SortHeading
                     key={col.key}
-                    scope="col"
+                    column={col.key} label={col.header} sort={sort}
                     className={`px-4 py-3 text-xs font-semibold text-[#5B6472] whitespace-nowrap ${
                       col.align === 'right' ? 'text-right' : 'text-left'
                     }`}
-                  >
-                    {col.header}
-                  </th>
+                  />
                 ))}
               </tr>
             </thead>

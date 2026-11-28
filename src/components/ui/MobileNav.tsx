@@ -5,16 +5,19 @@ import {
   MoreHorizontal,
   Users,
 } from 'lucide-react';
+import { SearchButton } from './GlobalSearch';
 import type { AppRouteKey } from './Sidebar';
 
 export function MobileTopBar({
   title,
   onGoHome,
   onGoMore,
+  onSearch,
 }: {
   title: string;
   onGoHome: () => void;
   onGoMore: () => void;
+  onSearch?: () => void;
 }) {
   return (
     <header className="md:hidden sticky top-0 z-30 bg-white border-b border-[#E4E1DA] px-4 h-[54px] flex items-center justify-between gap-3 no-print">
@@ -32,6 +35,7 @@ export function MobileTopBar({
         </span>
       </div>
 
+      {onSearch && <SearchButton mobile onClick={onSearch} />}
       <button
         type="button"
         onClick={onGoMore}

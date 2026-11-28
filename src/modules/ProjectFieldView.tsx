@@ -354,7 +354,7 @@ export function FieldStages({ uid, project, stages, pops }: { uid: string; proje
           </li>)}
         </ul>
       )}
-      <Modal open={Boolean(editing)} onClose={() => { if (!saving) setEditing(null); }} title={editing?.name ?? 'Atualizar etapa'} maxWidth="max-w-lg">
+      <Modal open={Boolean(editing)} onClose={() => setEditing(null)} title={editing?.name ?? 'Atualizar etapa'} maxWidth="max-w-lg">
         <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); void save(false); }}>
           <label className="grid gap-1 text-sm font-semibold">Progresso (%)
             <input type="number" inputMode="decimal" min={0} max={100} step="any" className={input}

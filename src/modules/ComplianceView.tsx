@@ -1,4 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { ListToolbar, useListFilters, type ColumnSort } from '../components/ui/ListFilters';
+import { recordDay } from '../domain/listQuery';
+import { useViewParam, useViewTab } from '../hooks/useViewUrl';
 import { DataList, type DataListColumn } from '../components/ui/DataList';
 import { AlertNote, KpiCard, Modal, PageHeader, ProgressBar, RegisteredBySelect, StatusBadge, Tabs } from '../components/ui/PilotisUI';
 import {
@@ -48,7 +51,7 @@ function ComplianceStatusBadge({ status, kind }: { status: ComplianceStatus; kin
     tone={status === 'Em atraso' ? 'bad' : status === 'Vence em breve' || status === 'Pendente' || status === 'Parcial' ? 'warn' : 'ok'} />;
 }
 
-function Records({ rows, kind, today, onEdit, onFile }: OptionActions & { rows: ComplianceItem[]; kind: ComplianceKind; today: string }) {
+function Records({ rows, kind, today, onEdit, onFile, sort }: OptionActions & { rows: ComplianceItem[]; kind: ComplianceKind; today: string; sort: ColumnSort }) {
   const columns: DataListColumn<ComplianceItem>[] = [
     { key: 'name', header: kind === 'Obrigação' ? 'Guia ou declaração' : 'Registro', render: (row) => <div>
       <strong className="break-words">{row.title}</strong><p className="text-xs text-[#5B6472]">{categoryOf(row)}</p>
@@ -68,7 +71,7 @@ function Records({ rows, kind, today, onEdit, onFile }: OptionActions & { rows: 
     { key: 'edit', header: 'Ação', render: (row) => <button type="button" className={button} onClick={() => onEdit(row)} aria-label={'Editar ' + row.title}>Editar</button> },
   ];
   return <DataList rows={rows} columns={columns} keyExtractor={(row) => row.id}
-    caption={kind} emptyTitle="Sem registros neste recorte" emptyDescription="Os registros cadastrados aparecem aqui."
+    caption={kind} sort={sort} emptyTitle="Sem registros neste recorte" emptyDescription="Os registros cadastrados aparecem aqui."
     renderMobileCard={(row) => <article className={panel}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div><strong className="break-words text-sm">{row.title}</strong><p className="text-xs text-[#5B6472]">{categoryOf(row)}</p></div>
@@ -133,12 +136,15 @@ export function ComplianceView({ uid, data, companyEmail, initialTab }: {
   uid: string; data: PilotisDataState; companyEmail?: string | null; initialTab?: string;
 }) {
   const today = planningTodayISO();
-  const [tab, setTab] = useState(initialTab && tabs.includes(initialTab) ? initialTab : 'Obrigações');
-  const [calendarMonth, setCalendarMonth] = useState(today.slice(0, 7));
-  const [onlyLate, setOnlyLate] = useState(false);
-  const [workProject, setWorkProject] = useState('');
-  const [invoiceProject, setInvoiceProject] = useState('');
-  const [invoiceMonth, setInvoiceMonth] = useState('');
+  const [tab, setTab] = useViewTab('compliance', tabs, initialTab);
+  const [calendarMonthParam, setCalendarMonth] = useViewParam('conformidade.mes', today.slice(0, 7));
+  const calendarMonth = normalizeCompetence(calendarMonthParam) || today.slice(0, 7);
+  const [lateParam, setLateParam] = useViewParam('conformidade.atrasadas');
+  const onlyLate = lateParam === 'sim';
+  const setOnlyLate = (value: boolean) => setLateParam(value ? 'sim' : '');
+  const [workProject, setWorkProject] = useViewParam('conformidade.documentos.obra');
+  const [recordId, setRecordId] = useViewParam('registro');
+  const linkedItem = data.complianceItems.find((row) => row.id === recordId);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [editing, setEditing] = useState<ComplianceItem | null>(null);
   const [pickedFile, setPickedFile] = useState<File | undefined>();
@@ -147,8 +153,6 @@ export function ComplianceView({ uid, data, companyEmail, initialTab }: {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [feedback, setFeedback] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
-
-  useEffect(() => { if (initialTab && tabs.includes(initialTab)) setTab(initialTab); }, [initialTab]);
 
   const summary = calcularResumoConformidade(data.complianceItems, data.transactions, today, data.installments);
   const obligations = data.complianceItems.filter((row) => row.kind === 'Obrigação').sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''));
@@ -162,9 +166,46 @@ export function ComplianceView({ uid, data, companyEmail, initialTab }: {
   const tenderCategories = [...new Set([...TENDER_CATEGORIES, ...readiness.map((row) => row.categoria)])];
   const receipts = getInvoiceReceipts(data.transactions, data.installments);
   const invoiceOptions = [...new Map(receipts.map((row) => [row.projectId, row.projectName || (row.projectId === 'Empresa' ? 'Empresa' : 'Obra vinculada')])).entries()];
-  const pending = pendingInvoiceReceipts(receipts, invoiceProject, invoiceMonth);
-  const receiptsInView = receipts.some((row) => (!invoiceProject || row.projectId === invoiceProject) && (!invoiceMonth || row.date.startsWith(invoiceMonth)));
   const activeKind = kindByTab[tab];
+  const scope = tab === 'Obrigações' ? 'obrigacoes' : tab === 'Certidões' ? 'certidoes'
+    : tab === 'Documentos por obra' ? 'documentos' : 'licitacoes';
+  const source = tab === 'Obrigações' ? obligations : tab === 'Certidões' ? certificates
+    : tab === 'Documentos por obra' ? workDocs : tenderDocs;
+  const places = new Map(data.projects.map((row) => [row.id, row.name]));
+  const recordList = useListFilters('conformidade.' + scope, source, {
+    text: (row) => [row.title, row.id, row.fileName, row.category, row.competence, places.get(row.projectId)],
+    status: (row) => row.kind === 'Certidão' && statusOf(row, today) === 'Em atraso' ? 'Vencida' : statusOf(row, today),
+    projects: (row) => row.projectId || 'Empresa',
+    dates: (row) => row.dueDate || row.issuedDate || recordDay(row.createdAt),
+    columns: [
+      { key: 'name', label: 'Registro', value: (row) => row.title },
+      ...(activeKind === 'Obrigação' ? [{ key: 'competence', label: 'Competência', value: (row: ComplianceItem) => normalizeCompetence(row.competence || '') }]
+        : activeKind === 'Certidão' ? [{ key: 'issue', label: 'Emissão', value: (row: ComplianceItem) => row.issuedDate }] : []),
+      { key: 'date', label: activeKind === 'Obrigação' ? 'Vencimento' : 'Validade', value: (row) => row.dueDate },
+      { key: 'status', label: 'Situação', value: (row) => statusOf(row, today) },
+      { key: 'file', label: 'Arquivo', value: (row) => row.fileName },
+    ],
+  });
+  const invoicePlace = (row: InvoiceReceipt) => row.projectName || invoiceOptions.find(([id]) => id === row.projectId)?.[1] || 'Empresa';
+  const invoiceList = useListFilters('conformidade.notas', pendingInvoiceReceipts(receipts, '', ''), {
+    text: (row) => [row.key, row.description, invoicePlace(row)],
+    status: (row) => row.invoiceStatus,
+    projects: (row) => row.projectId,
+    dates: (row) => row.date,
+    columns: [
+      { key: 'name', label: 'Recebimento', value: (row) => row.description },
+      { key: 'project', label: 'Obra ou empresa', value: invoicePlace },
+      { key: 'date', label: 'Data do recebimento', value: (row) => row.date },
+      { key: 'amount', label: 'Valor recebido', value: (row) => row.amount },
+      { key: 'status', label: 'Nota fiscal', value: (row) => row.invoiceStatus },
+    ],
+  });
+  const filteredObligations = Boolean(recordList.filters.q || recordList.filters.de || recordList.filters.ate ||
+    recordList.filters.status || recordList.filters.obra);
+  const visibleRecords = (rows: ComplianceItem[]) => {
+    const ids = new Set(rows.map((row) => row.id));
+    return recordList.rows.filter((row) => ids.has(row.id));
+  };
 
   function openNew(kind: ComplianceKind, category = '') {
     setEditing(null); setPickedFile(undefined); setError('');
@@ -196,8 +237,7 @@ export function ComplianceView({ uid, data, companyEmail, initialTab }: {
   }
 
   const records = (rows: ComplianceItem[], kind: ComplianceKind) =>
-    <Records rows={rows} kind={kind} today={today} onEdit={openEdit} onFile={(row) => void download(row)} />;
-  const invoicePlace = (row: InvoiceReceipt) => row.projectName || invoiceOptions.find(([id]) => id === row.projectId)?.[1] || 'Empresa';
+    <Records rows={visibleRecords(rows)} kind={kind} today={today} sort={recordList.sort} onEdit={openEdit} onFile={(row) => void download(row)} />;
   const openInvoice = (row: InvoiceReceipt) => { setInvoice(row); setError(''); };
   const invoiceColumns: DataListColumn<InvoiceReceipt>[] = [
     { key: 'name', header: 'Recebimento', render: (row) => <strong className="break-words">{row.description}</strong> },
@@ -218,6 +258,12 @@ export function ComplianceView({ uid, data, companyEmail, initialTab }: {
       </AlertNote>
       {feedback && <AlertNote tone={feedback.tone} title={feedback.tone === 'ok' ? 'Conformidade' : 'Atenção'}>{feedback.text}</AlertNote>}
       <Tabs items={tabs} active={tab} onChange={setTab} />
+      {tab === 'Notas fiscais'
+        ? <ListToolbar key={tab} label="recebimentos sem nota" list={invoiceList}
+            projects={invoiceOptions.map(([id, name]) => ({ id, name }))} />
+        : <ListToolbar key={tab} label={tab.toLocaleLowerCase('pt-BR')} list={recordList}
+            projects={tab === 'Documentos por obra' ? data.projects : tab === 'Obrigações' ? [{ id: 'Empresa', name: 'Empresa' }, ...data.projects] : undefined}
+            projectSelection={tab === 'Documentos por obra' && currentProject ? { value: currentProject.id, change: setWorkProject } : undefined} />}
       <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard label="Obrigações a vencer ou em atraso" value={summary.obrigacoesAVencerOuAtrasadas?.toString() ?? 'Sem dados'} isEmpty={summary.obrigacoesAVencerOuAtrasadas === null} subtext="Prazo nos próximos 7 dias ou vencido" />
         <KpiCard label="Certidões válidas" value={summary.certidoesValidas?.toString() ?? 'Sem dados'} isEmpty={summary.certidoesValidas === null} subtext="Considera a data de validade" />
@@ -242,14 +288,14 @@ export function ComplianceView({ uid, data, companyEmail, initialTab }: {
               <button type="button" className={button} aria-label="Próximo mês"
                 onClick={() => { setCalendarMonth(addMonthsISO(calendarMonth + '-01', 1).slice(0, 7)); setOnlyLate(false); }}>→</button>
               <button type="button" className={button + ' aria-pressed:bg-[#FDECEA]'} aria-pressed={onlyLate}
-                onClick={() => setOnlyLate((value) => !value)}>{late.length ? 'Em atraso (' + late.length + ')' : 'Em atraso'}</button>
+                onClick={() => setOnlyLate(!onlyLate)}>{late.length ? 'Em atraso (' + late.length + ')' : 'Em atraso'}</button>
             </div>
           </div>
-          {!onlyLate && <ObligationsCalendar month={calendarMonth} items={currentMonth} today={today} onEdit={openEdit} />}
+          {!onlyLate && <ObligationsCalendar month={calendarMonth} items={visibleRecords(currentMonth)} today={today} onEdit={openEdit} />}
         </section>
-        <h2 className="text-base font-semibold">{onlyLate ? 'Obrigações em atraso' : formatMonthLabelBR(calendarMonth)}</h2>
-        {records(onlyLate ? late : currentMonth, 'Obrigação')}
-        {obligations.some((row) => !row.dueDate) && <><h3 className="text-sm font-semibold">Registros sem vencimento</h3>
+        <h2 className="text-base font-semibold">{onlyLate ? 'Obrigações em atraso' : filteredObligations ? 'Obrigações no recorte' : formatMonthLabelBR(calendarMonth)}</h2>
+        {records(onlyLate ? late : filteredObligations ? obligations : currentMonth, 'Obrigação')}
+        {!filteredObligations && !onlyLate && obligations.some((row) => !row.dueDate) && <><h3 className="text-sm font-semibold">Registros sem vencimento</h3>
           {records(obligations.filter((row) => !row.dueDate), 'Obrigação')}</>}
       </>}
 
@@ -260,11 +306,6 @@ export function ComplianceView({ uid, data, companyEmail, initialTab }: {
 
       {tab === 'Documentos por obra' && <section className={panel}>
         {!currentProject ? <p className={note}>Sem obras cadastradas para conferir documentos.</p> : <>
-          <label className={label + ' max-w-md'}>Obra
-            <select className={field} value={currentProject.id} onChange={(event) => setWorkProject(event.target.value)}>
-              {data.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-            </select>
-          </label>
           {[...WORK_DOCUMENT_TYPES, ...(workDocs.some((row) => categoryOf(row) === 'Outros') ? ['Outros'] : [])].map((type) => {
             const rows = workDocs.filter((row) => categoryOf(row) === type);
             const checked = rows.some((row) => isReady(statusOf(row, today)) && Boolean(row.fileName || row.attachmentId));
@@ -283,22 +324,9 @@ export function ComplianceView({ uid, data, companyEmail, initialTab }: {
       {tab === 'Notas fiscais' && <>
         <section className={panel}>
           <h2 className="text-base font-semibold">Recebimentos sem nota emitida</h2>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <label className={label}>Obra ou empresa
-              <select className={field} value={invoiceProject} onChange={(event) => setInvoiceProject(event.target.value)}>
-                <option value="">Todos os centros</option>{invoiceOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-              </select>
-            </label>
-            <div className="flex items-end gap-2">
-              <label className={label + ' flex-1'}>Mês de recebimento
-                <input type="month" className={field} value={invoiceMonth} onChange={(event) => setInvoiceMonth(event.target.value)} />
-              </label>
-              {invoiceMonth && <button type="button" className={button} onClick={() => setInvoiceMonth('')}>Todos os meses</button>}
-            </div>
-          </div>
-          <p className="text-sm">Total pendente no recorte · <strong>{formatBRL(receiptsInView ? sumPendingInvoices(pending) : null)}</strong></p>
+          <p className="text-sm">Total pendente no recorte · <strong>{formatBRL(receipts.length ? sumPendingInvoices(invoiceList.rows) : null)}</strong></p>
         </section>
-        <DataList rows={pending} columns={invoiceColumns} keyExtractor={(row) => row.key}
+        <DataList rows={invoiceList.rows} columns={invoiceColumns} sort={invoiceList.sort} keyExtractor={(row) => row.key}
           emptyTitle="Sem recebimentos pendentes de nota no recorte" emptyDescription="Os registros vêm dos recebimentos realizados no Financeiro."
           renderMobileCard={(row) => <article className={panel}>
             <div className="flex flex-wrap items-start justify-between gap-2"><strong className="break-words text-sm">{row.description}</strong><StatusBadge label={row.invoiceStatus} tone="warn" /></div>
@@ -329,7 +357,20 @@ export function ComplianceView({ uid, data, companyEmail, initialTab }: {
         })}
       </section>}
 
-      <Modal open={Boolean(draft)} onClose={() => { if (!saving) setDraft(null); }} title={editing ? 'Editar registro' : 'Novo registro'} maxWidth="max-w-2xl">
+      <Modal open={Boolean(linkedItem)} onClose={() => setRecordId('')} title={linkedItem?.title ?? 'Documento'}>
+        {linkedItem && <div className="grid gap-3">
+          <p className={note}>{linkedItem.kind} · {categoryOf(linkedItem)}</p>
+          <ComplianceStatusBadge status={statusOf(linkedItem, today)} kind={linkedItem.kind} />
+          {linkedItem.projectId && <p>Obra · {places.get(linkedItem.projectId) || linkedItem.projectId}</p>}
+          {linkedItem.dueDate && <p>Prazo · {formatDateBR(linkedItem.dueDate)}</p>}
+          {linkedItem.notes && <p className="break-words text-sm">{linkedItem.notes}</p>}
+          <div className="flex flex-wrap gap-2">
+            {linkedItem.attachmentId && <button type="button" className={button} onClick={() => void download(linkedItem)}>Baixar arquivo</button>}
+            <button type="button" className={button} onClick={() => { setRecordId(''); openEdit(linkedItem); }}>Editar registro</button>
+          </div>
+        </div>}
+      </Modal>
+      <Modal open={Boolean(draft)} onClose={() => setDraft(null)} title={editing ? 'Editar registro' : 'Novo registro'} maxWidth="max-w-2xl">
         {draft && <form className="grid gap-3" onSubmit={async (event) => {
           event.preventDefault();
           setSaving(true); setError('');
@@ -399,7 +440,7 @@ export function ComplianceView({ uid, data, companyEmail, initialTab }: {
         </form>}
       </Modal>
 
-      <Modal open={Boolean(invoice)} onClose={() => { if (!saving) setInvoice(null); }} title="Confirmar emissão de nota">
+      <Modal open={Boolean(invoice)} onClose={() => setInvoice(null)} title="Confirmar emissão de nota">
         {invoice && <form className="grid gap-3" onSubmit={async (event) => {
           event.preventDefault();
           setSaving(true); setError('');

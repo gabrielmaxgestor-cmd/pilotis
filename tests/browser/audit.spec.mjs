@@ -85,6 +85,64 @@ for (const width of [390, 1440]) {
       await expect(trigger).toBeFocused();
     });
 
+    test('busca global abre o lançamento pela descrição e preserva o foco', async ({ page }) => {
+      await page.goto('/tests/browser/index.html');
+      const trigger = page.getByRole('button', { name: 'Buscar no sistema' });
+      await trigger.click();
+      const search = page.getByRole('dialog', { name: 'Busca global' });
+      const query = search.getByRole('searchbox', { name: 'Buscar por nome ou número' });
+      await expect(query).toBeFocused();
+      await query.fill('provante');
+      await expect(search.getByRole('heading', { name: 'Financeiro' })).toBeVisible();
+      await search.getByRole('button', { name: 'Comprovante de despesa Lançamento' }).click();
+      const record = page.getByRole('dialog', { name: 'Comprovante de despesa' });
+      await expect(record).toBeVisible();
+      await expect(page).toHaveURL(/registro=expense/);
+      await page.keyboard.press('Escape');
+      await expect(record).toHaveCount(0);
+      await expect(trigger).toBeFocused();
+      await page.keyboard.press('Control+k');
+      await expect(query).toBeFocused();
+      await checkAccessibility(page);
+      await page.keyboard.press('Escape');
+      await expect(trigger).toBeFocused();
+    });
+
+    test('filtros do Financeiro persistem na URL e a folha mantém o foco', async ({ page }) => {
+      await openFinance(page);
+      const filters = page.getByRole('group', { name: 'Filtros de lançamentos' });
+      const query = filters.getByRole('searchbox', { name: 'Buscar lançamentos' });
+      await query.fill('DÉSPESA');
+      await expect(page).toHaveURL(/lancamentos\.q=/);
+      if (width === 390) {
+        const trigger = filters.getByRole('button', { name: 'Filtros' });
+        await trigger.click();
+        const sheet = page.getByRole('dialog', { name: 'Filtros · lançamentos' });
+        await sheet.getByLabel('Situação').selectOption('Pago');
+        const first = sheet.getByRole('button', { name: 'Fechar' });
+        const last = sheet.getByRole('button', { name: 'Ver resultados' });
+        await first.focus();
+        await page.keyboard.press('Shift+Tab');
+        await expect(last).toBeFocused();
+        await page.keyboard.press('Tab');
+        await expect(first).toBeFocused();
+        await checkAccessibility(page);
+        await page.keyboard.press('Escape');
+        await expect(sheet).toHaveCount(0);
+        await expect(trigger).toBeFocused();
+      } else {
+        await filters.getByLabel('Situação').selectOption('Pago');
+        await page.getByRole('columnheader', { name: 'Valor' }).getByRole('button').click();
+        await expect(page.getByRole('columnheader', { name: 'Valor' })).toHaveAttribute('aria-sort', 'ascending');
+      }
+      await expect(page).toHaveURL(/lancamentos\.status=Pago/);
+      await page.reload();
+      await expect(query).toHaveValue('DÉSPESA');
+      await expect(page.getByRole('button', { name: 'Comprovante de despesa', exact: true })).toBeVisible();
+      await query.fill('sem correspondência');
+      await expect(page.getByRole('button', { name: 'Comprovante de despesa', exact: true })).toHaveCount(0);
+    });
+
     test('prévia de CSV sinaliza empréstimo marcado como faturamento', async ({ page }) => {
       await page.goto('/tests/browser/index.html?route=settings');
       await page.getByLabel('Colar linhas CSV manualmente').fill([

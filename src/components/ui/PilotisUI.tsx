@@ -1,6 +1,6 @@
 import {
   Component,
-  useEffect,
+  useEffect, useLayoutEffect,
   useId,
   useRef,
   type ButtonHTMLAttributes,
@@ -787,6 +787,7 @@ export function Modal({
   children,
   footer,
   maxWidth = 'max-w-xl',
+  initialFocusRef,
 }: {
   open: boolean;
   onClose: () => void;
@@ -795,27 +796,43 @@ export function Modal({
   children: ReactNode;
   footer?: ReactNode;
   maxWidth?: string;
+  initialFocusRef?: { readonly current: HTMLElement | null };
 }) {
   const titleId = useId();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const dialog = dialogRef.current;
     if (!open || !dialog) return;
     const trigger = document.activeElement;
     if (!dialog.open) dialog.showModal();
-    titleRef.current?.focus();
+    (initialFocusRef?.current ?? titleRef.current)?.focus();
     return () => {
       if (dialog.open) dialog.close();
       if (trigger instanceof HTMLElement && trigger.isConnected) trigger.focus();
     };
-  }, [open]);
+  }, [open, initialFocusRef]);
 
   if (!open) return null;
 
   return (
     <dialog ref={dialogRef} aria-labelledby={titleId}
+      onKeyDown={(event) => {
+        if (event.key !== 'Tab') return;
+        const dialog = event.currentTarget;
+        const stops = [...dialog.querySelectorAll<HTMLElement>(
+          'a[href], button, input, select, textarea, summary, [tabindex], [contenteditable="true"]',
+        )].filter((element) => element.tabIndex >= 0 && !element.matches(':disabled, [type="hidden"]') &&
+          element.getClientRects().length > 0 && getComputedStyle(element).visibility === 'visible');
+        const first = stops[0];
+        const last = stops.at(-1);
+        const current = document.activeElement as HTMLElement | null;
+        if (!first || (event.shiftKey ? current === first : current === last) || !current || !stops.includes(current)) {
+          event.preventDefault();
+          (event.shiftKey ? last ?? titleRef.current : first ?? titleRef.current)?.focus();
+        }
+      }}
       onCancel={(event) => { event.preventDefault(); onClose(); }}
       className="fixed inset-0 m-0 h-full max-h-none w-full max-w-none bg-transparent p-0 backdrop:bg-[#101828]/55">
       <div className="flex min-h-full items-end justify-center md:items-center md:p-4"

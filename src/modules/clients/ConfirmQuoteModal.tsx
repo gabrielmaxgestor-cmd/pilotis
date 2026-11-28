@@ -137,7 +137,7 @@ export function ConfirmQuoteModal({
   return (
     <Modal
       open={open}
-      onClose={() => { if (!submitting) onClose(); }}
+      onClose={onClose}
       title={quote ? `Confirmar orçamento · ${quote.code}` : 'Confirmar orçamento'}
       subtitle="Transação atômica: cria a obra, gera parcelas em /parcelas, contrato em PDF, checklist e envia ao Planejamento"
       maxWidth="max-w-3xl"

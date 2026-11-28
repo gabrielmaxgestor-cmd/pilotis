@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
+import { ListToolbar, useListFilters } from '../components/ui/ListFilters';
+import { useViewParam, useViewTab } from '../hooks/useViewUrl';
+import { addDaysISO, isValidISODate } from '../domain/formatters';
 import { PostConstructionView, ProjectClosureView } from './ProjectClosureView';
 import { FieldStages, ProjectDiary } from './ProjectFieldView';
 import { ProjectScheduleView, ScheduleProgressChart } from './ProjectScheduleView';
@@ -118,7 +121,8 @@ export function ProjectPlanningView({
   selectedProjectId: string;
   onSelectProject: (id: string) => void;
 }) {
-  const [tab, setTab] = useState('Visão geral');
+  const [tab, setTab] = useViewTab('planning', PLAN_TABS);
+  const [selectedPhase, setSelectedPhase] = useViewParam('etapas.fase');
   const [projectFilter, setProjectFilter] = useState('Todas');
 
   // New Project from Template Modal
@@ -201,6 +205,28 @@ export function ProjectPlanningView({
   );
   const originalBaseline = data.baselines?.find((baseline) => baseline.projectId === activeProject?.id && baseline.version === 1);
   const criticalIds = new Set(schedule?.criticalPath.etapasCriticas ?? []);
+  const stageDeadline = (stage: ProjectStage) => isValidISODate(activeProject?.startDate)
+    ? addDaysISO(activeProject.startDate, Math.ceil((schedule?.details.get(stage.id)?.terminoMaisCedo
+      ?? stage.startWeek + stage.durationWeeks) * 7)) : '';
+  const stages = useListFilters('etapas', projectStages, {
+    text: (row) => [row.wbsCode, row.name, row.phase, row.deliverable, row.responsible,
+      data.pops.find((pop) => pop.id === row.popId)?.title],
+    status: (row) => row.status, projects: (row) => row.projectId, dates: stageDeadline,
+    interval: (row) => isValidISODate(activeProject?.startDate) ? [
+      addDaysISO(activeProject.startDate, Math.floor((schedule?.details.get(row.id)?.inicioMaisCedo ?? row.startWeek) * 7)),
+      stageDeadline(row),
+    ] : undefined,
+    columns: [
+      { key: 'code', label: 'Código EAP', value: (row) => row.wbsCode },
+      { key: 'title', label: 'Etapa', value: (row) => row.name },
+      { key: 'phase', label: 'Fase', value: (row) => row.phase },
+      { key: 'assignee', label: 'Responsável', value: (row) => row.responsible },
+      { key: 'end', label: 'Término', value: stageDeadline },
+      { key: 'duration', label: 'Duração', value: (row) => row.durationWeeks },
+      { key: 'budget', label: 'Custo orçado', value: (row) => row.budgetedCost },
+      { key: 'status', label: 'Situação', value: (row) => row.status },
+    ],
+  });
   const projectProgress = activeProject ? calcularProgressoObra(activeProject.id, projectStages) : null;
   const curvaSData = useMemo(() => calcularCurvaSObra(
     projectStages, schedule?.referenceWeek, originalBaseline, tab === 'Visão geral',
@@ -510,6 +536,10 @@ export function ProjectPlanningView({
             </button>
           </div>
           <Tabs items={PLAN_TABS} active={tab} onChange={setTab} />
+          {['EAP', 'Cronograma', 'Kanban'].includes(tab) && <ListToolbar label="etapas" list={stages}
+            projects={data.projects} projectSelection={{ value: activeProject.id, change: (id) => { setSelectedPhase(''); onSelectProject(id); } }}
+            phase={tab === 'Kanban' ? { value: selectedPhase, change: setSelectedPhase,
+              options: [...new Set(projectStages.map((stage) => stage.phase))] } : undefined} />}
 
           {tab === 'Visão geral' && (
             <>
@@ -708,7 +738,7 @@ export function ProjectPlanningView({
                 </div>
                 {!awaitingScheduleTemplate && <button type="button" onClick={openCreateStage} className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm font-semibold">Adicionar pacote</button>}
               </header>
-              {groupStages(projectStages).map(([phase, deliveries]) => (
+              {groupStages(stages.rows).map(([phase, deliveries]) => (
                 <section key={phase} className="overflow-hidden rounded-xl border border-[#E4E1DA] bg-white">
                   <div className="flex flex-wrap justify-between gap-2 bg-[#E6EEFB] px-4 py-3">
                     <h3 className="text-sm font-bold text-[#14181F]">{phase}</h3>
@@ -740,7 +770,7 @@ export function ProjectPlanningView({
                   ))}
                 </section>
               ))}
-              {!projectStages.length && <p className="text-sm text-[#5B6472]">Sem dados na EAP.</p>}
+              {!stages.rows.length && <p className="text-sm text-[#5B6472]">{projectStages.length ? 'Nenhuma etapa neste filtro.' : 'Sem dados na EAP.'}</p>}
             </section>
           )}
 
@@ -750,6 +780,7 @@ export function ProjectPlanningView({
               uid={uid}
               project={activeProject}
               stages={projectStages}
+              visibleStages={stages.rows}
               schedule={schedule}
               baselines={data.baselines ?? []}
               cycle={scheduleCycle}
@@ -758,7 +789,7 @@ export function ProjectPlanningView({
           )}
 
           {tab === 'Kanban' && schedule && (
-            <ProjectKanban key={activeProject.id} uid={uid} project={activeProject} stages={projectStages} data={data} schedule={schedule} onEdit={openEditStage} />
+            <ProjectKanban key={activeProject.id} uid={uid} project={activeProject} stages={projectStages} visibleStages={stages.rows.filter((stage) => !selectedPhase || stage.phase === selectedPhase)} data={data} schedule={schedule} onEdit={openEditStage} />
           )}
           {tab === 'Recursos' && (
             <ProjectResources key={activeProject.id} uid={uid} project={activeProject} stages={projectStages} data={data} />

@@ -261,11 +261,12 @@ function ScheduleTimeline({
 }
 
 export function ProjectScheduleView({
-  uid, project, stages, schedule, baselines, cycle, onEdit,
+  uid, project, stages, visibleStages = stages, schedule, baselines, cycle, onEdit,
 }: {
   uid: string;
   project: Project;
   stages: ProjectStage[];
+  visibleStages?: ProjectStage[];
   schedule: Schedule;
   baselines: ScheduleBaseline[];
   cycle: string | null;
@@ -328,7 +329,9 @@ export function ProjectScheduleView({
               </span>
             </label>
           )}
-          <ScheduleTimeline project={project} stages={stages} schedule={schedule} baseline={selected} onEdit={onEdit} />
+          {visibleStages.length
+            ? <ScheduleTimeline project={project} stages={visibleStages} schedule={schedule} baseline={selected} onEdit={onEdit} />
+            : <p className="text-sm text-[#5B6472]">Nenhuma etapa neste filtro.</p>}
           <details className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm">
             <summary className="cursor-pointer rounded font-semibold focus-visible:ring-2 focus-visible:ring-[#1F3A5F]">Histórico de linhas de base</summary>
             {versions.length === 0 ? <p className="mt-2 text-[#5B6472]">Nenhum replanejamento registrado.</p> : (
@@ -351,7 +354,7 @@ export function ProjectScheduleView({
         </>
       )}
 
-      <Modal open={isOpen} onClose={() => { if (!isSaving) setIsOpen(false); }} title="Replanejar cronograma" maxWidth="max-w-lg">
+      <Modal open={isOpen} onClose={() => setIsOpen(false)} title="Replanejar cronograma" maxWidth="max-w-lg">
         <form className="grid gap-4" onSubmit={async (event) => {
           event.preventDefault();
           setError(null);

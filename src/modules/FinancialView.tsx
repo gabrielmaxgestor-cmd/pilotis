@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
+import { ListToolbar, SortHeading, useListFilters } from '../components/ui/ListFilters';
+import { useViewParam, useViewTab } from '../hooks/useViewUrl';
+import type { ListSchema } from '../domain/listQuery';
 import { DataList } from '../components/ui/DataList';
 import { CompanyPdfHeader } from '../components/ui/CompanyPdfHeader';
 import {
@@ -129,13 +132,10 @@ export function FinancialView({
   externalNewTxOpen?: boolean;
   onCloseExternalNewTx?: () => void;
 }) {
-  const [tab, setTab] = useState(initialTab && FIN_TABS.includes(initialTab) ? initialTab : 'Visão geral');
-
-  useEffect(() => {
-    if (initialTab && FIN_TABS.includes(initialTab)) {
-      setTab(initialTab);
-    }
-  }, [initialTab]);
+  const [tab, setTab] = useViewTab('financial', FIN_TABS, initialTab);
+  const [recordId, setRecordId] = useViewParam('registro');
+  const selectedRecord = data.transactions.find((row) => row.id === recordId);
+  const [visibleTransactions, setVisibleTransactions] = useState(15);
 
   useEffect(() => {
     if (initialTab !== 'Simulador' || tab !== 'Visão geral') return;
@@ -144,8 +144,6 @@ export function FinancialView({
     simulator?.focus({ preventScroll: true });
   }, [initialTab, tab]);
 
-  const [receivableFilter, setReceivableFilter] = useState('A vencer');
-  const [payableFilter, setPayableFilter] = useState('A vencer');
   const [selectedDreProjectId, setSelectedDreProjectId] = useState<string>('');
 
   // DRE da empresa (período)
@@ -562,66 +560,56 @@ export function FinancialView({
       })
     : null;
 
-  // A receber filtering
-  const installmentsSorted = useMemo(
-    () =>
-      [...data.installments].sort(
-        (a, b) => a.dueDate.localeCompare(b.dueDate) || a.number - b.number,
-      ),
-    [data.installments],
-  );
-
-  const installmentsFiltered = installmentsSorted.filter((inst) => {
-    const resolved = resolverStatusParcela(
-      { status: inst.status, vencimento: inst.dueDate },
-      todayStr,
-    );
-    if (receivableFilter === 'Todas') return true;
-    if (receivableFilter === 'Pagas') return resolved === 'Recebida';
-    if (receivableFilter === 'Em atraso') return resolved === 'Em atraso';
-    return resolved === 'A vencer';
+  const centers = [{ id: 'Empresa', name: 'Empresa' }, ...data.projects];
+  function txStatus(row: FinancialTransaction) {
+    return resolverStatusLancamento({
+      tipo: row.entryKind === 'income' ? 'receita' : row.entryKind === 'loan' ? 'emprestimo' : 'despesa',
+      status: row.status, previsto: row.isForecast, data: row.date, vencimento: row.dueDate || row.date,
+    }, todayStr);
+  }
+  const txDateKey = (row: FinancialTransaction) => row.dueDate || row.date;
+  const txSchema: ListSchema<FinancialTransaction> = {
+    text: (row) => [row.description, row.projectName, row.category, row.receiptRef, row.id],
+    status: txStatus, projects: (row) => row.projectId, dates: txDateKey,
+    columns: [
+      { key: 'date', label: 'Data', value: txDateKey },
+      { key: 'description', label: 'Descrição', value: (row) => row.description },
+      { key: 'center', label: 'Obra / centro', value: (row) => row.projectName || row.projectId },
+      { key: 'category', label: 'Categoria', value: (row) => row.category },
+      { key: 'invoice', label: 'Nota fiscal', value: (row) => row.invoiceStatus },
+      { key: 'receipt', label: 'Comprovante', value: (row) => row.receiptFile?.name || row.receiptRef },
+      { key: 'amount', label: 'Valor', value: (row) => row.amount },
+      { key: 'status', label: 'Situação', value: txStatus },
+    ],
+  };
+  const transactions = useListFilters('lancamentos', transactionsSorted, txSchema);
+  const installmentsSorted = useMemo(() => [...data.installments].sort(
+    (a, b) => a.dueDate.localeCompare(b.dueDate) || a.number - b.number), [data.installments]);
+  const installmentStatus = (row: Installment) => {
+    const status = resolverStatusParcela({ status: row.status, vencimento: row.dueDate }, todayStr);
+    return status === 'Recebida' ? 'Recebido' : status;
+  };
+  const installments = useListFilters('receber', installmentsSorted, {
+    text: (row) => [row.projectName, row.clientName, row.label, row.id],
+    status: installmentStatus, projects: (row) => row.projectId, dates: (row) => row.dueDate,
+    columns: [
+      { key: 'center', label: 'Obra · cliente', value: (row) => [row.projectName, row.clientName].filter(Boolean).join(' · ') },
+      { key: 'description', label: 'Parcela / descrição', value: (row) => row.number },
+      { key: 'date', label: 'Vencimento', value: (row) => row.dueDate },
+      { key: 'amount', label: 'Valor', value: (row) => row.amount },
+      { key: 'invoice', label: 'Nota fiscal', value: (row) => row.invoiceStatus },
+      { key: 'status', label: 'Situação', value: installmentStatus },
+      { key: 'receipt', label: 'Recebimento', value: (row) => row.receivedDate },
+    ],
   });
+  const manualReceivables = useListFilters('receber', transactionsSorted.filter((row) =>
+    row.entryKind === 'income' && !row.installmentId), txSchema);
+  const payables = useListFilters('pagar', transactionsSorted.filter((row) => row.entryKind === 'expense'),
+    { ...txSchema, columns: txSchema.columns.filter(({ key }) => key !== 'receipt' && key !== 'invoice') });
+  const installmentsFiltered = installments.rows;
+  const manualReceivablesFiltered = manualReceivables.rows;
+  const payablesFiltered = payables.rows;
 
-  const receivablesAll = transactionsSorted.filter((t) => t.entryKind === 'income');
-  const manualReceivablesAll = receivablesAll.filter((t) => !t.installmentId);
-  const manualReceivablesFiltered = manualReceivablesAll.filter((t) => {
-    const resolved = resolverStatusLancamento(
-      {
-        tipo: 'receita',
-        status: t.status,
-        previsto: t.isForecast,
-        vencimento: t.dueDate || t.date,
-        data: t.date,
-      },
-      todayStr,
-    );
-    if (receivableFilter === 'Todas') return true;
-    if (receivableFilter === 'Pagas') return resolved === 'Recebido';
-    if (receivableFilter === 'Em atraso') return resolved === 'Em atraso';
-    return resolved === 'A vencer';
-  });
-
-  // A pagar filtering & overdue tax highlighting
-  const payablesAll = transactionsSorted.filter((t) => t.entryKind === 'expense');
-
-  const payablesFiltered = payablesAll.filter((t) => {
-    const resolved = resolverStatusLancamento(
-      {
-        tipo: 'despesa',
-        status: t.status,
-        previsto: t.isForecast,
-        vencimento: t.dueDate || t.date,
-        data: t.date,
-      },
-      todayStr,
-    );
-    if (payableFilter === 'Todas') return true;
-    if (payableFilter === 'Pagas') return resolved === 'Pago';
-    if (payableFilter === 'Em atraso') return resolved === 'Em atraso';
-    return resolved === 'A vencer';
-  });
-
-  // DRE por obra & DRE da empresa via src/domain/dre.ts
   const activeDreProject =
     data.projects.find((p) => p.id === selectedDreProjectId) || data.projects[0] || null;
   const consolidatedDre = data.projectClosures?.find((row) => row.projectId === activeDreProject?.id);
@@ -671,6 +659,11 @@ export function FinancialView({
       />
 
       <Tabs items={FIN_TABS} active={tab} onChange={setTab} />
+      {tab === 'Visão geral' && <ListToolbar label="lançamentos" list={transactions} projects={centers} />}
+      {tab === 'A receber' && <ListToolbar label="recebimentos" list={{
+        ...installments, statuses: [...new Set([...installments.statuses, ...manualReceivables.statuses])],
+      }} projects={centers} />}
+      {tab === 'A pagar' && <ListToolbar label="contas a pagar" list={payables} projects={centers} />}
 
       {tab === 'Visão geral' && (
         <>
@@ -813,12 +806,12 @@ export function FinancialView({
           <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
             <div className="flex items-center justify-between">
               <h2 className="text-base font-semibold text-[#14181F]">Lançamentos recentes</h2>
-              <span className="text-xs text-[#5B6472]">{transactionsSorted.length} registro(s)</span>
+              <span className="text-xs text-[#5B6472]">{transactions.rows.length} registro(s)</span>
             </div>
 
-            {transactionsSorted.length === 0 ? (
+            {transactions.rows.length === 0 ? (
               <EmptySection
-                title="Nenhum lançamento financeiro cadastrado"
+                title={transactionsSorted.length ? 'Nenhum lançamento neste filtro' : 'Nenhum lançamento financeiro cadastrado'}
                 description="Registre o primeiro lançamento ou importe seu extrato/planilha para calcular saldos e projeções."
                 actionLabel="Novo lançamento"
                 onAction={() => setTxModalOpen(true)}
@@ -829,18 +822,18 @@ export function FinancialView({
                   <table className="w-full border-collapse">
                     <thead>
                       <tr className="bg-[#F0EEE9] text-left text-xs font-semibold text-[#5B6472]">
-                        <th className="py-2.5 px-3 rounded-l-lg">Data</th>
-                        <th className="py-2.5 px-3">Descrição</th>
-                        <th className="py-2.5 px-3">Obra / centro</th>
-                        <th className="py-2.5 px-3">Categoria</th>
-                        <th className="py-2.5 px-3">Nota fiscal</th>
-                        <th className="py-2.5 px-3">Comprovante</th>
-                        <th className="py-2.5 px-3 text-right">Valor</th>
-                        <th className="py-2.5 px-3 rounded-r-lg">Status</th>
+                        <SortHeading column="date" label="Data" sort={transactions.sort} className="py-2.5 px-3 rounded-l-lg" />
+                        <SortHeading column="description" label="Descrição" sort={transactions.sort} className="py-2.5 px-3" />
+                        <SortHeading column="center" label="Obra / centro" sort={transactions.sort} className="py-2.5 px-3" />
+                        <SortHeading column="category" label="Categoria" sort={transactions.sort} className="py-2.5 px-3" />
+                        <SortHeading column="invoice" label="Nota fiscal" sort={transactions.sort} className="py-2.5 px-3" />
+                        <SortHeading column="receipt" label="Comprovante" sort={transactions.sort} className="py-2.5 px-3" />
+                        <SortHeading column="amount" label="Valor" sort={transactions.sort} className="py-2.5 px-3 text-right" />
+                        <SortHeading column="status" label="Status" sort={transactions.sort} className="py-2.5 px-3 rounded-r-lg" />
                       </tr>
                     </thead>
                     <tbody>
-                      {transactionsSorted.slice(0, 15).map((tx) => (
+                      {transactions.rows.slice(0, visibleTransactions).map((tx) => (
                         <tr
                           key={tx.id}
                           className="border-b border-[#E4E1DA] text-[13px] hover:bg-[#F6F5F2]/60"
@@ -848,7 +841,7 @@ export function FinancialView({
                           <td className="py-3 px-3 text-[#14181F] font-medium tabular-nums">
                             {formatShortDateBR(tx.dueDate || tx.date)}
                           </td>
-                          <td className="py-3 px-3 text-[#14181F]">{tx.description}</td>
+                          <td className="py-3 px-3 text-[#14181F]"><button type="button" className="min-w-0 break-words text-left font-semibold text-[#1F3A5F] underline" onClick={() => setRecordId(tx.id)}>{tx.description}</button></td>
                           <td className="py-3 px-3 text-[#5B6472]">
                             {tx.projectName || tx.projectId}
                           </td>
@@ -901,13 +894,13 @@ export function FinancialView({
                 </div>
 
                 <div className="md:hidden flex flex-col gap-2.5">
-                  {transactionsSorted.slice(0, 12).map((tx) => (
+                  {transactions.rows.slice(0, visibleTransactions).map((tx) => (
                     <div
                       key={tx.id}
                       className="border border-[#E4E1DA] rounded-xl p-3.5 flex flex-col gap-1.5"
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <strong className="text-sm text-[#14181F] truncate">{tx.description}</strong>
+                        <button type="button" className="min-w-0 break-words text-left font-semibold text-[#1F3A5F] underline" onClick={() => setRecordId(tx.id)}>{tx.description}</button>
                         <StatusBadge
                           label={resolverStatusLancamento(
                             {
@@ -949,6 +942,9 @@ export function FinancialView({
                 </div>
               </>
             )}
+            {transactions.rows.length > visibleTransactions && <button type="button"
+              className="self-start rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm font-semibold text-[#1F3A5F]"
+              onClick={() => setVisibleTransactions((current) => current + 15)}>Mostrar mais lançamentos</button>}
           </section>
         </>
       )}
@@ -1009,11 +1005,7 @@ export function FinancialView({
                     Entrada e parcelas geradas na confirmação do orçamento
                   </p>
                 </div>
-                <SegmentedControl
-                  items={['Todas', 'A vencer', 'Pagas', 'Em atraso']}
-                  active={receivableFilter}
-                  onChange={setReceivableFilter}
-                />
+
               </div>
 
               {installmentsFiltered.length === 0 ? (
@@ -1023,11 +1015,12 @@ export function FinancialView({
               ) : (
                 <DataList
                   rows={installmentsFiltered}
+                  sort={installments.sort}
                   keyExtractor={(row) => row.id}
                   columns={[
-                    { key: 'project', header: 'Obra · cliente', render: (row) => [row.projectName, row.clientName].filter(Boolean).join(' · ') },
-                    { key: 'number', header: 'Parcela', render: (row) => row.label },
-                    { key: 'due', header: 'Vencimento', render: (row) => formatDateBR(row.dueDate) },
+                    { key: 'center', header: 'Obra · cliente', render: (row) => [row.projectName, row.clientName].filter(Boolean).join(' · ') },
+                    { key: 'description', header: 'Parcela', render: (row) => row.label },
+                    { key: 'date', header: 'Vencimento', render: (row) => formatDateBR(row.dueDate) },
                     { key: 'amount', header: 'Valor', numeric: true, align: 'right', render: (row) => formatBRL(row.amount) },
                     { key: 'invoice', header: 'Nota fiscal', render: (row) => <StatusBadge label={row.invoiceStatus || 'A emitir'} /> },
                     { key: 'status', header: 'Status', render: (row) => <StatusBadge label={resolverStatusParcela({ status: row.status, vencimento: row.dueDate }, todayStr)} /> },
@@ -1049,7 +1042,7 @@ export function FinancialView({
                   <h3 className="text-sm font-semibold text-[#14181F]">
                     Outros recebimentos avulsos
                   </h3>
-                  <DataList caption="Outros recebimentos avulsos" rows={manualReceivablesFiltered} keyExtractor={(tx) => tx.id}
+                  <DataList caption="Outros recebimentos avulsos" rows={manualReceivablesFiltered} sort={manualReceivables.sort} onRowClick={(row) => setRecordId(row.id)} keyExtractor={(tx) => tx.id}
                     columns={[
                       { key: 'description', header: 'Descrição', render: (tx) => tx.description },
                       { key: 'date', header: 'Vencimento', render: (tx) => formatDateBR(tx.dueDate || tx.date) },
@@ -1114,11 +1107,6 @@ export function FinancialView({
           <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-base font-semibold text-[#14181F]">Contas a pagar</h2>
-              <SegmentedControl
-                items={['Todas', 'A vencer', 'Pagas', 'Em atraso']}
-                active={payableFilter}
-                onChange={setPayableFilter}
-              />
             </div>
 
             {payablesFiltered.length === 0 ? (
@@ -1137,10 +1125,11 @@ export function FinancialView({
             ) : (
               <DataList
                 rows={payablesFiltered}
+                sort={payables.sort} onRowClick={(row) => setRecordId(row.id)}
                 keyExtractor={(row) => row.id}
                 columns={[
                   { key: 'description', header: 'Descrição', render: (row) => row.description },
-                  { key: 'due', header: 'Vencimento', render: (row) => formatDateBR(row.dueDate || row.date) },
+                  { key: 'date', header: 'Vencimento', render: (row) => formatDateBR(row.dueDate || row.date) },
                   { key: 'category', header: 'Categoria', render: (row) => row.category },
                   { key: 'center', header: 'Obra / centro', render: (row) => row.projectName || row.projectId },
                   { key: 'amount', header: 'Valor', numeric: true, align: 'right', render: (row) => formatBRL(row.amount) },
@@ -1494,6 +1483,24 @@ export function FinancialView({
           </section>
         </div>
       )}
+
+      <Modal open={Boolean(selectedRecord)} onClose={() => setRecordId('')} title={selectedRecord?.description || 'Lançamento'}>
+        {selectedRecord && <div className="grid gap-3 text-sm">
+          <StatusBadge label={txStatus(selectedRecord)} />
+          <dl className="grid grid-cols-2 gap-3">
+            <div><dt>Valor</dt><dd className="font-semibold">{formatBRL(selectedRecord.amount)}</dd></div>
+            <div><dt>Data</dt><dd>{formatDateBR(selectedRecord.date)}</dd></div>
+            <div><dt>Vencimento</dt><dd>{formatDateBR(selectedRecord.dueDate)}</dd></div>
+            <div><dt>Obra / centro</dt><dd>{selectedRecord.projectName || selectedRecord.projectId || 'Sem dados'}</dd></div>
+            <div><dt>Categoria</dt><dd>{selectedRecord.category}</dd></div>
+            <div><dt>Nota fiscal</dt><dd>{selectedRecord.invoiceStatus || 'Sem dados'}</dd></div>
+            <div><dt>Forma</dt><dd>{selectedRecord.paymentMethod || 'Sem dados'}</dd></div>
+          </dl>
+          {selectedRecord.receiptFile ? <button type="button" className="justify-self-start font-semibold text-[#1F3A5F] underline"
+            onClick={() => selectedRecord.receiptFile && downloadReceipt(selectedRecord.receiptFile)}>Baixar comprovante</button>
+            : selectedRecord.receiptRef && <p>Comprovante · {selectedRecord.receiptRef}</p>}
+        </div>}
+      </Modal>
 
       {/* Modal: Novo lançamento com validação estrita de Empréstimo != Receita e comprovante */}
       <Modal open={isTxOpen} onClose={closeTxModal} title="Novo lançamento">

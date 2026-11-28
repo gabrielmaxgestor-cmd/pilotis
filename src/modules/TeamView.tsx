@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
+import { ListToolbar, SortHeading, useListFilters } from '../components/ui/ListFilters';
+import { normalizeSearch, recordDay } from '../domain/listQuery';
+import { useViewParam, useViewTab } from '../hooks/useViewUrl';
 import { DataList } from '../components/ui/DataList';
 import {
   AlertNote,
@@ -76,9 +79,8 @@ export function TeamView({
   companyEmail?: string | null;
   initialTab?: string;
 }) {
-  const [tab, setTab] = useState(initialTab && TEAM_TABS.includes(initialTab) ? initialTab : 'Cadastro');
-  const [filterType, setFilterType] = useState('Todos');
-  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('');
+  const [tab, setTab] = useViewTab('team', TEAM_TABS, initialTab);
+  const [selectedEmployeeId, setSelectedEmployeeId] = useViewParam('team.colaborador');
 
   // Modals
   const [empModalOpen, setEmpModalOpen] = useState(false);
@@ -158,7 +160,7 @@ export function TeamView({
   // Send payroll actor
   const [payrollActor, setPayrollActor] = useState<ActorRole>('Responsável administrativo');
 
-  const [payrollMonth, setPayrollMonth] = useState(monthKey(todayStr));
+  const [payrollMonth, setPayrollMonth] = useViewParam('equipe.folha.mes', monthKey(todayStr));
   const [payrollDueDate, setPayrollDueDate] = useState('');
   const monthlyPayroll = useMemo(() => calculateTeamPayroll(data, payrollMonth), [data, payrollMonth]);
   const payroll = useMemo(
@@ -175,10 +177,61 @@ export function TeamView({
     return subscribeEmployeeOccurrences(uid, selectedEmployeeId, setOccurrences, () => setOccurrenceError(true));
   }, [uid, selectedEmployeeId]);
 
-  const filteredEmployees = data.employees.filter((e) => {
-    if (filterType === 'Todos') return true;
-    return e.employmentType === filterType;
+  const allocationsByEmployee = new Map<string, PilotisDataState['allocations']>();
+  for (const allocation of data.allocations) {
+    const records = allocationsByEmployee.get(allocation.employeeId) ?? [];
+    records.push(allocation);
+    allocationsByEmployee.set(allocation.employeeId, records);
+  }
+  const safetyStatus = (row: Employee) => [row.asoExpiry, row.nr18Expiry, row.nr35Expiry, row.epiExpiry]
+    .some((date) => avaliarValidadeSst(date || '', todayStr).expiredOrSoon) || row.epiStatus !== 'Em dia'
+    ? 'Com pendências' : 'Em dia';
+  const vacationStatus = (row: Employee) => row.employmentType !== 'CLT'
+    ? 'Sem férias (não CLT)' : row.vacationScheduled ? 'Aprovada' : 'Pendente';
+  const employeeStatus = (row: Employee) => {
+    if (tab === 'Férias') return vacationStatus(row);
+    if (tab === 'Segurança e capacitação') return safetyStatus(row);
+    if (tab === 'Alocação') return resolveTeamWeek(row, weeks[0] ?? todayStr, data).label;
+    return row.employmentType;
+  };
+  const roster = useListFilters('equipe.' + normalizeSearch(tab).replace(/\W+/g, '-'), data.employees, {
+    text: (row) => [row.name, row.role, row.employmentType, row.currentProjectName, row.id],
+    status: employeeStatus,
+    projects: (row) => [row.currentProjectId, ...(allocationsByEmployee.get(row.id) ?? []).map((item) => item.projectId)],
+    dates: (row, projectId) => tab === 'Alocação' ? (allocationsByEmployee.get(row.id) ?? [])
+      .filter((item) => !projectId || item.projectId === projectId).map((item) => item.weekStart)
+      : tab === 'Segurança e capacitação' ? [row.asoExpiry, row.nr18Expiry, row.nr35Expiry, row.epiExpiry || '']
+      : tab === 'Férias' ? [row.vacationStart || '', row.vacationEnd || '']
+      : tab === 'Folha e encargos' ? payrollMonth + '-01'
+      : row.startDate || recordDay(row.createdAt),
+    interval: (row) => tab === 'Férias' && row.vacationStart && row.vacationEnd
+      ? [row.vacationStart, row.vacationEnd] : undefined,
+    columns: [
+      { key: 'name', label: 'Colaborador', value: (row) => row.name },
+      { key: 'role', label: 'Especialidade', value: (row) => row.role },
+      { key: 'employment', label: 'Vínculo', value: (row) => row.employmentType },
+      { key: 'project', label: 'Obra atual', value: (row) => row.currentProjectName },
+      { key: 'salary', label: 'Salário / base', value: (row) => row.baseSalary },
+      { key: 'status', label: 'Situação', value: employeeStatus },
+      { key: 'safety', label: 'Segurança', value: safetyStatus },
+      { key: 'start', label: 'Admissão', value: (row) => row.startDate },
+      ...(tab === 'Férias' ? [
+        { key: 'vacationPeriod', label: 'Período aquisitivo', value: (row: Employee) => row.vacationPeriod },
+        { key: 'vacationStart', label: 'Férias programadas', value: (row: Employee) => row.vacationStart },
+      ] : []),
+      ...(tab === 'Segurança e capacitação' ? [
+        { key: 'aso', label: 'ASO', value: (row: Employee) => row.asoExpiry },
+        { key: 'nr18', label: 'NR-18', value: (row: Employee) => row.nr18Expiry },
+        { key: 'nr35', label: 'NR-35', value: (row: Employee) => row.nr35Expiry },
+        { key: 'epi', label: 'EPIs', value: (row: Employee) => row.epiExpiry || row.epiStatus },
+        { key: 'onboarding', label: 'Integração', value: (row: Employee) => row.onboardingStatus },
+      ] : []),
+    ],
   });
+  const filteredEmployees = roster.rows;
+  const employeeOrder = new Map(filteredEmployees.map((employee, index) => [employee.id, index]));
+  const payrollRows = monthlyPayroll.lines.filter((row) => employeeOrder.has(row.employeeId))
+    .sort((a, b) => employeeOrder.get(a.employeeId)! - employeeOrder.get(b.employeeId)!);
 
   const expiringTrainingCount = useMemo(
     () => calcularPendenciasSegurancaEquipe(data.employees, todayStr),
@@ -189,6 +242,8 @@ export function TeamView({
     employee,
     cells: weeks.map((week) => resolveTeamWeek(employee, week, data)),
   })), [data, weeks]);
+  const matrixByEmployee = new Map(matrix.map((row) => [row.employee.id, row]));
+  const visibleMatrix = filteredEmployees.map((employee) => matrixByEmployee.get(employee.id)!);
   function allocationLabel(cell: ReturnType<typeof resolveTeamWeek>) {
     const stage = data.stages.find((item) => item.id === cell.allocation?.stageId);
     return stage && !cell.conflict && !cell.vacation && cell.started ? stage.name + ' · ' + cell.label : cell.label;
@@ -1060,6 +1115,7 @@ export function TeamView({
       )}
 
       <Tabs items={TEAM_TABS} active={tab} onChange={setTab} />
+      <ListToolbar label="colaboradores" list={roster} projects={data.projects} />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <KpiCard
@@ -1119,23 +1175,18 @@ export function TeamView({
                 <h2 className="text-base font-semibold text-[#14181F]">
                   Equipe cadastrada ({filteredEmployees.length})
                 </h2>
-                <SegmentedControl
-                  items={['Todos', ...EMPLOYMENT_TYPES]}
-                  active={filterType}
-                  onChange={setFilterType}
-                />
               </div>
 
               <div className="hidden md:block overflow-x-auto">
                 <table className="w-full border-collapse">
                   <thead>
                     <tr className="bg-[#F0EEE9] text-left text-xs font-semibold text-[#5B6472]">
-                      <th className="py-2.5 px-3 rounded-l-lg">Colaborador</th>
-                      <th className="py-2.5 px-3">Especialidade</th>
-                      <th className="py-2.5 px-3">Vínculo</th>
-                      <th className="py-2.5 px-3">Obra atual</th>
-                      <th className="py-2.5 px-3 text-right">Salário / base</th>
-                      <th className="py-2.5 px-3 rounded-r-lg">Segurança</th>
+                      <SortHeading column="name" label="Colaborador" sort={roster.sort} className="py-2.5 px-3 rounded-l-lg" />
+                      <SortHeading column="role" label="Especialidade" sort={roster.sort} className="py-2.5 px-3" />
+                      <SortHeading column="employment" label="Vínculo" sort={roster.sort} className="py-2.5 px-3" />
+                      <SortHeading column="project" label="Obra atual" sort={roster.sort} className="py-2.5 px-3" />
+                      <SortHeading column="salary" label="Salário / base" sort={roster.sort} className="py-2.5 px-3 text-right" />
+                      <SortHeading column="safety" label="Segurança" sort={roster.sort} className="py-2.5 px-3 rounded-r-lg" />
                     </tr>
                   </thead>
                   <tbody>
@@ -1151,9 +1202,8 @@ export function TeamView({
                           onClick={() => setSelectedEmployeeId(emp.id)}
                           className="border-b border-[#E4E1DA] text-[13px] hover:bg-[#F6F5F2] cursor-pointer"
                         >
-                          <td className="py-3 px-3 font-semibold text-[#1F3A5F] underline-offset-2 hover:underline">
-                            {emp.name}
-                          </td>
+                          <td className="py-3 px-3"><button type="button" className="font-semibold text-[#1F3A5F] underline"
+                            onClick={(event) => { event.stopPropagation(); setSelectedEmployeeId(emp.id); }}>{emp.name}</button></td>
                           <td className="py-3 px-3 text-[#5B6472]">{emp.role}</td>
                           <td className="py-3 px-3">
                             <StatusBadge label={emp.employmentType} />
@@ -1229,7 +1279,7 @@ export function TeamView({
                         {formatShortDateBR(w)}
                       </div>
                     ))}
-                    {matrix.map(({ employee: emp, cells }) => (
+                    {visibleMatrix.map(({ employee: emp, cells }) => (
                       <div key={emp.id} className="contents">
                         <button
                           type="button"
@@ -1266,7 +1316,7 @@ export function TeamView({
                 </div>
 
                 <ul className="grid gap-2 md:hidden">
-                  {matrix.map(({ employee, cells }) => (
+                  {visibleMatrix.map(({ employee, cells }) => (
                     <li key={employee.id} className="rounded-lg border border-[#E4E1DA] p-3">
                       <details>
                         <summary className="cursor-pointer break-words font-semibold text-[#1F3A5F]">{employee.name}</summary>
@@ -1345,15 +1395,15 @@ export function TeamView({
                   <table className="w-full border-collapse">
                     <thead>
                       <tr className="bg-[#F0EEE9] text-left text-xs font-semibold text-[#5B6472]">
-                        <th className="py-2.5 px-3 rounded-l-lg">Colaborador</th>
-                        <th className="py-2.5 px-3">Vínculo</th>
-                        <th className="py-2.5 px-3">Período aquisitivo</th>
-                        <th className="py-2.5 px-3">Férias programadas</th>
-                        <th className="py-2.5 px-3 rounded-r-lg">Status</th>
+                        <SortHeading column="name" label="Colaborador" sort={roster.sort} className="py-2.5 px-3 rounded-l-lg" />
+                        <SortHeading column="employment" label="Vínculo" sort={roster.sort} className="py-2.5 px-3" />
+                        <SortHeading column="vacationPeriod" label="Período aquisitivo" sort={roster.sort} className="py-2.5 px-3" />
+                        <SortHeading column="vacationStart" label="Férias programadas" sort={roster.sort} className="py-2.5 px-3" />
+                        <SortHeading column="status" label="Status" sort={roster.sort} className="py-2.5 px-3 rounded-r-lg" />
                       </tr>
                     </thead>
                     <tbody>
-                      {data.employees.map((emp) => {
+                      {filteredEmployees.map((emp) => {
                         const isClt = emp.employmentType === 'CLT';
                         const statusLabel = !isClt
                           ? 'Sem férias (não CLT)'
@@ -1381,7 +1431,7 @@ export function TeamView({
                 </div>
 
                 <div className="md:hidden flex flex-col gap-3">
-                  {data.employees.map((emp) => (
+                  {filteredEmployees.map((emp) => (
                     <div key={emp.id} className="border border-[#E4E1DA] rounded-xl p-4 flex flex-col gap-1.5">
                       <div className="flex items-center justify-between">
                         <strong className="text-sm text-[#14181F]">{emp.name}</strong>
@@ -1468,16 +1518,16 @@ export function TeamView({
                   <table className="w-full border-collapse">
                     <thead>
                       <tr className="bg-[#F0EEE9] text-left text-xs font-semibold text-[#5B6472]">
-                        <th className="py-2.5 px-3 rounded-l-lg">Colaborador</th>
-                        <th className="py-2.5 px-3">ASO</th>
-                        <th className="py-2.5 px-3">NR-18</th>
-                        <th className="py-2.5 px-3">NR-35</th>
-                        <th className="py-2.5 px-3">EPIs</th>
-                        <th className="py-2.5 px-3 rounded-r-lg">Integração</th>
+                        <SortHeading column="name" label="Colaborador" sort={roster.sort} className="py-2.5 px-3 rounded-l-lg" />
+                        <SortHeading column="aso" label="ASO" sort={roster.sort} className="py-2.5 px-3" />
+                        <SortHeading column="nr18" label="NR-18" sort={roster.sort} className="py-2.5 px-3" />
+                        <SortHeading column="nr35" label="NR-35" sort={roster.sort} className="py-2.5 px-3" />
+                        <SortHeading column="epi" label="EPIs" sort={roster.sort} className="py-2.5 px-3" />
+                        <SortHeading column="onboarding" label="Integração" sort={roster.sort} className="py-2.5 px-3 rounded-r-lg" />
                       </tr>
                     </thead>
                     <tbody>
-                      {data.employees.map((emp) => {
+                      {filteredEmployees.map((emp) => {
                         const aso = avaliarValidadeSst(emp.asoExpiry, todayStr);
                         const nr18 = avaliarValidadeSst(emp.nr18Expiry, todayStr);
                         const nr35 = avaliarValidadeSst(emp.nr35Expiry, todayStr);
@@ -1508,7 +1558,7 @@ export function TeamView({
                 </div>
 
                 <div className="md:hidden flex flex-col gap-3">
-                  {data.employees.map((emp) => (
+                  {filteredEmployees.map((emp) => (
                     <div key={emp.id} className="border border-[#E4E1DA] rounded-xl p-4 flex flex-col gap-2">
                       <strong className="text-sm text-[#14181F]">{emp.name}</strong>
                       <div className="flex flex-wrap gap-1.5">
@@ -1551,7 +1601,7 @@ export function TeamView({
                   {monthlyPayroll.conflicts.join(', ')}. Corrija as semanas na aba Alocação.
                 </AlertNote>
               )}
-              <DataList rows={monthlyPayroll.lines} keyExtractor={(row, index) => row.employeeId + '-' + index} emptyTitle="Sem dados"
+              <DataList rows={payrollRows} keyExtractor={(row, index) => row.employeeId + '-' + index} emptyTitle="Sem dados"
                 columns={[
                   { key: 'person', header: 'Colaborador', render: (row) => row.employeeName },
                   { key: 'center', header: 'Centro de custo', render: (row) => row.projectName + (row.vacation ? ' · Férias' : '') },

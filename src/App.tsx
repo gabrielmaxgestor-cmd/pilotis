@@ -6,6 +6,8 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { MobileNav, MobileTopBar } from './components/ui/MobileNav';
 import { ErrorBoundary } from './components/ui/PilotisUI';
+import { GlobalSearch, SearchButton, useGlobalSearchShortcut } from './components/ui/GlobalSearch';
+import { updateViewUrl, useViewParam, useViewSearch } from './hooks/useViewUrl';
 import { Sidebar, type AppRouteKey } from './components/ui/Sidebar';
 import { ToastProvider } from './components/ui/Toast';
 import { useCurrentUser } from './hooks/useCurrentUser';
@@ -171,12 +173,10 @@ function AuthenticatedShell({
   const [data, setData] = useState<PilotisDataState>(INITIAL_DATA_STATE);
   const [dashboardReady, setDashboardReady] = useState(false);
   const [dashboardLoadFailed, setDashboardLoadFailed] = useState(false);
-  const [selectedProjectId, setSelectedProjectId] = useState<string>('');
-  const [financialInitialTab, setFinancialInitialTab] = useState<string | undefined>(undefined);
-  const [clientsInitialTab, setClientsInitialTab] = useState<string | undefined>(undefined);
-  const [teamInitialTab, setTeamInitialTab] = useState<string | undefined>(undefined);
-  const [complianceInitialTab, setComplianceInitialTab] = useState<string | undefined>(undefined);
-  const [settingsInitialTab, setSettingsInitialTab] = useState<string | undefined>(undefined);
+  const [selectedProjectId, setSelectedProjectId] = useViewParam('planning.obra');
+  const query = useViewSearch();
+  const [searchOpen, setSearchOpen] = useState(false);
+  useGlobalSearchShortcut(searchOpen, () => setSearchOpen(true));
   const [externalNewTxOpen, setExternalNewTxOpen] = useState(false);
   const [externalNewQuoteOpen, setExternalNewQuoteOpen] = useState(false);
 
@@ -219,28 +219,13 @@ function AuthenticatedShell({
     void importLegacyDailyQueue(uid, data.projects).catch((error) => console.warn('Diário armazenado no aparelho:', error));
   }, [uid, data.projects]);
 
-  function navigateTo(nextRoute: AppRouteKey, subTab?: string) {
+  function navigateTo(nextRoute: AppRouteKey, subTab?: string, selection: Record<string, string> = {}) {
     if (nextRoute === 'login') {
       void onLogout();
       return;
     }
-
-    if (nextRoute === 'financial') {
-      setFinancialInitialTab(subTab);
-    } else if (nextRoute === 'clients') {
-      setClientsInitialTab(subTab);
-    } else if (nextRoute === 'team') {
-      setTeamInitialTab(subTab);
-    } else if (nextRoute === 'compliance') {
-      setComplianceInitialTab(subTab);
-    } else if (nextRoute === 'settings') {
-      setSettingsInitialTab(subTab);
-    }
-
-    const nextPath = ROUTE_TO_PATH[nextRoute] || '/';
-    if (window.location.pathname !== nextPath) {
-      window.history.pushState(null, '', nextPath);
-    }
+    updateViewUrl({ registro: undefined, ...(subTab ? { [nextRoute + '.aba']: subTab } : {}), ...selection },
+      { path: ROUTE_TO_PATH[nextRoute] || '/', push: true });
     setRoute(nextRoute);
     window.scrollTo({ top: 0, behavior: 'auto' });
   }
@@ -262,12 +247,14 @@ function AuthenticatedShell({
       />
 
       <MobileTopBar
+        onSearch={() => setSearchOpen(true)}
         title={getMobileTopTitle(route)}
         onGoHome={() => navigateTo('dashboard')}
         onGoMore={() => navigateTo('more')}
       />
 
       <main id="main-content" tabIndex={-1} className="flex-1 min-w-0 px-4 py-4 pb-24 md:px-8 md:py-6 md:pb-8 max-w-[1360px]">
+        <div className="mb-4 hidden justify-end md:flex"><SearchButton onClick={() => setSearchOpen(true)} /></div>
         <Suspense fallback={<ModuleLoadingFallback />}>
 
           {route === 'more' && (
@@ -288,8 +275,7 @@ function AuthenticatedShell({
               companyEmail={companyEmail}
               onNavigate={handleModuleNavigate}
               onOpenProject={(projectId) => {
-                setSelectedProjectId(projectId);
-                navigateTo('planning');
+                navigateTo('planning', 'Visão geral', { 'planning.obra': projectId });
               }}
               onOpenNewTransaction={() => {
                 setExternalNewTxOpen(true);
@@ -315,7 +301,7 @@ function AuthenticatedShell({
               uid={uid}
               data={data}
               companyEmail={companyEmail}
-              initialTab={financialInitialTab}
+              initialTab={query.get('financial.aba') ?? undefined}
               externalNewTxOpen={externalNewTxOpen}
               onCloseExternalNewTx={() => setExternalNewTxOpen(false)}
             />
@@ -326,12 +312,11 @@ function AuthenticatedShell({
               uid={uid}
               data={data}
               companyEmail={companyEmail}
-              initialTab={clientsInitialTab}
+              initialTab={query.get('clients.aba') ?? undefined}
               externalNewQuoteOpen={externalNewQuoteOpen}
               onCloseExternalNewQuote={() => setExternalNewQuoteOpen(false)}
               onProjectCreated={(projId) => {
-                setSelectedProjectId(projId);
-                navigateTo('planning');
+                navigateTo('planning', 'Visão geral', { 'planning.obra': projId });
               }}
               onNavigateToReceivables={() => {
                 navigateTo('financial', 'A receber');
@@ -350,7 +335,7 @@ function AuthenticatedShell({
           )}
 
           {route === 'team' && (
-            <TeamView uid={uid} data={data} companyEmail={companyEmail} initialTab={teamInitialTab} />
+            <TeamView uid={uid} data={data} companyEmail={companyEmail} initialTab={query.get('team.aba') ?? undefined} />
           )}
 
           {route === 'pops' && (
@@ -358,7 +343,7 @@ function AuthenticatedShell({
           )}
 
           {route === 'compliance' && (
-            <ComplianceView uid={uid} data={data} companyEmail={companyEmail} initialTab={complianceInitialTab} />
+            <ComplianceView uid={uid} data={data} companyEmail={companyEmail} initialTab={query.get('compliance.aba') ?? undefined} />
           )}
 
           {route === 'settings' && (
@@ -366,13 +351,17 @@ function AuthenticatedShell({
               uid={uid}
               data={data}
               companyEmail={companyEmail}
-              initialTab={settingsInitialTab}
+              initialTab={query.get('settings.aba') ?? undefined}
             />
           )}
         </Suspense>
       </main>
 
       <MobileNav active={route} onSelect={(key) => navigateTo(key)} />
+      {searchOpen && <GlobalSearch data={data} onClose={() => setSearchOpen(false)} onSelect={(result) => {
+        setSearchOpen(false);
+        navigateTo(result.module, result.tab, result.params);
+      }} />}
     </div>
   );
 }

@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
-import { AlertNote, EmptySection, Modal, PageHeader, RegisteredBySelect, SegmentedControl, StatusBadge } from '../components/ui/PilotisUI';
+import { AlertNote, EmptySection, Modal, PageHeader, RegisteredBySelect, StatusBadge } from '../components/ui/PilotisUI';
+import { ListToolbar, useListFilters } from '../components/ui/ListFilters';
+import { recordDay } from '../domain/listQuery';
+import { useViewParam } from '../hooks/useViewUrl';
 import { formatDateBR, isPublishedPop, nextPopVersion, POP_ATTACHMENT_LIMIT, POP_MEDIA_TOTAL_BYTES, readPopContent } from '../domain';
 import { saveProjectStage } from '../services/pilotisService';
 import { downloadPopPdf } from '../services/popPdfExport';
@@ -105,9 +108,8 @@ function EditableList({ items, onChange, title, singular, limit }: {
 }
 
 export function PopsView({ uid, data, companyEmail }: { uid: string; data: PilotisDataState; companyEmail?: string | null }) {
-  const [activeId, setActiveId] = useState(() => new URLSearchParams(window.location.search).get('pop') ?? '');
-  const [search, setSearch] = useState('');
-  const [status, setStatus] = useState('Todos');
+  const [legacyPop] = useViewParam('pop');
+  const [activeId, setActiveId] = useViewParam('pops.registro', legacyPop);
   const [editor, setEditor] = useState<Pop | 'new' | null>(null);
   const [draft, setDraft] = useState<PopContent>(emptyContent);
   const [files, setFiles] = useState<NewPopFile[]>([]);
@@ -124,13 +126,34 @@ export function PopsView({ uid, data, companyEmail }: { uid: string; data: Pilot
   const [projectId, setProjectId] = useState('');
   const [stageId, setStageId] = useState('');
 
-  const filtered = data.pops.filter((pop) => {
-    const content = !isPublishedPop(pop) ? (pop.draft ?? pop) : pop;
-    const term = search.trim().toLocaleLowerCase('pt-BR');
-    return (status === 'Todos' || status === pop.status) &&
-      [content.title, content.serviceType, content.linkedStagePhase].some((value) => (value ?? '').toLocaleLowerCase('pt-BR').includes(term));
+  const projectIdsByPop = new Map<string, Set<string>>();
+  for (const stage of data.stages) {
+    if (!stage.popId) continue;
+    const projects = projectIdsByPop.get(stage.popId) ?? new Set<string>();
+    projects.add(stage.projectId);
+    projectIdsByPop.set(stage.popId, projects);
+  }
+  const popList = useListFilters('pops', data.pops, {
+    text: (pop) => [pop.title, pop.draft?.title, pop.serviceType, pop.draft?.serviceType, pop.linkedStagePhase, pop.version],
+    status: (pop) => pop.status,
+    projects: (pop) => [...(projectIdsByPop.get(pop.id) ?? [])],
+    dates: (pop) => pop.publishedOn || recordDay(pop.createdAt),
+    columns: [
+      { key: 'title', label: 'Título', value: (pop) => pop.title },
+      { key: 'service', label: 'Tipo de serviço', value: (pop) => pop.serviceType },
+      { key: 'status', label: 'Situação', value: (pop) => pop.status },
+      { key: 'date', label: 'Publicação', value: (pop) => pop.publishedOn },
+      { key: 'version', label: 'Versão', value: (pop) => pop.version },
+    ],
   });
-  const active = filtered.find((pop) => pop.id === activeId) ?? filtered[0];
+  const filtered = popList.rows;
+  const active = data.pops.find((pop) => pop.id === activeId) ?? filtered[0];
+  const directPopId = activeId && active?.id === activeId ? activeId : '';
+  useEffect(() => {
+    if (directPopId && window.matchMedia('(max-width: 1023px)').matches) {
+      document.getElementById('pop-reading')?.scrollIntoView({ block: 'start' });
+    }
+  }, [directPopId]);
   const published = active && isPublishedPop(active);
   const current = active ? (published ? active : active.draft ?? active) : null;
   const history = (data.popVersions ?? []).filter((version) => version.popId === active?.id).sort((a, b) => b.publicationNumber - a.publicationNumber);
@@ -172,7 +195,7 @@ export function PopsView({ uid, data, companyEmail }: { uid: string; data: Pilot
           acceptanceCriteria: draft.acceptanceCriteria.map((item) => item.trim()).filter(Boolean) },
         changeSummary: summary,
       });
-      setActiveId(id); setStatus('Todos'); setSearch(''); setEditor(null);
+      setActiveId(id); popList.reset(); setEditor(null);
       setFeedback(action === 'draft' ? 'Revisão salva.' : 'Versão publicada.');
     } catch (err) { setError(err instanceof Error ? err.message : 'Não foi possível salvar o POP.'); }
     finally { setSaving(false); }
@@ -192,14 +215,12 @@ export function PopsView({ uid, data, companyEmail }: { uid: string; data: Pilot
       {feedback && <AlertNote tone="ok" title="POPs">{feedback}</AlertNote>}
       {!editor && !restoration && !linking && formError}
 
+      <ListToolbar label="POPs" list={popList} projects={data.projects} />
+
       {!data.pops.length ? <EmptySection title="Nenhum POP cadastrado" description="Cadastre um procedimento para usar nas obras e na integração." actionLabel="Criar POP" onAction={() => openEditor()} /> : (
         <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
           <section className={panel}>
             <h2 className="text-base font-semibold">Biblioteca</h2>
-            <SegmentedControl items={['Todos', 'Vigente', 'Em revisão']} active={status} onChange={setStatus} />
-            <label className={label}>Buscar POP
-              <input className={field} type="search" value={search} onChange={(event) => setSearch(event.target.value)} />
-            </label>
             {filtered.length ? <ul className="grid gap-2">{filtered.map((pop) => (
               <li key={pop.id}><button type="button" aria-pressed={active?.id === pop.id}
                 onClick={() => {
@@ -263,7 +284,7 @@ export function PopsView({ uid, data, companyEmail }: { uid: string; data: Pilot
         </div>
       )}
 
-      <Modal open={Boolean(editor)} onClose={() => { if (!saving && !preparing) setEditor(null); }}
+      <Modal open={Boolean(editor)} onClose={() => setEditor(null)}
         title={editor === 'new' ? 'Novo POP' : 'Editar revisão'} maxWidth="max-w-2xl">
         <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); void save('publish'); }}>
           <fieldset className="grid gap-2 rounded-lg border border-[#E4E1DA] p-3">
@@ -329,14 +350,14 @@ export function PopsView({ uid, data, companyEmail }: { uid: string; data: Pilot
         </div>}
       </Modal>
 
-      <Modal open={Boolean(restoration)} onClose={() => { if (!saving) setRestoration(null); }} title="Restaurar versão">
+      <Modal open={Boolean(restoration)} onClose={() => setRestoration(null)} title="Restaurar versão">
         <form className="grid gap-3" onSubmit={async (event) => {
           event.preventDefault(); if (!restoration) return;
           setSaving(true); setError('');
           try {
             await savePop({ action: 'restore', uid, actor, popId: restoration.pop.id, expectedRevision: restoration.pop.revision,
               versionId: restoration.version.id, changeSummary: summary });
-            setRestoration(null); setStatus('Todos'); setFeedback('A versão anterior foi restaurada como uma nova publicação.');
+            setRestoration(null); popList.change({ status: '' }); setFeedback('A versão anterior foi restaurada como uma nova publicação.');
           } catch (err) { setError(err instanceof Error ? err.message : 'Não foi possível restaurar a versão.'); }
           finally { setSaving(false); }
         }}>
@@ -350,7 +371,7 @@ export function PopsView({ uid, data, companyEmail }: { uid: string; data: Pilot
         </form>
       </Modal>
 
-      <Modal open={Boolean(linking)} onClose={() => { if (!saving) setLinking(null); }} title="Vincular etapa da obra">
+      <Modal open={Boolean(linking)} onClose={() => setLinking(null)} title="Vincular etapa da obra">
         <form className="grid gap-3" onSubmit={async (event) => {
           event.preventDefault(); if (!linking) return;
           const project = allowedProjects.find((item) => item.id === projectId);

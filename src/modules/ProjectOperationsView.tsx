@@ -20,10 +20,9 @@ type Schedule = ReturnType<typeof getProjectSchedule>;
 type ProjectStagesProps = { uid: string; project: Project; stages: ProjectStage[] };
 type OperationProps = ProjectStagesProps & { data: PilotisDataState };
 
-export function ProjectKanban({ uid, project, stages, schedule, data, onEdit }: OperationProps & {
-  schedule: Schedule; onEdit: (stage: ProjectStage) => void;
+export function ProjectKanban({ uid, project, stages, visibleStages = stages, schedule, data, onEdit }: OperationProps & {
+  visibleStages?: ProjectStage[]; schedule: Schedule; onEdit: (stage: ProjectStage) => void;
 }) {
-  const [phase, setPhase] = useState('');
   const [dragging, setDragging] = useState<string | null>(null);
   const [destination, setDestination] = useState<StageStatus | null>(null);
   const [action, setAction] = useState<{ stageId: string; status: StageStatus } | 'limit' | null>(null);
@@ -36,7 +35,6 @@ export function ProjectKanban({ uid, project, stages, schedule, data, onEdit }: 
   const limit = project.workInProgressLimit ?? DEFAULT_WORK_IN_PROGRESS_LIMIT;
   const ongoing = stages.filter((stage) => stage.status === 'Em andamento').length;
   const moving = typeof action === 'object' && action ? stages.find((stage) => stage.id === action.stageId) : undefined;
-  const phases = [...new Set(stages.map((stage) => stage.phase))];
   const currentWeek = plannedWeeks(planningTodayISO())[0];
 
   function openMove(stage: ProjectStage, status = stage.status) {
@@ -49,12 +47,6 @@ export function ProjectKanban({ uid, project, stages, schedule, data, onEdit }: 
   return (
     <section className="grid min-w-0 gap-4" aria-label="Kanban da obra">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <label className="grid gap-1 text-sm font-semibold">Fase
-          <select className={field} value={phase} onChange={(event) => setPhase(event.target.value)}>
-            <option value="">Todas as fases</option>
-            {phases.map((item) => <option key={item}>{item}</option>)}
-          </select>
-        </label>
         <div className="flex flex-wrap items-center gap-3">
           {stages.length > 0 && <span className="text-sm text-[#5B6472]">{ongoing} de {limit} em andamento</span>}
           <button type="button" className={button} onClick={() => {
@@ -66,7 +58,7 @@ export function ProjectKanban({ uid, project, stages, schedule, data, onEdit }: 
       {stages.length === 0 ? <p className={panel}>Sem etapas no quadro.</p> : (
         <div className="grid min-w-0 grid-cols-1 gap-3 md:grid-flow-col md:grid-cols-[repeat(5,minmax(12rem,1fr))] md:overflow-x-auto">
           {WORKFLOW_COLUMNS.map(({ status, label }) => {
-            const cards = stages.filter((stage) => stage.status === status && (!phase || stage.phase === phase));
+            const cards = visibleStages.filter((stage) => stage.status === status);
             return (
               <section key={status} aria-label={label}
                 onDragOver={(event) => { if (dragging) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; setDestination(status); } }}
@@ -120,7 +112,7 @@ export function ProjectKanban({ uid, project, stages, schedule, data, onEdit }: 
           })}
         </div>
       )}
-      <Modal open={Boolean(action)} onClose={() => { if (!saving) setAction(null); }}
+      <Modal open={Boolean(action)} onClose={() => setAction(null)}
         title={action === 'limit' ? 'Limite de etapas em andamento' : 'Mover etapa'} maxWidth="max-w-lg">
         <form className="grid gap-4" onSubmit={async (event) => {
           event.preventDefault();
@@ -234,7 +226,7 @@ export function ProjectResources({ uid, project, stages, data }: OperationProps)
           ))}</ul>
         </>
       )}
-      <Modal open={open} onClose={() => { if (!saving) setOpen(false); }} title="Atribuir colaborador a uma etapa" maxWidth="max-w-lg">
+      <Modal open={open} onClose={() => setOpen(false)} title="Atribuir colaborador a uma etapa" maxWidth="max-w-lg">
         <form className="grid gap-3" onSubmit={async (event) => {
           event.preventDefault();
           const employee = data.employees.find((item) => item.id === employeeId);
@@ -342,7 +334,7 @@ export function ProjectRisks({ uid, project, stages, data, schedule, onEdit, onS
         </dl>
         <button type="button" className={button} onClick={onSchedule}>Ver histórico no Cronograma</button>
       </section>
-      <Modal open={open} onClose={() => { if (!saving) setOpen(false); }} title={editing ? 'Editar risco' : 'Registrar risco'} maxWidth="max-w-lg">
+      <Modal open={open} onClose={() => setOpen(false)} title={editing ? 'Editar risco' : 'Registrar risco'} maxWidth="max-w-lg">
         <form className="grid gap-3" onSubmit={async (event) => {
           event.preventDefault();
           const description = draft.description.trim();

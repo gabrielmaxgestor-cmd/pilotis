@@ -153,7 +153,7 @@ export function ProjectClosureView({ uid, project, data, onAftercare }: {
       {closed && !closure
         ? <p className={card + ' text-sm text-[#5B6472]'}>Sem DRE consolidado para este encerramento.</p>
         : <ClosingDre dre={closure?.dre ?? review.dre} date={closure?.date} />}
-      <Modal open={open} onClose={() => { if (!saving) setOpen(false); }} title="Encerrar obra" maxWidth="max-w-2xl">
+      <Modal open={open} onClose={() => setOpen(false)} title="Encerrar obra" maxWidth="max-w-2xl">
         <form className="grid gap-3" onSubmit={async (event) => {
           event.preventDefault();
           setSaving(true); setError('');
@@ -216,7 +216,7 @@ function WarrantyCalls({ uid, project, calls }: { uid: string; project: Project;
           </span>
         </button></li>)}
       </ul> : <p className="text-sm text-[#5B6472]">Sem chamados nesta obra.</p>}
-      <Modal open={Boolean(editing)} onClose={() => { if (!saving) setEditing(null); }}
+      <Modal open={Boolean(editing)} onClose={() => setEditing(null)}
         title={editing === 'new' ? 'Registrar chamado' : 'Editar chamado'} maxWidth="max-w-lg">
         <form className="grid gap-3" onSubmit={async (event) => {
           event.preventDefault();
@@ -320,7 +320,7 @@ function FollowUp({ uid, project, data }: { uid: string; project: Project; data:
           })}
         </div> : <p className="text-sm text-[#5B6472]">Sem fotos autorizadas registradas.</p>}
       </section>
-      <Modal open={open} onClose={() => { if (!saving) setOpen(false); }} title="Acompanhamento pós-obra" maxWidth="max-w-2xl">
+      <Modal open={open} onClose={() => setOpen(false)} title="Acompanhamento pós-obra" maxWidth="max-w-2xl">
         <form className="grid gap-3" onSubmit={async (event) => {
           event.preventDefault();
           setSaving(true); setError('');

@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Sidebar, type AppRouteKey } from '../../src/components/ui/Sidebar';
 import { MobileNav, MobileTopBar } from '../../src/components/ui/MobileNav';
+import { GlobalSearch, SearchButton, useGlobalSearchShortcut } from '../../src/components/ui/GlobalSearch';
+import { updateViewUrl, useViewSearch } from '../../src/hooks/useViewUrl';
 import { ToastProvider } from '../../src/components/ui/Toast';
 import { DashboardView } from '../../src/modules/DashboardView';
 import { FinancialView } from '../../src/modules/FinancialView';
@@ -19,8 +21,11 @@ const data: PilotisDataState = {
 function noAction() {}
 
 function Fixture() {
-  const [route, navigate] = useState<AppRouteKey>(() =>
-    new URLSearchParams(window.location.search).get('route') === 'settings' ? 'settings' : 'dashboard');
+  const route = (useViewSearch().get('route') || 'dashboard') as AppRouteKey;
+  const navigate = (next: AppRouteKey) => updateViewUrl({ route: next, registro: undefined }, { push: true });
+  const [searchOpen, setSearchOpen] = useState(false);
+  const showSearch = () => setSearchOpen(true);
+  useGlobalSearchShortcut(searchOpen, showSearch);
   const [newExpense, setNewExpense] = useState(false);
   const planningData: PilotisDataState = {
     ...data,
@@ -48,8 +53,9 @@ function Fixture() {
   return (
     <div className="min-h-screen flex flex-col md:flex-row bg-[#F6F5F2]">
       <Sidebar active={route} onSelect={navigate} onLogout={noAction} />
-      <MobileTopBar title={title} onGoHome={() => navigate('dashboard')} onGoMore={() => navigate('more')} />
+      <MobileTopBar onSearch={showSearch} title={title} onGoHome={() => navigate('dashboard')} onGoMore={() => navigate('more')} />
       <main id="main-content" tabIndex={-1} className="flex-1 min-w-0 px-4 py-4 pb-24 md:px-8 md:py-6 md:pb-8 max-w-[1360px]">
+        <div className="hidden md:flex md:justify-end"><SearchButton onClick={showSearch} /></div>
         {route === 'dashboard' && <DashboardView data={data} onNavigate={navigate}
           onOpenProject={noAction} onOpenNewTransaction={() => { navigate('financial'); setNewExpense(true); }}
           onOpenNewQuote={noAction} />}
@@ -59,6 +65,10 @@ function Fixture() {
         {route === 'settings' && <SettingsView uid="browser-test" data={data} initialTab="Importar dados" />}
       </main>
       <MobileNav active={route} onSelect={navigate} />
+      {searchOpen && <GlobalSearch data={financeData} onClose={() => setSearchOpen(false)} onSelect={(result) => {
+        setSearchOpen(false);
+        updateViewUrl({ route: result.module, ...result.params }, { push: true });
+      }} />}
     </div>
   );
 }

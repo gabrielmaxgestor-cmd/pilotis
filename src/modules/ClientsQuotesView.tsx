@@ -1,4 +1,7 @@
 import { useMemo, useState } from 'react';
+import { ListToolbar, useListFilters } from '../components/ui/ListFilters';
+import { recordDay, type ListSchema } from '../domain/listQuery';
+import { useViewParam, useViewTab } from '../hooks/useViewUrl';
 import { PostConstructionView } from './ProjectClosureView';
 import { DataList, type DataListColumn } from '../components/ui/DataList';
 import {
@@ -99,17 +102,17 @@ export function ClientsQuotesView({
 }) {
   const { showToast } = useToast();
 
-  const [tab, setTab] = useState(initialTab && CLIENT_TABS.includes(initialTab) ? initialTab : 'Funil');
-  const [selectedQuoteId, setSelectedQuoteId] = useState<string>('');
-  const [selectedClientId, setSelectedClientId] = useState<string>('');
-  const [quoteListFilter, setQuoteListFilter] = useState('Todos');
-  const [clientListFilter, setClientListFilter] = useState('Todos');
+  const [tab, setTab] = useViewTab('clients', CLIENT_TABS, initialTab);
+  const [selectedQuoteId, setSelectedQuoteId] = useViewParam('clients.orcamento');
+  const [selectedClientId, setSelectedClientId] = useViewParam('clients.cliente');
+  const [recordId, setRecordId] = useViewParam('registro');
+  const linkedQuote = data.quotes.find((quote) => quote.id === recordId);
 
   // Quote Editor Modal (Create / Edit / Nova versão)
   const [quoteModalOpen, setQuoteModalOpen] = useState(false);
   const [editingQuote, setEditingQuote] = useState<Quote | null>(null);
   const [preselectedQuoteClientId, setPreselectedQuoteClientId] = useState<string>('');
-  const isQuoteModalOpen = quoteModalOpen || Boolean(externalNewQuoteOpen);
+  const isQuoteModalOpen = Boolean(linkedQuote) || quoteModalOpen || Boolean(externalNewQuoteOpen);
 
   // Contract Modal
   const [confirmingQuoteId, setConfirmingQuoteId] = useState<string | null>(null);
@@ -235,38 +238,64 @@ export function ClientsQuotesView({
     [data.complianceItems]
   );
 
-  const filteredQuotes = useMemo(
-    () =>
-      data.quotes.filter((q) => {
-        if (quoteListFilter === 'Todos') return q.status !== 'Descartado';
-        if (quoteListFilter === 'Abertos') {
-          return (
-            q.status === 'Rascunho' ||
-            q.status === 'Enviado' ||
-            q.status === 'Em negociação'
-          );
-        }
-        if (quoteListFilter === 'Ganhos') return q.status === 'Ganho';
-        return q.status === 'Perdido';
-      }),
-    [data.quotes, quoteListFilter]
-  );
-
-  const filteredClients = useMemo(
-    () =>
-      data.clients.filter((c) => {
-        if (clientListFilter === 'Todos') return true;
-        if (clientListFilter === 'Ativos') return c.status === 'Ativo';
-        if (clientListFilter === 'Potenciais') return c.status === 'Potencial';
-        return c.status === 'Em garantia';
-      }),
-    [data.clients, clientListFilter]
-  );
-
-  const discardedQuotes = useMemo(
-    () => data.quotes.filter((q) => q.status === 'Descartado'),
-    [data.quotes]
-  );
+  const quoteComposition = (row: Quote) => composicaoOrcamento({
+    maoDeObra: row.laborCost || 0,
+    empreita: row.subcontractCost || 0,
+    equipamentos: row.equipmentCost || 0,
+    bdi: row.bdiCost || 0,
+    impostos: row.taxCost || 0,
+    valorTotal: row.totalValue,
+  });
+  const quoteSchema: ListSchema<Quote> = {
+    text: (row) => [row.code, row.title, row.clientName, row.description, row.city, row.discardReason],
+    status: (row) => row.status, projects: (row) => row.projectId, dates: (row) => recordDay(row.createdAt),
+    columns: [
+      { key: 'code', label: 'Orçamento', value: (row) => row.code },
+      { key: 'client', label: 'Cliente', value: (row) => row.clientName },
+      { key: 'type', label: 'Tipo', value: (row) => row.type },
+      { key: 'value', label: 'Valor', value: (row) => row.totalValue + (row.addendaTotalValue ?? 0) },
+      { key: 'margin', label: 'Margem prevista', value: (row) => quoteComposition(row).margemPct },
+      { key: 'status', label: 'Situação', value: (row) => row.status },
+      { key: 'date', label: 'Cadastro', value: (row) => recordDay(row.createdAt) },
+    ],
+  };
+  const quotes = useListFilters('orcamentos', data.quotes.filter((row) => row.status !== 'Descartado'), quoteSchema);
+  const funnel = useListFilters('funil', data.quotes.filter((row) => FUNNEL_COLUMNS.includes(row.status)), quoteSchema);
+  const discarded = useListFilters('rascunhos', data.quotes.filter((row) => row.status === 'Descartado'), {
+    ...quoteSchema,
+    columns: [
+      { key: 'quote', label: 'Orçamento', value: (row) => row.code },
+      { key: 'client', label: 'Cliente', value: (row) => row.clientName },
+      { key: 'value', label: 'Valor', value: (row) => row.totalValue },
+      { key: 'reason', label: 'Motivo', value: (row) => row.discardReason },
+      { key: 'date', label: 'Cadastro', value: (row) => recordDay(row.createdAt) },
+    ],
+  });
+  const clients = useListFilters('clientes', data.clients, {
+    text: (row) => [row.name, row.phone, row.email, row.origin, row.city, row.id],
+    status: (row) => row.status,
+    projects: (row) => data.projects.filter((project) =>
+      project.clientId === row.id || (!project.clientId && project.clientName === row.name)).map((project) => project.id),
+    dates: (row) => recordDay(row.createdAt),
+    columns: [
+      { key: 'name', label: 'Cliente', value: (row) => row.name },
+      { key: 'origin', label: 'Origem', value: (row) => row.origin },
+      { key: 'city', label: 'Localidade', value: (row) => row.city },
+      { key: 'status', label: 'Situação', value: (row) => row.status },
+      { key: 'date', label: 'Cadastro', value: (row) => recordDay(row.createdAt) },
+    ],
+  });
+  const tenders = useListFilters('editais', data.tenders, {
+    text: (row) => [row.agency, row.objectTitle, row.notes, row.id],
+    status: (row) => row.status, dates: (row) => row.openingDate,
+    columns: [
+      { key: 'agency', label: 'Órgão', value: (row) => row.agency },
+      { key: 'object', label: 'Objeto', value: (row) => row.objectTitle },
+      { key: 'openingDate', label: 'Abertura', value: (row) => row.openingDate },
+      { key: 'estimatedValue', label: 'Valor estimado', value: (row) => row.estimatedValue },
+      { key: 'status', label: 'Situação', value: (row) => row.status },
+    ],
+  });
 
   const contractQuote = useMemo(() => {
     if (!contractModalQuoteId) return null;
@@ -316,6 +345,7 @@ export function ClientsQuotesView({
   }
 
   function closeQuoteModal() {
+    if (recordId) setRecordId('');
     setQuoteModalOpen(false);
     setEditingQuote(null);
     setPreselectedQuoteClientId('');
@@ -638,14 +668,7 @@ export function ClientsQuotesView({
       align: 'right',
       numeric: true,
       render: (q) => {
-        const comp = composicaoOrcamento({
-          maoDeObra: q.laborCost || 0,
-          empreita: q.subcontractCost || 0,
-          equipamentos: q.equipmentCost || 0,
-          bdi: q.bdiCost || 0,
-          impostos: q.taxCost || 0,
-          valorTotal: q.totalValue,
-        });
+        const comp = quoteComposition(q);
         const check = avaliarMargemContraMeta(
           comp.margemPct,
           data.settings?.targetMarginPct
@@ -1014,6 +1037,12 @@ export function ClientsQuotesView({
         />
       </div>
 
+      {tab === 'Funil' && <ListToolbar label="orçamentos no funil" list={funnel} projects={data.projects} />}
+      {tab === 'Orçamentos' && <ListToolbar label="orçamentos" list={quotes} projects={data.projects} />}
+      {tab === 'Clientes' && !activeClient && <ListToolbar label="clientes" list={clients} projects={data.projects} />}
+      {tab === 'Licitações' && <ListToolbar label="editais" list={tenders} />}
+      {tab === 'Rascunhos descartados' && <ListToolbar label="rascunhos descartados" list={discarded} projects={data.projects} />}
+
       {/* ABA 1: FUNIL */}
       {tab === 'Funil' && (
         <>
@@ -1062,7 +1091,7 @@ export function ClientsQuotesView({
               {/* Quadro Kanban: horizontal scroll no celular, 5 colunas no desktop */}
               <div className="flex md:grid md:grid-cols-5 gap-3 overflow-x-auto pb-2 snap-x">
                 {FUNNEL_COLUMNS.map((colStatus) => {
-                  const colQuotes = data.quotes.filter((q) => q.status === colStatus);
+                  const colQuotes = funnel.rows.filter((q) => q.status === colStatus);
                   return (
                     <div
                       key={colStatus}
@@ -1446,17 +1475,10 @@ export function ClientsQuotesView({
         <Card
           title="Lista de orçamentos"
           subtitle="Composição, margem prevista comparada à meta, versionamento e status"
-          actions={
-            <SegmentedControl
-              items={['Todos', 'Abertos', 'Ganhos', 'Perdidos']}
-              active={quoteListFilter}
-              onChange={setQuoteListFilter}
-            />
-          }
         >
           <DataList
             columns={quoteColumns}
-            rows={filteredQuotes}
+            rows={quotes.rows} sort={quotes.sort}
             keyExtractor={(q) => q.id}
             onRowClick={(q) => openEditQuote(q)}
             emptyTitle="Nenhum orçamento nesta visualização"
@@ -1750,17 +1772,10 @@ export function ClientsQuotesView({
             <Card
               title="Clientes cadastrados"
               subtitle="Clique em um cliente para ver contato, indicações, orçamentos, obras e garantia"
-              actions={
-                <SegmentedControl
-                  items={['Todos', 'Ativos', 'Potenciais', 'Em garantia']}
-                  active={clientListFilter}
-                  onChange={setClientListFilter}
-                />
-              }
             >
               <DataList
                 columns={clientColumns}
-                rows={filteredClients}
+                rows={clients.rows} sort={clients.sort}
                 keyExtractor={(c) => c.id}
                 onRowClick={(c) => setSelectedClientId(c.id)}
                 emptyTitle="Nenhum cliente nesta visualização"
@@ -1790,7 +1805,7 @@ export function ClientsQuotesView({
           >
             <DataList
               columns={tenderColumns}
-              rows={data.tenders}
+              rows={tenders.rows} sort={tenders.sort}
               keyExtractor={(t) => t.id}
               onRowClick={(t) => openEditTenderModal(t)}
               emptyTitle="Nenhum edital cadastrado"
@@ -1849,7 +1864,7 @@ export function ClientsQuotesView({
         >
           <DataList
             columns={discardedColumns}
-            rows={discardedQuotes}
+            rows={discarded.rows} sort={discarded.sort}
             keyExtractor={(q) => q.id}
             emptyTitle="Nenhum rascunho descartado"
             emptyDescription="Quando um orçamento for descartado no funil, ele ficará salvo aqui com o motivo registrado."
@@ -1952,7 +1967,7 @@ export function ClientsQuotesView({
         open={isQuoteModalOpen}
         onClose={closeQuoteModal}
         uid={uid}
-        editingQuote={editingQuote}
+        editingQuote={linkedQuote ?? editingQuote}
         preselectedClientId={preselectedQuoteClientId}
         clients={data.clients}
         quotesCount={data.quotes.length}
@@ -1962,7 +1977,7 @@ export function ClientsQuotesView({
           setSelectedQuoteId(id);
           showToast({
             tone: 'success',
-            title: editingQuote ? 'Orçamento atualizado.' : 'Orçamento criado.',
+            title: (linkedQuote || editingQuote) ? 'Orçamento atualizado.' : 'Orçamento criado.',
           });
         }}
         onRequestNewClient={openNewClientModal}
