@@ -139,6 +139,7 @@ test('anexos de conformidade usam Storage privado com versões e migração veri
     const migrated = await store.migrate(uid, actor, true);
     assert.equal(migrated.totals.migrated, 1, JSON.stringify(migrated));
     assert.equal(migrated.totals.failed, 0);
+    assert.equal(migrated.totals.alreadyOnStorage, 2);
     const migratedFile = (await db.doc('complianceFiles/old-test-attachment').get()).data();
     assert.equal(migratedFile.content, undefined);
     assert.deepEqual(Buffer.from(await (await request(oldPath)).arrayBuffer()), legacy);

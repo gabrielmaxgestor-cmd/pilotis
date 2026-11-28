@@ -134,6 +134,15 @@ function Fixture() {
       status: 'Ativo', referralsCount: 0, testimonialStatus: '',
     }],
   } : data;
+  const complianceData: PilotisDataState = params.get('compliance') === 'attachments' ? {
+    ...planningData,
+    complianceItems: [{
+      id: 'test-contract', ownerUid: 'browser-test', createdBy: 'Sócio', updatedBy: 'Sócio',
+      kind: 'Documento de obra', title: 'Contrato assinado', category: 'Contrato', projectId: 'construction', projectName: 'Obra contratada',
+      competence: '', dueDate: '', issuedDate: '', fileName: 'contrato.pdf', attachmentId: 'version-current',
+      mandatory: true, status: 'Anexado', notes: '',
+    }],
+  } : agendaData;
   const finance = fromWhatsApp ? whatsappData : fromAgenda ? agendaData : params.get('finance') === 'charts' ? chartData : params.get('finance') === 'empty' ? data : financeData;
   const title = route === 'financial' ? 'Financeiro' : route === 'planning' ? 'Obras'
      : route === 'settings' ? 'Configurações' : route === 'agenda' ? 'Agenda' : route === 'more' ? 'Mais' : 'Dashboard';
@@ -148,7 +157,7 @@ function Fixture() {
           onOpenNewQuote={noAction} />}
         {route === 'more' && <MaisView onSelect={navigate} onLogout={noAction} />}
         {route === 'agenda' && <AgendaView data={agendaData} onOpen={(target) => navigate(target.module, target.tab, target.params)} />}
-        {route === 'compliance' && <ComplianceView uid="browser-test" data={agendaData} />}
+        {route === 'compliance' && <ComplianceView uid="browser-test" data={complianceData} />}
         {route === 'financial' && <FinancialView uid="browser-test" data={finance} externalNewTxOpen={newExpense}
           onCloseExternalNewTx={() => setNewExpense(false)} />}
         {route === 'planning' && <ProjectPlanningView uid="browser-test" data={fromMaterials ? materialsData : fromAgenda ? agendaData : planningData}

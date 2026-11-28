@@ -17,9 +17,10 @@ type FileRow = {
   projectId?: string;
   sha256?: string;
   createdAt?: Timestamp;
+  migratedAt?: Timestamp;
   removedAt?: Timestamp;
 };
-type MigrationRow = { attachmentId: string; itemId: string; name: string; status: 'migrated' | 'ready' | 'already-migrated' | 'failed';
+type MigrationRow = { attachmentId: string; itemId: string; name: string; status: 'migrated' | 'ready' | 'already-migrated' | 'already-on-storage' | 'failed';
   sizeBytes?: number; sha256?: string; reason?: string };
 
 export class ComplianceFileError extends Error {
@@ -192,7 +193,8 @@ export function createComplianceAttachmentStore(db: Firestore, bucket: Bucket) {
           results.push(entry);
           try {
             if (file.storagePath && !file.content) {
-              entry.status = 'already-migrated'; continue;
+              entry.status = file.migratedAt ? 'already-migrated' : 'already-on-storage';
+              continue;
             }
             if (!COMPLIANCE_ID.test(doc.id) || !COMPLIANCE_ID.test(file.itemId) ||
               !Buffer.isBuffer(file.content) || !file.content.length || file.content.length > COMPLIANCE_LEGACY_MAX_BYTES ||
@@ -231,6 +233,7 @@ export function createComplianceAttachmentStore(db: Firestore, bucket: Bucket) {
         totals: { examined: results.length, ready: results.filter((row) => row.status === 'ready').length,
           migrated: results.filter((row) => row.status === 'migrated').length,
           alreadyMigrated: results.filter((row) => row.status === 'already-migrated').length,
+          alreadyOnStorage: results.filter((row) => row.status === 'already-on-storage').length,
           failed: results.filter((row) => row.status === 'failed').length }, files: results };
     },
   };

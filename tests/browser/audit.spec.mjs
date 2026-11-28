@@ -78,6 +78,47 @@ for (const width of [390, 1440]) {
       await checkPageWidth(page);
     });
 
+    test('Anexos mostram PDF, versão anterior e remoção lógica', async ({ page }) => {
+      await page.route((url) => url.pathname === '/src/lib/firebase.ts', (route) => route.fulfill({
+        contentType: 'application/javascript',
+        body: "export const auth = { currentUser: { getIdToken: async () => 'browser-test' } }; export const db = {}; export const OperationType = {}; export function handleFirestoreError(error) { throw error; }",
+      }));
+      let removed = false;
+      await page.route('**/api/compliance-attachments/test-contract**', async (route) => {
+        const path = new URL(route.request().url()).pathname;
+        if (path.endsWith('/remove')) {
+          removed = true;
+          return route.fulfill({ status: 204 });
+        }
+        if (path.endsWith('/version-current')) {
+          return route.fulfill({ status: 200, contentType: 'application/pdf',
+            headers: { 'Content-Disposition': 'attachment; filename="contrato.pdf"' }, body: '%PDF-1.4\n%%EOF' });
+        }
+        return route.fulfill({ json: { activeId: removed ? '' : 'version-current', next: null, versions: [
+          { id: 'version-current', name: 'contrato.pdf', mimeType: 'application/pdf', createdAt: null,
+            removedAt: removed ? '2026-11-28T12:00:00Z' : null },
+          { id: 'version-old', name: 'contrato-anterior.pdf', mimeType: 'application/pdf', createdAt: null, removedAt: null },
+        ] } });
+      });
+      await page.goto('/tests/browser/index.html?route=compliance&compliance.aba=Documentos+por+obra&compliance=attachments');
+      const open = page.getByRole('button', { name: 'Anexos de Contrato assinado' });
+      await open.click();
+      const modal = page.getByRole('dialog', { name: 'Anexos · Contrato assinado' });
+      await expect(modal.getByText('Versão anterior')).toBeVisible();
+      await modal.getByRole('listitem').filter({ hasText: 'contrato.pdf' })
+        .getByRole('button', { name: 'Pré-visualizar' }).click();
+      await expect(modal.locator('iframe[title="Prévia de contrato.pdf"]')).toHaveAttribute('src', /^blob:/);
+      await expect(modal.getByRole('link', { name: 'Baixar arquivo' })).toBeVisible();
+      await modal.getByRole('button', { name: 'Remover anexo' }).click();
+      await modal.getByRole('button', { name: 'Confirmar remoção' }).click();
+      await expect(modal.getByText('Removido', { exact: true })).toBeVisible();
+      await checkAccessibility(page);
+      await page.keyboard.press('Escape');
+      await expect(modal).toHaveCount(0);
+      await expect(open).toBeFocused();
+      await checkPageWidth(page);
+    });
+
     test('Relatório da obra permite escolher o mês e volta o foco ao fechar', async ({ page }) => {
       await page.clock.setFixedTime(new Date('2026-11-28T12:00:00Z'));
       await page.goto('/tests/browser/index.html?route=planning&planning.aba=Relat%C3%B3rios&materials=delayed');
