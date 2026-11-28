@@ -69,7 +69,8 @@ self.addEventListener('activate', event => {
 self.addEventListener('fetch', event => {
   const request = event.request;
   if (request.method !== 'GET' || !request.url.startsWith(ROOT) ||
-      request.url.startsWith(new URL('api/', ROOT).href)) return;
+      request.url.startsWith(new URL('api/', ROOT).href) ||
+      new URL(request.url).pathname.replace(/\\/$/, '') === new URL('relatorio', ROOT).pathname) return;
 
   if (request.mode === 'navigate') {
     event.respondWith((async () => {

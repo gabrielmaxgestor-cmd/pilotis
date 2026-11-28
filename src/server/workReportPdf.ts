@@ -42,16 +42,16 @@ const LEFT = 46;
 const BODY_WIDTH = PAGE_WIDTH - 2 * LEFT;
 const BOTTOM = 60;
 
-function wrap(value: string, size: number) {
+function wrap(value: string, size: number, maxWidth = BODY_WIDTH) {
   const width = (text: string) => [...text].reduce((sum, char) => sum +
     ("Ilij .,':;!".includes(char) ? 0.32 : 'MW@%'.includes(char) ? 0.94 : 0.64), 0) * size;
   const lines: string[] = [];
   let line = '';
   for (const word of value.split(/\s+/)) {
-    const tokens = width(word) <= BODY_WIDTH ? [word] : word.match(/.{1,45}/gu) ?? [];
+    const tokens = width(word) <= maxWidth ? [word] : word.match(/.{1,45}/gu) ?? [];
     for (const token of tokens) {
       const candidate = line ? line + ' ' + token : token;
-      if (line && width(candidate) > BODY_WIDTH) { lines.push(line); line = token; }
+      if (line && width(candidate) > maxWidth) { lines.push(line); line = token; }
       else line = candidate;
     }
   }
@@ -97,7 +97,8 @@ export function createWorkReportPdf(report: WorkReport, photos: WorkReportPhoto[
     pages.push(current);
     if (logo) placeImage(logo, logoId, LEFT, 802, 68, 40);
     const brandX = logo ? LEFT + 84 : LEFT;
-    text(report.company, brandX, 788, report.company.length > 55 ? 10 : 13, true);
+    const brandLines = wrap(report.company, 11, PAGE_WIDTH - LEFT - brandX);
+    brandLines.slice(0, 2).forEach((line, i) => text(line, brandX, 798 - i * 13, 11, true));
     text('Relatório de andamento da obra', brandX, 767, 15, true);
     text('Competência ' + report.period + '  ·  Posição em ' + report.snapshotDate, LEFT, 736, 10);
     y = first ? 701 : 709;

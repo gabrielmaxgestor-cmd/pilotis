@@ -78,6 +78,24 @@ for (const width of [390, 1440]) {
       await checkPageWidth(page);
     });
 
+    test('Relatório da obra permite escolher o mês e volta o foco ao fechar', async ({ page }) => {
+      await page.clock.setFixedTime(new Date('2026-11-28T12:00:00Z'));
+      await page.goto('/tests/browser/index.html?route=planning&planning.aba=Relat%C3%B3rios&materials=delayed');
+      const trigger = page.getByRole('button', { name: 'Novo relatório' });
+      await trigger.click();
+      const dialog = page.getByRole('dialog', { name: 'Gerar relatório de andamento' });
+      const month = dialog.getByLabel('Mês do relatório');
+      await expect(month).toHaveValue('2026-11');
+      await month.fill('2026-10');
+      await expect(dialog.getByText('Nenhuma foto sincronizada para este mês.')).toBeVisible();
+      await expect(dialog.getByRole('button', { name: 'Gerar PDF' })).toBeEnabled();
+      await checkAccessibility(page);
+      await page.keyboard.press('Escape');
+      await expect(dialog).toHaveCount(0);
+      await expect(trigger).toBeFocused();
+      await checkPageWidth(page);
+    });
+
     test('Material em atraso bloqueia a etapa, atualiza o prazo e exporta o anexo', async ({ page }) => {
       await page.clock.setFixedTime(new Date('2026-11-27T12:00:00Z'));
       await page.goto('/tests/browser/index.html?materials=delayed');

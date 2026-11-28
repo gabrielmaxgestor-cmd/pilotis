@@ -107,7 +107,7 @@ function ReportCreator({ project, data, onClose, onCreated }: {
         })}
         {photos.length > 0 && <label className="flex items-start gap-2 text-sm">
           <input required type="checkbox" checked={authorized} onChange={(event) => setAuthorized(event.target.checked)} />
-          Confirmo a autorização de uso destas fotos no relatório para o cliente.
+          Confirmo a autorização destas fotos para o relatório e conferi que fotos e legendas não contêm valores financeiros.
         </label>}
       </fieldset>
       <RegisteredBySelect id="report-author" value={actor} onChange={setActor} />

@@ -289,6 +289,7 @@ test('concluir etapa exige checklist publicado e registra 100% na Curva S', asyn
   assert.equal(rows('scheduleProgress').length, 0);
   await service.saveProjectStage({ ...args, payload: replaceStage(stage, { status: 'Concluída', checklistCompleted: ['Nível conferido'] }) });
   assert.equal(row('stages', 'stage').progressPct, 100);
+  assert.match(row('stages', 'stage').completedDate, /^\d{4}-\d{2}-\d{2}$/);
   assert.deepEqual(row('stages', 'stage').popReview.acceptanceCriteria, ['Nível conferido']);
   assert.equal(rows('scheduleProgress')[0].progressPct, 100);
 });
