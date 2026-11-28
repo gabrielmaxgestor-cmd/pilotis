@@ -101,6 +101,16 @@ for (const width of [390, 1440]) {
       await page.getByRole('combobox', { name: /^Obra/ }).selectOption('Empresa');
       await page.getByRole('button', { name: /Guia de novembro/ }).click();
       await expect(page.getByRole('dialog', { name: 'Guia de novembro' })).toBeVisible();
+
+      await page.goBack();
+      await page.getByRole('combobox', { name: /^Obra/ }).selectOption('');
+      await page.getByLabel('Tipo de evento').selectOption('material');
+      await page.getByRole('button', { name: /Material · 1\.1 · Alvenaria/ }).click();
+      await expect(page.getByRole('dialog', { name: 'Etapa · Alvenaria' })).toBeVisible();
+      await page.goBack();
+      await page.getByLabel('Tipo de evento').selectOption('warrantyCall');
+      await page.getByRole('button', { name: /^Ajuste de vedação/ }).click();
+      await expect(page.getByRole('dialog', { name: 'Chamado de garantia' }).getByText('Ajuste de vedação')).toBeVisible();
     });
 
     test('Financeiro alterna tabela e lista e habilita as abas por teclado', async ({ page }) => {

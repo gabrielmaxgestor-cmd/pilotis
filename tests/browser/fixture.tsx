@@ -78,8 +78,25 @@ function Fixture() {
       downPaymentPct: 40, installmentsCount: 1, probabilityPct: 50, status: 'Em negociação', discardReason: '', projectId: '',
     }],
   };
-  const agendaData: PilotisDataState = params.get('agenda') === 'events' ? {
+  const fromAgenda = params.get('agenda') === 'events';
+  const agendaData: PilotisDataState = fromAgenda ? {
     ...planningData,
+    projects: [...planningData.projects, {
+      ...planningData.projects[0], id: 'closed', name: 'Obra encerrada', status: 'Concluída',
+      closureDate: '2025-11-26', warrantyStartDate: '2025-11-26',
+    }],
+    stages: [{
+      id: 'agenda-stage', ownerUid: 'browser-test', createdBy: 'Sócio', updatedBy: 'Sócio', projectId: 'construction',
+      wbsCode: '1.1', phase: 'Estrutura', name: 'Alvenaria', responsible: '', startWeek: 0, durationWeeks: 1,
+      baselineStartWeek: 0, baselineDurationWeeks: 1, progressPct: 0, budgetedCost: 0, popId: '', dependsOn: [],
+      isMilestone: false, status: 'Aguardando material', materialExpectedDate: '2026-11-26',
+      delayCategory: '', delayJustification: '', checklistCompleted: [],
+    }],
+    warrantyCalls: [{
+      id: 'agenda-call', ownerUid: 'browser-test', createdBy: 'Sócio', updatedBy: 'Sócio', projectId: 'closed',
+      projectName: 'Obra encerrada', description: 'Ajuste de vedação', openedDate: '2026-11-22',
+      deadlineDate: '2026-11-25', cost: 500, status: 'Aberto',
+    }],
     installments: [{
       id: 'agenda-parcel', ownerUid: 'browser-test', createdBy: 'Sócio', updatedBy: 'Sócio',
       projectId: 'construction', projectName: 'Obra contratada', quoteId: 'quote', clientId: 'client', clientName: 'Cliente',
@@ -96,7 +113,7 @@ function Fixture() {
       competence: '2026-11', dueDate: '2026-11-27', issuedDate: '', fileName: '', mandatory: true, status: 'Pendente', notes: '',
     }],
   } : data;
-  const finance = params.get('agenda') === 'events' ? agendaData : params.get('finance') === 'charts' ? chartData : params.get('finance') === 'empty' ? data : financeData;
+  const finance = fromAgenda ? agendaData : params.get('finance') === 'charts' ? chartData : params.get('finance') === 'empty' ? data : financeData;
   const title = route === 'financial' ? 'Financeiro' : route === 'planning' ? 'Obras'
      : route === 'settings' ? 'Configurações' : route === 'agenda' ? 'Agenda' : route === 'more' ? 'Mais' : 'Dashboard';
   return (
@@ -113,7 +130,8 @@ function Fixture() {
         {route === 'compliance' && <ComplianceView uid="browser-test" data={agendaData} />}
         {route === 'financial' && <FinancialView uid="browser-test" data={finance} externalNewTxOpen={newExpense}
           onCloseExternalNewTx={() => setNewExpense(false)} />}
-        {route === 'planning' && <ProjectPlanningView uid="browser-test" data={planningData} selectedProjectId="construction" onSelectProject={noAction} />}
+        {route === 'planning' && <ProjectPlanningView uid="browser-test" data={fromAgenda ? agendaData : planningData}
+          selectedProjectId={fromAgenda ? params.get('planning.obra') ?? '' : 'construction'} onSelectProject={noAction} />}
         {route === 'settings' && <SettingsView uid="browser-test" data={data} initialTab="Importar dados" />}
       </main>
       <MobileNav active={route} onSelect={navigate} />

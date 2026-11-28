@@ -61,7 +61,7 @@ function MonthCalendar({ period, date, today, events, onDate, onOpen }: {
               onClick={() => onDate(day)}
               className={'flex min-h-11 w-full flex-col items-center justify-center gap-0.5 px-0.5 py-1 text-xs font-semibold focus-visible:outline-offset-[-2px] lg:flex-row lg:justify-between lg:px-2 ' +
                 (date === day ? 'bg-[#1F3A5F] text-white' : today === day ? 'bg-[#E6EEFB] text-[#1F3A5F]' : 'text-[#424D5D] hover:bg-[#E6EEFB]')}>
-              <span>{Number(day.slice(-2))}</span>
+              <span>{day.slice(-2)}</span>
               {count > 0 && <span aria-hidden="true" className="rounded-full bg-white px-1 text-[10px] tabular-nums text-[#1F3A5F]">{count}</span>}
             </button>
             <div className="hidden min-h-11 min-w-0 gap-1 p-1 lg:grid lg:content-start">
