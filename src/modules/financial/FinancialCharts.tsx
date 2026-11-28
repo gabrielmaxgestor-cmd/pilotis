@@ -98,6 +98,7 @@ function ChartFigure({ title, summary, children, legend, table }: {
     </figcaption>
     {children && <>
       {legend}
+      <p className="text-xs text-[#424D5D] sm:hidden">Deslize para ver todo o gráfico.</p>
       <div role="region" aria-label={title + ' · área rolável'} tabIndex={0}
         className="min-w-0 max-w-full overflow-x-auto rounded-lg border border-[#E4E1DA] bg-white">
         {children}

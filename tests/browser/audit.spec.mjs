@@ -82,28 +82,9 @@ for (const width of [390, 1440]) {
         return { figure, table };
       }
 
-      const expenses = await openChartTable('Composição das despesas pagas', 'Dados do gráfico de composição das despesas pagas');
-      await expect(expenses.figure).toContainText(/R\$\s*1\.500,00/);
-      await expect(expenses.table.getByRole('row', { name: /^Folha/ })).toContainText(/R\$\s*1\.000,00/);
-      await expect(expenses.table.getByRole('row', { name: /^Tributos/ })).toContainText(/R\$\s*250,00/);
-      await expect(expenses.table.getByRole('row', { name: /^Juros/ })).toContainText(/R\$\s*100,00/);
-
-      await page.getByRole('tab', { name: 'Fluxo de caixa' }).click();
-      const cash = await openChartTable('Entradas x saídas e saldo projetado', 'Dados do gráfico de fluxo de caixa');
-      const november = cash.table.getByRole('row', { name: /^Nov\/2026/ });
-      await expect(november.getByRole('cell').nth(0)).toHaveText(/R\$\s*500,00/);
-      await expect(november.getByRole('cell').nth(1)).toHaveText(/R\$\s*300,00/);
-      await expect(november.getByRole('cell').nth(3)).toHaveText(/R\$\s*100,00/);
-      await expect(november.getByRole('cell').nth(4)).toHaveText(/R\$\s*1\.500,00/);
-      await expect(november.getByRole('cell').nth(5)).toHaveText(/R\$\s*200,00/);
-      await expect(november.getByRole('cell').nth(7)).toHaveText(/-R\$\s*800,00/);
-      await expect(november.getByRole('cell', { name: 'Negativo' })).toBeVisible();
-      await expect(cash.table.getByRole('row', { name: /^Dez\/2026/ }).getByRole('cell').nth(2)).toHaveText(/R\$\s*200,00/);
-      await expect(cash.figure.locator('svg text').filter({ hasText: 'Saldo negativo' }).first()).toBeVisible();
-      await expect(cash.figure.locator('svg title').filter({ hasText: /Saldo projetado · -R\$\s*800,00/ }).first()).toHaveCount(1);
-
-      if (width === 390) {
-        const area = cash.figure.getByRole('region', { name: /área rolável/ });
+      async function checkChartScroll(figure) {
+        if (width !== 390) return;
+        const area = figure.getByRole('region', { name: /área rolável/ });
         const dimensions = await area.evaluate((element) => {
           element.scrollLeft = element.scrollWidth;
           const svg = element.querySelector('svg');
@@ -118,6 +99,34 @@ for (const width of [390, 1440]) {
         expect(dimensions.scrollLeft).toBeGreaterThan(0);
         expect(dimensions.clipped).toBe(false);
       }
+
+      const expenses = await openChartTable('Composição das despesas pagas', 'Dados do gráfico de composição das despesas pagas');
+      await expect(expenses.figure).toContainText(/R\$\s*1\.500,00/);
+      await expect(expenses.table.getByRole('row', { name: /^Folha/ })).toContainText(/R\$\s*1\.000,00/);
+      await expect(expenses.table.getByRole('row', { name: /^Tributos/ })).toContainText(/R\$\s*250,00/);
+      await expect(expenses.table.getByRole('row', { name: /^Juros/ })).toContainText(/R\$\s*100,00/);
+      await checkChartScroll(expenses.figure);
+
+      await page.getByRole('tab', { name: 'Fluxo de caixa' }).click();
+      const cash = await openChartTable('Entradas x saídas e saldo projetado', 'Dados do gráfico de fluxo de caixa');
+      const november = cash.table.getByRole('row', { name: /^Nov\/2026/ });
+      await expect(november.getByRole('cell').nth(0)).toHaveText(/R\$\s*500,00/);
+      await expect(november.getByRole('cell').nth(1)).toHaveText(/R\$\s*300,00/);
+      await expect(november.getByRole('cell').nth(3)).toHaveText(/R\$\s*100,00/);
+      await expect(november.getByRole('cell').nth(4)).toHaveText(/R\$\s*1\.500,00/);
+      await expect(november.getByRole('cell').nth(5)).toHaveText(/R\$\s*200,00/);
+      await expect(november.getByRole('cell').nth(7)).toHaveText(/− R\$\s*800,00/);
+      await expect(november.getByRole('cell', { name: 'Negativo' })).toBeVisible();
+      await expect(cash.table.getByRole('row', { name: /^Dez\/2026/ }).getByRole('cell').nth(2)).toHaveText(/R\$\s*200,00/);
+      await expect(cash.figure.locator('svg text').filter({ hasText: 'Saldo negativo' }).first()).toBeVisible();
+      await expect(cash.figure.locator('svg title').filter({ hasText: /Saldo projetado · − R\$\s*800,00/ }).first()).toHaveCount(1);
+
+      await checkChartScroll(cash.figure);
+      if (width === 1440) {
+        const monthlyTable = page.getByRole('table', { name: 'Projeção mensal do caixa' });
+        const sameMonth = monthlyTable.getByRole('row', { name: /^Nov\/2026/ });
+        await expect(sameMonth).toContainText('− R$ 800,00');
+      }
       await checkPageWidth(page);
       await checkAccessibility(page);
 
@@ -127,6 +136,12 @@ for (const width of [390, 1440]) {
       await expect(labor.getByRole('cell').nth(0)).toHaveText(/R\$\s*4\.000,00/);
       await expect(labor.getByRole('cell').nth(1)).toHaveText(/R\$\s*1\.000,00/);
       await expect(dre.figure.locator('svg title').filter({ hasText: /Mão de obra · Realizado · R\$\s*1\.000,00/ })).toHaveCount(1);
+      await checkChartScroll(dre.figure);
+      if (width === 1440) {
+        const tableLabor = page.getByRole('table', { name: 'DRE por obra', exact: true }).getByRole('row', { name: /Mão de obra/ });
+        await expect(tableLabor).toContainText('R$ 4.000,00');
+        await expect(tableLabor).toContainText('R$ 1.000,00');
+      }
       await checkPageWidth(page);
       await checkAccessibility(page);
     });

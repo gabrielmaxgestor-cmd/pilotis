@@ -1231,6 +1231,7 @@ export function FinancialView({
               />
             ) : (
               <DataList
+                caption="Projeção mensal do caixa"
                 rows={projection}
                 keyExtractor={(row) => row.mesKey}
                 columns={[
