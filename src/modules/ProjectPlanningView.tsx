@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ListToolbar, useListFilters } from '../components/ui/ListFilters';
 import { useViewParam, useViewTab } from '../hooks/useViewUrl';
 import { addDaysISO, isValidISODate } from '../domain/formatters';
+import type { ListSchema } from '../domain/listQuery';
 import { PostConstructionView, ProjectClosureView } from './ProjectClosureView';
 import { FieldStages, ProjectDiary } from './ProjectFieldView';
 import { ProjectScheduleView, ScheduleProgressChart } from './ProjectScheduleView';
@@ -208,7 +209,7 @@ export function ProjectPlanningView({
   const stageDeadline = (stage: ProjectStage) => isValidISODate(activeProject?.startDate)
     ? addDaysISO(activeProject.startDate, Math.ceil((schedule?.details.get(stage.id)?.terminoMaisCedo
       ?? stage.startWeek + stage.durationWeeks) * 7)) : '';
-  const stages = useListFilters('etapas', projectStages, {
+  const stageSchema: ListSchema<ProjectStage> = {
     text: (row) => [row.wbsCode, row.name, row.phase, row.deliverable, row.responsible,
       data.pops.find((pop) => pop.id === row.popId)?.title],
     status: (row) => row.status, projects: (row) => row.projectId, dates: stageDeadline,
@@ -226,7 +227,8 @@ export function ProjectPlanningView({
       { key: 'budget', label: 'Custo orçado', value: (row) => row.budgetedCost },
       { key: 'status', label: 'Situação', value: (row) => row.status },
     ],
-  });
+  };
+  const stages = useListFilters('etapas', projectStages, stageSchema);
   const projectProgress = activeProject ? calcularProgressoObra(activeProject.id, projectStages) : null;
   const curvaSData = useMemo(() => calcularCurvaSObra(
     projectStages, schedule?.referenceWeek, originalBaseline, tab === 'Visão geral',
@@ -802,7 +804,8 @@ export function ProjectPlanningView({
             <ProjectDiary key={activeProject.id} uid={uid} project={activeProject} logs={data.dailyLogs} />
           )}
           {tab === 'Etapas em campo' && (
-            <FieldStages key={activeProject.id} uid={uid} project={activeProject} stages={projectStages} pops={data.pops} />
+            <FieldStages key={activeProject.id} uid={uid} project={activeProject} stages={projectStages} pops={data.pops}
+              stageSchema={stageSchema} projects={data.projects} onSelectProject={onSelectProject} />
           )}
 
           {tab === 'Encerramento' && (

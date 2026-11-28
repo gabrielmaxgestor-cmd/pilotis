@@ -34,7 +34,7 @@ export function updateViewUrl(
 
 export function useViewParam(key: string, fallback = '') {
   const value = useViewSearch().get(key) ?? fallback;
-  const set = (next: string) => updateViewUrl({ [key]: next || undefined });
+  const set = (next: string, options?: { push: boolean }) => updateViewUrl({ [key]: next || undefined }, options);
   return [value, set] as const;
 }
 

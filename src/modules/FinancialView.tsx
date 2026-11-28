@@ -841,7 +841,7 @@ export function FinancialView({
                           <td className="py-3 px-3 text-[#14181F] font-medium tabular-nums">
                             {formatShortDateBR(tx.dueDate || tx.date)}
                           </td>
-                          <td className="py-3 px-3 text-[#14181F]"><button type="button" className="min-w-0 break-words text-left font-semibold text-[#1F3A5F] underline" onClick={() => setRecordId(tx.id)}>{tx.description}</button></td>
+                          <td className="py-3 px-3 text-[#14181F]"><button type="button" className="min-w-0 break-words text-left font-semibold text-[#1F3A5F] underline" onClick={() => setRecordId(tx.id, { push: true })}>{tx.description}</button></td>
                           <td className="py-3 px-3 text-[#5B6472]">
                             {tx.projectName || tx.projectId}
                           </td>
@@ -900,7 +900,7 @@ export function FinancialView({
                       className="border border-[#E4E1DA] rounded-xl p-3.5 flex flex-col gap-1.5"
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <button type="button" className="min-w-0 break-words text-left font-semibold text-[#1F3A5F] underline" onClick={() => setRecordId(tx.id)}>{tx.description}</button>
+                        <button type="button" className="min-w-0 break-words text-left font-semibold text-[#1F3A5F] underline" onClick={() => setRecordId(tx.id, { push: true })}>{tx.description}</button>
                         <StatusBadge
                           label={resolverStatusLancamento(
                             {
@@ -1042,7 +1042,7 @@ export function FinancialView({
                   <h3 className="text-sm font-semibold text-[#14181F]">
                     Outros recebimentos avulsos
                   </h3>
-                  <DataList caption="Outros recebimentos avulsos" rows={manualReceivablesFiltered} sort={manualReceivables.sort} onRowClick={(row) => setRecordId(row.id)} keyExtractor={(tx) => tx.id}
+                  <DataList caption="Outros recebimentos avulsos" rows={manualReceivablesFiltered} sort={manualReceivables.sort} onRowClick={(row) => setRecordId(row.id, { push: true })} keyExtractor={(tx) => tx.id}
                     columns={[
                       { key: 'description', header: 'Descrição', render: (tx) => tx.description },
                       { key: 'date', header: 'Vencimento', render: (tx) => formatDateBR(tx.dueDate || tx.date) },
@@ -1125,7 +1125,7 @@ export function FinancialView({
             ) : (
               <DataList
                 rows={payablesFiltered}
-                sort={payables.sort} onRowClick={(row) => setRecordId(row.id)}
+                sort={payables.sort} onRowClick={(row) => setRecordId(row.id, { push: true })}
                 keyExtractor={(row) => row.id}
                 columns={[
                   { key: 'description', header: 'Descrição', render: (row) => row.description },

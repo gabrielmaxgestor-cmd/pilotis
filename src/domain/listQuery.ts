@@ -40,7 +40,9 @@ export function recordDay(value: unknown): string {
   }
   const date = typeof value === 'object' && value && 'toDate' in value && typeof value.toDate === 'function'
     ? value.toDate() : value;
-  return date instanceof Date && Number.isFinite(date.getTime()) ? recordDateFormatter.format(date) : '';
+  if (!(date instanceof Date) || !Number.isFinite(date.getTime())) return '';
+  const parts = Object.fromEntries(recordDateFormatter.formatToParts(date).map(({ type, value }) => [type, value]));
+  return parts.year + '-' + parts.month + '-' + parts.day;
 }
 
 const collator = new Intl.Collator('pt-BR', { sensitivity: 'base', numeric: true });

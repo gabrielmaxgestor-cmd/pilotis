@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyListFilters, type ListFilters, type ListSchema } from '../listQuery';
+import { applyListFilters, recordDay, type ListFilters, type ListSchema } from '../listQuery';
 import { findSearchGroups, type SearchResult } from '../globalSearch';
 
 test('filtra com acentos, por obra e por período inclusivo e ordena valores numericamente', () => {
@@ -39,4 +39,10 @@ test('agrupa resultados globais com limite e mantém o destino do lançamento', 
   const groups = findSearchGroups([expense, project, { ...expense, key: 'transaction/b' }], 'AÇO', 1);
   assert.deepEqual([...groups.values()].flat().map((row) => row.params), [expense.params, project.params]);
   assert.equal(findSearchGroups([expense, project], 'A').size, 0);
+});
+
+test('usa o dia local de Valença para datas de cadastro do Firestore', () => {
+  const timestamp = { toDate: () => new Date('2026-11-28T01:00:00Z') };
+  assert.equal(recordDay(timestamp), '2026-11-27');
+  assert.equal(recordDay('2026-11-28'), '2026-11-28');
 });

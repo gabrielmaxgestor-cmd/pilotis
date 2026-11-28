@@ -1199,11 +1199,11 @@ export function TeamView({
                       return (
                         <tr
                           key={emp.id}
-                          onClick={() => setSelectedEmployeeId(emp.id)}
+                          onClick={() => setSelectedEmployeeId(emp.id, { push: true })}
                           className="border-b border-[#E4E1DA] text-[13px] hover:bg-[#F6F5F2] cursor-pointer"
                         >
                           <td className="py-3 px-3"><button type="button" className="font-semibold text-[#1F3A5F] underline"
-                            onClick={(event) => { event.stopPropagation(); setSelectedEmployeeId(emp.id); }}>{emp.name}</button></td>
+                            onClick={(event) => { event.stopPropagation(); setSelectedEmployeeId(emp.id, { push: true }); }}>{emp.name}</button></td>
                           <td className="py-3 px-3 text-[#5B6472]">{emp.role}</td>
                           <td className="py-3 px-3">
                             <StatusBadge label={emp.employmentType} />
@@ -1229,7 +1229,7 @@ export function TeamView({
                   <button
                     key={emp.id}
                     type="button"
-                    onClick={() => setSelectedEmployeeId(emp.id)}
+                    onClick={() => setSelectedEmployeeId(emp.id, { push: true })}
                     className="text-left border border-[#E4E1DA] rounded-xl p-4 flex flex-col gap-2 cursor-pointer"
                   >
                     <div className="flex items-center justify-between gap-2">
@@ -1283,7 +1283,7 @@ export function TeamView({
                       <div key={emp.id} className="contents">
                         <button
                           type="button"
-                          onClick={() => setSelectedEmployeeId(emp.id)}
+                          onClick={() => setSelectedEmployeeId(emp.id, { push: true })}
                           className="text-left font-semibold text-[#14181F] truncate px-2 py-1.5 hover:underline cursor-pointer"
                         >
                           {emp.name}

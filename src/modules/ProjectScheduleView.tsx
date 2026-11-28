@@ -85,10 +85,11 @@ function StageBars({ row, x, y }: { row: TimelineRow; x: (week: number) => numbe
 }
 
 function ScheduleTimeline({
-  project, stages, schedule, baseline, onEdit,
+  project, stages, visibleStages, schedule, baseline, onEdit,
 }: {
   project: Project;
   stages: ProjectStage[];
+  visibleStages: ProjectStage[];
   schedule: Schedule;
   baseline?: ScheduleBaseline;
   onEdit: (stage: ProjectStage) => void;
@@ -96,7 +97,8 @@ function ScheduleTimeline({
   const arrowId = useId();
   const viewport = useRef<HTMLDivElement>(null);
   const baselineById = new Map((baseline?.stages ?? getScheduleBaselineStages(stages)).map((item) => [item.stageId, item]));
-  const rows: TimelineRow[] = stages.map((stage) => {
+  const stageCodes = new Map(stages.map((stage) => [stage.id, stage.wbsCode]));
+  const rows: TimelineRow[] = visibleStages.map((stage) => {
     const detail = schedule.details.get(stage.id);
     const base = baselineById.get(stage.id);
     const start = detail?.inicioMaisCedo ?? stage.startWeek;
@@ -124,7 +126,7 @@ function ScheduleTimeline({
   const height = HEADER_HEIGHT + (rows.length + 1) * ROW_HEIGHT;
   const rowY = (index: number) => HEADER_HEIGHT + index * ROW_HEIGHT + 32;
   const delivery = schedule.forecastEndDate ? schedule.criticalPath.duracaoTotal : null;
-  const codeList = (stage: ProjectStage) => (stage.dependsOn ?? []).map((id) => rows[rowIndex.get(id) ?? -1]?.stage.wbsCode ?? id);
+  const codeList = (stage: ProjectStage) => (stage.dependsOn ?? []).map((id) => stageCodes.get(id) ?? id);
   const rowSummary = (row: TimelineRow) => (
     <span className="text-xs text-[#5B6472]">
       Semana {row.start} a {row.end} · {formatPercentBR(row.stage.progressPct, 0)}
@@ -330,7 +332,7 @@ export function ProjectScheduleView({
             </label>
           )}
           {visibleStages.length
-            ? <ScheduleTimeline project={project} stages={visibleStages} schedule={schedule} baseline={selected} onEdit={onEdit} />
+            ? <ScheduleTimeline project={project} stages={stages} visibleStages={visibleStages} schedule={schedule} baseline={selected} onEdit={onEdit} />
             : <p className="text-sm text-[#5B6472]">Nenhuma etapa neste filtro.</p>}
           <details className="rounded-lg border border-[#E4E1DA] px-3 py-2 text-sm">
             <summary className="cursor-pointer rounded font-semibold focus-visible:ring-2 focus-visible:ring-[#1F3A5F]">Histórico de linhas de base</summary>

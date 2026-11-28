@@ -1777,7 +1777,7 @@ export function ClientsQuotesView({
                 columns={clientColumns}
                 rows={clients.rows} sort={clients.sort}
                 keyExtractor={(c) => c.id}
-                onRowClick={(c) => setSelectedClientId(c.id)}
+                onRowClick={(c) => setSelectedClientId(c.id, { push: true })}
                 emptyTitle="Nenhum cliente nesta visualização"
                 emptyDescription="Cadastre seu primeiro cliente informando origem do contato e quem indicou."
                 emptyActionLabel="Novo cliente"

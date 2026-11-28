@@ -8,7 +8,7 @@ export function SearchButton({ onClick, mobile = false }: { onClick: () => void;
   return <button type="button" onClick={onClick} aria-label="Buscar no sistema" aria-keyshortcuts="Control+K Meta+K"
     className="inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-lg bg-white px-3 text-sm font-semibold text-[#1F3A5F] hover:bg-[#E6EEFB]">
     <Search aria-hidden="true" className="h-5 w-5" />
-    {!mobile && <><span>Buscar</span><kbd className="rounded border border-[#E4E1DA] px-1 text-xs font-normal">Ctrl / ⌘ K</kbd></>}
+    {!mobile && <span>Buscar no sistema</span>}
   </button>;
 }
 

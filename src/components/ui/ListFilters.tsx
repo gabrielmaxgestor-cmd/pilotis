@@ -38,17 +38,18 @@ type ListController = Pick<ReturnType<typeof useListFilters>, 'filters' | 'chang
 };
 type ProjectOption = { id: string; name: string };
 
-export function ListToolbar({ label, list, projects, projectSelection, phase }: {
+export function ListToolbar({ label, list, projects, projectSelection, phase, month }: {
   label: string;
   list: ListController;
   projects?: readonly ProjectOption[];
   projectSelection?: { value: string; change: (id: string) => void };
   phase?: { options: readonly string[]; value: string; change: (phase: string) => void };
+  month?: { label: string; value: string; change: (month: string) => void };
 }) {
   const [open, setOpen] = useState(false);
   const inputId = useId();
   const { filters, change, statuses, columns, reset } = list;
-  const count = [filters.status, filters.obra, filters.de || filters.ate, filters.ordem, phase?.value].filter(Boolean).length;
+  const count = [filters.status, filters.obra, filters.de || filters.ate, filters.ordem, phase?.value, month?.value].filter(Boolean).length;
   const allStatuses = statuses.includes(filters.status) || !filters.status ? statuses : [...statuses, filters.status];
 
   function fields() {
@@ -72,6 +73,9 @@ export function ListToolbar({ label, list, projects, projectSelection, phase }: 
           {phase.options.map((name) => <option key={name}>{name}</option>)}
         </select>
       </label>}
+      {month && <label className="block min-w-0 text-xs font-semibold">{month.label}
+        <input type="month" className={field} value={month.value} onChange={(event) => month.change(event.target.value)} />
+      </label>}
       <label className="block min-w-0 text-xs font-semibold">De
         <input type="date" className={field} value={filters.de} onChange={(event) => change({ de: event.target.value })} />
       </label>
@@ -89,7 +93,7 @@ export function ListToolbar({ label, list, projects, projectSelection, phase }: 
           <option value="asc">Crescente</option><option value="desc">Decrescente</option>
         </select>
       </label>}
-      <button type="button" className={button} onClick={() => { reset(); phase?.change(''); }}>Limpar filtros</button>
+      <button type="button" className={button} onClick={() => { reset(); phase?.change(''); month?.change(''); }}>Limpar filtros</button>
     </div>;
   }
 

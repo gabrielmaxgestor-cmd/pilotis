@@ -143,6 +143,7 @@ export function ComplianceView({ uid, data, companyEmail, initialTab }: {
   const onlyLate = lateParam === 'sim';
   const setOnlyLate = (value: boolean) => setLateParam(value ? 'sim' : '');
   const [workProject, setWorkProject] = useViewParam('conformidade.documentos.obra');
+  const [invoiceMonth, setInvoiceMonth] = useViewParam('conformidade.notas.mes');
   const [recordId, setRecordId] = useViewParam('registro');
   const linkedItem = data.complianceItems.find((row) => row.id === recordId);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -187,7 +188,7 @@ export function ComplianceView({ uid, data, companyEmail, initialTab }: {
     ],
   });
   const invoicePlace = (row: InvoiceReceipt) => row.projectName || invoiceOptions.find(([id]) => id === row.projectId)?.[1] || 'Empresa';
-  const invoiceList = useListFilters('conformidade.notas', pendingInvoiceReceipts(receipts, '', ''), {
+  const invoiceList = useListFilters('conformidade.notas', pendingInvoiceReceipts(receipts, '', invoiceMonth), {
     text: (row) => [row.key, row.description, invoicePlace(row)],
     status: (row) => row.invoiceStatus,
     projects: (row) => row.projectId,
@@ -260,7 +261,8 @@ export function ComplianceView({ uid, data, companyEmail, initialTab }: {
       <Tabs items={tabs} active={tab} onChange={setTab} />
       {tab === 'Notas fiscais'
         ? <ListToolbar key={tab} label="recebimentos sem nota" list={invoiceList}
-            projects={invoiceOptions.map(([id, name]) => ({ id, name }))} />
+            projects={invoiceOptions.map(([id, name]) => ({ id, name }))}
+            month={{ label: 'Mês de recebimento', value: invoiceMonth, change: setInvoiceMonth }} />
         : <ListToolbar key={tab} label={tab.toLocaleLowerCase('pt-BR')} list={recordList}
             projects={tab === 'Documentos por obra' ? data.projects : tab === 'Obrigações' ? [{ id: 'Empresa', name: 'Empresa' }, ...data.projects] : undefined}
             projectSelection={tab === 'Documentos por obra' && currentProject ? { value: currentProject.id, change: setWorkProject } : undefined} />}

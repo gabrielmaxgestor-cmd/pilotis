@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { ListToolbar, useListFilters } from '../components/ui/ListFilters';
+import type { ListSchema } from '../domain/listQuery';
 import {
   AlertNote, Modal, ProgressBar, RegisteredBySelect, StatusBadge,
 } from '../components/ui/PilotisUI';
@@ -277,7 +279,10 @@ export function ProjectDiary({ uid, project, logs }: { uid: string; project: Pro
   );
 }
 
-export function FieldStages({ uid, project, stages, pops }: { uid: string; project: Project; stages: ProjectStage[]; pops: Pop[] }) {
+export function FieldStages({ uid, project, stages, pops, stageSchema, projects, onSelectProject }: {
+  uid: string; project: Project; stages: ProjectStage[]; pops: Pop[];
+  stageSchema: ListSchema<ProjectStage>; projects: Project[]; onSelectProject: (id: string) => void;
+}) {
   const queue = useFieldQueue(uid);
   const [editing, setEditing] = useState<ProjectStage | null>(null);
   const [progress, setProgress] = useState('');
@@ -297,6 +302,7 @@ export function FieldStages({ uid, project, stages, pops }: { uid: string; proje
     try { displayStages.set(stage.id, applyFieldStageUpdate(stage, job.update)); }
     catch { paused.add(job.stageId); }
   }
+  const visible = useListFilters('etapas', [...displayStages.values()], stageSchema);
   const pop = pops.find((item) => item.id === editing?.popId);
   const review = editing ? linkedPopChecklist(editing, pop) : undefined;
 
@@ -334,11 +340,15 @@ export function FieldStages({ uid, project, stages, pops }: { uid: string; proje
   return (
     <section className="grid gap-4">
       <h2 className="text-base font-semibold">Etapas em campo</h2>
+      <ListToolbar label="etapas" list={visible} projects={projects}
+        projectSelection={{ value: project.id, change: onSelectProject }} />
       <QueueStatus queue={queue} jobs={pending} />
       {feedback && <p role="status" className="text-sm text-[#1D6849]">{feedback}</p>}
-      {stages.length === 0 ? <p className={card + ' text-sm text-[#5B6472]'}>Sem etapas no cronograma.</p> : (
+      {!visible.rows.length ? <p className={card + ' text-sm text-[#5B6472]'}>
+        {stages.length ? 'Nenhuma etapa neste filtro.' : 'Sem etapas no cronograma.'}
+      </p> : (
         <ul className="grid gap-3 sm:grid-cols-2">
-          {[...displayStages.values()].map((stage) => <li key={stage.id} className={card}>
+          {visible.rows.map((stage) => <li key={stage.id} className={card}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <strong className="text-sm text-[#14181F]">{stage.wbsCode} · {stage.name}</strong>
               <StatusBadge label={stage.status} />

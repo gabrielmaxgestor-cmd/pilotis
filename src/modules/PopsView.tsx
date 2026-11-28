@@ -224,7 +224,7 @@ export function PopsView({ uid, data, companyEmail }: { uid: string; data: Pilot
             {filtered.length ? <ul className="grid gap-2">{filtered.map((pop) => (
               <li key={pop.id}><button type="button" aria-pressed={active?.id === pop.id}
                 onClick={() => {
-                  setActiveId(pop.id);
+                  setActiveId(pop.id, { push: true });
                   if (window.matchMedia('(max-width: 767px)').matches) document.getElementById('pop-reading')?.scrollIntoView({ block: 'start' });
                 }} className="grid w-full gap-1 rounded-lg border border-[#E4E1DA] p-3 text-left focus-visible:ring-2 focus-visible:ring-[#1F3A5F] aria-pressed:border-[#1F3A5F] aria-pressed:bg-[#E6EEFB]">
                 <span className="flex flex-wrap items-center gap-2"><strong className="break-words text-sm">{pop.title}</strong><StatusBadge label={pop.status} /></span>

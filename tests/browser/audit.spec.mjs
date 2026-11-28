@@ -118,7 +118,7 @@ for (const width of [390, 1440]) {
         const trigger = filters.getByRole('button', { name: 'Filtros' });
         await trigger.click();
         const sheet = page.getByRole('dialog', { name: 'Filtros · lançamentos' });
-        await sheet.getByLabel('Situação').selectOption('Pago');
+        await sheet.getByRole('combobox', { name: /^Situação/ }).selectOption('Pago');
         const first = sheet.getByRole('button', { name: 'Fechar' });
         const last = sheet.getByRole('button', { name: 'Ver resultados' });
         await first.focus();
@@ -131,14 +131,21 @@ for (const width of [390, 1440]) {
         await expect(sheet).toHaveCount(0);
         await expect(trigger).toBeFocused();
       } else {
-        await filters.getByLabel('Situação').selectOption('Pago');
+        await filters.getByRole('combobox', { name: /^Situação/ }).selectOption('Pago');
         await page.getByRole('columnheader', { name: 'Valor' }).getByRole('button').click();
         await expect(page.getByRole('columnheader', { name: 'Valor' })).toHaveAttribute('aria-sort', 'ascending');
       }
       await expect(page).toHaveURL(/lancamentos\.status=Pago/);
       await page.reload();
       await expect(query).toHaveValue('DÉSPESA');
-      await expect(page.getByRole('button', { name: 'Comprovante de despesa', exact: true })).toBeVisible();
+      const entry = page.getByRole('button', { name: 'Comprovante de despesa', exact: true });
+      await expect(entry).toBeVisible();
+      await entry.click();
+      await expect(page.getByRole('dialog', { name: 'Comprovante de despesa' })).toBeVisible();
+      await page.goBack();
+      await expect(query).toHaveValue('DÉSPESA');
+      await entry.focus();
+      await expect(entry).toBeFocused();
       await query.fill('sem correspondência');
       await expect(page.getByRole('button', { name: 'Comprovante de despesa', exact: true })).toHaveCount(0);
     });
