@@ -26,7 +26,7 @@ registerHooks({
   load(url, context, next) {
     if (url === firebaseMock) return { format: 'module', source: 'export const db = {}; export const OperationType = {}; export const handleFirestoreError = (error) => { throw error };', shortCircuit: true };
     if (url === sdkMock) return { format: 'module', shortCircuit: true,
-      source: 'export const { Bytes, collection, doc, documentId, getDoc, getDocsFromServer, limit, onSnapshot, orderBy, query, runTransaction, serverTimestamp, startAfter, where, writeBatch } = globalThis.__pilotisTestFirestore;' };
+      source: 'export const { Bytes, collection, deleteField, doc, documentId, getDoc, getDocsFromServer, limit, onSnapshot, orderBy, query, runTransaction, serverTimestamp, startAfter, where, writeBatch } = globalThis.__pilotisTestFirestore;' };
     if (url.startsWith(root.href) && url.endsWith('.ts')) return { format: 'module', source: typescriptSource(url), shortCircuit: true };
     return next(url, context);
   },
@@ -87,6 +87,7 @@ globalThis.__pilotisTestFirestore = {
   },
   collection: (_db, ...parts) => makeRef(...parts),
   doc: (_db, ...parts) => makeRef(...parts),
+  deleteField: () => Symbol('deleteField'),
   documentId: () => '__name__',
   getDoc: async (ref) => snapshot(ref),
   getDocsFromServer: async (source) => readQuery(source),

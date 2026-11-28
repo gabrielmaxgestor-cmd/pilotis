@@ -85,6 +85,27 @@ for (const width of [390, 1440]) {
       await expect(trigger).toBeFocused();
     });
 
+    test('aviso da edição oferece Desfazer por oito segundos', async ({ page }) => {
+      await openFinance(page);
+      const now = new Date();
+      await page.clock.install({ time: now });
+      await page.clock.pauseAt(new Date(now.getTime() + 1000));
+      const show = () => page.evaluate(async () => {
+        const { publishEditUndo } = await import('/src/services/editUndo.ts');
+        publishEditUndo(async () => { document.body.dataset.editRestored = 'sim'; });
+      });
+      await show();
+      const undo = page.getByRole('button', { name: 'Desfazer', exact: true });
+      await expect(undo).toBeVisible();
+      await page.clock.fastForward(7999);
+      await expect(undo).toBeVisible();
+      await undo.click();
+      await expect(page.locator('body')).toHaveAttribute('data-edit-restored', 'sim');
+      await show();
+      await page.clock.fastForward(8001);
+      await expect(undo).toHaveCount(0);
+    });
+
     test('busca global abre o lançamento pela descrição e preserva o foco', async ({ page }) => {
       await page.goto('/tests/browser/index.html');
       const trigger = page.getByRole('button', { name: 'Buscar no sistema' });

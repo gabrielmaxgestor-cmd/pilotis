@@ -1052,7 +1052,7 @@ export async function replanProjectSchedule(params: {
 export async function saveWorkInProgressLimit(uid: string, actor: ActorRole, projectId: string, limit: number) {
   validateWorkInProgressLimit(limit);
   const ref = doc(db, 'projects', projectId);
-  await runTransaction(db, async (tx) => {
+  const undo = await runTransaction(db, async (tx) => {
     const snapshot = await tx.get(ref);
     const project = snapshot.data() as Project | undefined;
     if (!project || project.ownerUid !== uid) throw new Error('Obra indisponível.');
@@ -1062,11 +1062,13 @@ export async function saveWorkInProgressLimit(uid: string, actor: ActorRole, pro
       summary: clampStr(`Limite de etapas em andamento · ${project.name}`, 240),
       beforeValue: String(project.workInProgressLimit ?? DEFAULT_WORK_IN_PROGRESS_LIMIT), afterValue: String(limit), createdAt: serverTimestamp(),
     });
+    return prepareEditUndo(uid, actor, [{ ref, before: project, after: { workInProgressLimit: limit } }]);
   });
+  publishEditUndo(undo);
 }
 
 export async function saveProjectStage(params: {
-  uid: string; actor: ActorRole; project: Pick<Project, 'id' | 'scheduleRevision'>; knownStages: Pick<ProjectStage, 'id'>[];
+  uid: string; actor: ActorRole; project: Pick<Project, 'id' | 'scheduleRevision'>; knownStages: Pick<ProjectStage, 'id'>[]; restoringEdit?: boolean;
 } & ({ stageId?: string; payload: StagePayload } | { stageId: string; moveTo: StageStatus }
   | { stageId: string; fieldUpdate: FieldStageUpdate; operationId: string })): Promise<void> {
   const { uid, actor, project, knownStages } = params;
@@ -1074,7 +1076,7 @@ export async function saveProjectStage(params: {
   const projectRef = doc(db, 'projects', project.id);
   const stageRef = doc(db, 'stages', stageId);
   const receiptRef = 'operationId' in params ? doc(db, 'fieldSync', params.operationId) : null;
-  await runTransaction(db, async (tx) => {
+  const undo = await runTransaction(db, async (tx) => {
     if (receiptRef && (await tx.get(receiptRef)).exists()) return;
     const projectSnapshot = await tx.get(projectRef);
     const current = { ...projectSnapshot.data(), id: project.id } as Project;
@@ -1202,11 +1204,18 @@ export async function saveProjectStage(params: {
     });
     tx.set(doc(db, 'auditLogs', generateId('aud')), {
       ownerUid: uid, registeredBy: actor, action: previous ? 'Atualização' : 'Criação',
-      entityType: 'stages', summary: clampStr(`Etapa ${previous ? 'atualizada' : 'criada'}: ${payload.name}`, 240),
+      entityType: 'stages', summary: clampStr(`Etapa ${params.restoringEdit ? 'restaurada após desfazer' : previous ? 'atualizada' : 'criada'}: ${payload.name}`, 240),
       beforeValue: previous?.status ?? '', afterValue: clampStr([payload.status, payload.delayCategory, payload.delayJustification].filter(Boolean).join(' · '), 240),
       createdAt: serverTimestamp(),
     });
+    if (!previous || !('payload' in params) || params.restoringEdit) return;
+    const { id, ownerUid, createdBy, updatedBy, createdAt, updatedAt, ...previousFields } = previous;
+    return () => saveProjectStage({
+      uid, actor, project: { id: project.id, scheduleRevision }, knownStages: nextStages,
+      stageId, payload: previousFields, restoringEdit: true,
+    });
   });
+  publishEditUndo(undo);
 }
 
 type TransactionPayload = Omit<FinancialTransaction, keyof import('../types/pilotis').AuditMeta | 'id'>;
@@ -1853,7 +1862,7 @@ export async function saveWeeklyAllocation(
   const legacyIds = allocations.filter((item) => item.id !== canonicalId &&
     item.ownerUid === uid && item.employeeId === employee.id && item.weekStart === week).map((item) => item.id);
   const ref = doc(db, 'allocations', canonicalId);
-  await runTransaction(db, async (tx) => {
+  const undo = await runTransaction(db, async (tx) => {
     const rows = await Promise.all([canonicalId, ...new Set(legacyIds)].map(async (id) => {
       const snapshot = await tx.get(doc(db, 'allocations', id));
       return snapshot.exists() ? { ...snapshot.data(), id } as Allocation : null;
@@ -1866,7 +1875,7 @@ export async function saveWeeklyAllocation(
     const projects = await readClosureRows<Project>(tx, projectIds.map((id) => doc(db, 'projects', id)));
     const locate = (id: string) => projects.find((project) => project.id === id);
     const targetProject = locate(target.projectId);
-    if (targetProject && isReleasedProject(targetProject, weekEnd)) throw new Error('Esta obra está encerrada nesta semana.');
+    if (targetProject && (targetProject.archive || isReleasedProject(targetProject, weekEnd))) throw new Error('Esta obra está encerrada nesta semana.');
     const activeRows = existing.filter((item) => {
       const project = locate(item.projectId);
       return item.status === 'Férias' || !project || !isReleasedProject(project, weekEnd);
@@ -1884,7 +1893,7 @@ export async function saveWeeklyAllocation(
     ].filter((date) => date && date <= weekEnd).sort().at(-1) ?? week;
     const stageId = target.status === 'Obra' ? target.stageId ?? '' : '';
     const liveEmployee = (await tx.get(doc(db, 'employees', employee.id))).data() as Employee | undefined;
-    if (!liveEmployee || liveEmployee.ownerUid !== uid) throw new Error('Colaborador indisponível.');
+    if (!liveEmployee || liveEmployee.ownerUid !== uid || liveEmployee.archive) throw new Error('Colaborador indisponível.');
     if (target.status === 'Obra' && target.projectId !== 'Sem obra' && (!targetProject || targetProject.ownerUid !== uid)) {
       throw new Error('Obra indisponível para alocação.');
     }
@@ -1920,7 +1929,10 @@ export async function saveWeeklyAllocation(
       beforeValue: clampStr(existing.map((item) => [item.projectName, item.stageId].filter(Boolean).join(' · ')).join(' / '), 240),
       afterValue: clampStr([target.projectName, stage?.name].filter(Boolean).join(' · '), 240), createdAt: serverTimestamp(),
     });
+    return previous?.id === canonicalId && !historical && !duplicates.length
+      ? prepareEditUndo(uid, actor, [{ ref, before: previous, after: row }]) : undefined;
   });
+  publishEditUndo(undo);
 }
 
 function workDocuments(uid: string, projectId: string, name: string) {
@@ -2019,7 +2031,7 @@ export async function saveProjectFollowUp(uid: string, actor: ActorRole, project
     throw new Error('Informe datas válidas para os pedidos enviados.');
   }
   const ref = doc(db, 'projectFollowUps', projectId);
-  await runTransaction(db, async (tx) => {
+  const undo = await runTransaction(db, async (tx) => {
     const [projectSnapshot, previous] = await Promise.all([tx.get(doc(db, 'projects', projectId)), tx.get(ref)]);
     const project = projectSnapshot.data() as Project | undefined;
     if (!project || project.ownerUid !== uid || project.status !== 'Concluída') throw new Error('Selecione uma obra encerrada.');
@@ -2032,18 +2044,25 @@ export async function saveProjectFollowUp(uid: string, actor: ActorRole, project
     };
     if (previous.exists()) tx.update(ref, { ...row, updatedBy: actor, updatedAt: serverTimestamp() });
     else tx.set(ref, { ...row, ...auditFields(uid, actor) });
-    if (client?.exists() && client.data().ownerUid === uid) {
+    const clientBefore = client?.data();
+    let clientEdit: { ref: DocumentReference; before: object; after: object } | undefined;
+    if (clientBefore?.ownerUid === uid && !clientBefore.archive) {
       const currentStatus = String(client.data().testimonialStatus ?? '');
       if (testimonial.trim() || !currentStatus.startsWith('Recebido')) {
-        tx.update(client.ref, { testimonialStatus: testimonial.trim() ? 'Recebido' : 'Solicitado',
-          updatedBy: actor, updatedAt: serverTimestamp() });
+        const change = { testimonialStatus: testimonial.trim() ? 'Recebido' : 'Solicitado' };
+        tx.update(client.ref, { ...change, updatedBy: actor, updatedAt: serverTimestamp() });
+        clientEdit = { ref: client.ref, before: clientBefore, after: change };
       }
     }
     tx.set(doc(db, 'auditLogs', generateId('aud')), {
       ownerUid: uid, registeredBy: actor, action: previous.exists() ? 'Atualização' : 'Criação', entityType: 'projectFollowUps',
       summary: clampStr('Pós-obra atualizado · ' + project.name, 240), createdAt: serverTimestamp(),
     });
+    return previous.exists() ? prepareEditUndo(uid, actor, [
+      { ref, before: previous.data(), after: row }, ...(clientEdit ? [clientEdit] : []),
+    ]) : undefined;
   });
+  publishEditUndo(undo);
 }
 
 type WarrantyPayload = Pick<WarrantyCall, 'description' | 'openedDate' | 'deadlineDate' | 'cost' | 'status'>;

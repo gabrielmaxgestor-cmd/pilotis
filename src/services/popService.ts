@@ -1,3 +1,4 @@
+import { prepareEditUndo, publishEditUndo } from './editUndo';
 import { Bytes, doc, getDoc, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import {
@@ -83,7 +84,7 @@ export async function savePop(params: SaveParams): Promise<string> {
   }
   const parts = await encodeFiles(files);
 
-  await runTransaction(db, async (tx) => {
+  const undo = await runTransaction(db, async (tx) => {
     const old = params.popId ? (await tx.get(ref)).data() as Pop | undefined : undefined;
     if (params.popId && (!old || old.ownerUid !== uid)) throw new Error('POP indisponível.');
     if (old && (old.revision ?? 0) !== (params.expectedRevision ?? 0)) {
@@ -138,6 +139,10 @@ export async function savePop(params: SaveParams): Promise<string> {
       beforeValue: old?.version ?? '', afterValue: action === 'draft' ? 'Em revisão' : version,
       createdAt: serverTimestamp(),
     });
+    return old && action === 'draft' ? prepareEditUndo(uid, actor, [{
+      ref, before: old, after: written, restoreFields: { revision: revision + 1 },
+    }]) : undefined;
   });
+  publishEditUndo(undo);
   return id;
 }

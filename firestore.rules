@@ -145,30 +145,30 @@ service cloud.firestore {
         && data.type in ['Casa residencial', 'Reforma', 'Obra satélite']
         && isValidNonNegNum(data.totalValue)
         && data.status in ['Rascunho', 'Enviado', 'Em negociação', 'Ganho', 'Perdido', 'Descartado']
-        && (!('city' in data) || isValidStr(data.city, 80))
-        && (!('areaM2' in data) || isValidNonNegNum(data.areaM2))
-        && (!('estimatedMonths' in data) || isValidNonNegNum(data.estimatedMonths))
-        && (!('validityDays' in data) || isValidNonNegNum(data.validityDays))
-        && (!('description' in data) || isValidStr(data.description, 1500))
-        && (!('origin' in data) || isValidStr(data.origin, 80))
-        && (!('laborCost' in data) || isValidNonNegNum(data.laborCost))
-        && (!('subcontractCost' in data) || isValidNonNegNum(data.subcontractCost))
-        && (!('equipmentCost' in data) || isValidNonNegNum(data.equipmentCost))
-        && (!('bdiCost' in data) || isValidNonNegNum(data.bdiCost))
-        && (!('taxCost' in data) || isValidNonNegNum(data.taxCost))
-        && (!('pricingMarginPct' in data) || (isValidNonNegNum(data.pricingMarginPct) && data.pricingMarginPct <= 99.99))
-        && (!('downPaymentPct' in data) || (isValidNonNegNum(data.downPaymentPct) && data.downPaymentPct <= 100))
-        && (!('installmentsCount' in data) || (isValidNonNegNum(data.installmentsCount) && data.installmentsCount <= 36))
-        && (!('probabilityPct' in data) || (isValidNonNegNum(data.probabilityPct) && data.probabilityPct <= 100))
-        && (!('discardReason' in data) || isValidStr(data.discardReason, 300))
-        && (!('lossReason' in data) || isValidStr(data.lossReason, 300))
-        && (!('version' in data) || isValidStr(data.version, 20))
+        && isValidStr(data.get('city', ''), 80)
+        && isValidNonNegNum(data.get('areaM2', 0))
+        && isValidNonNegNum(data.get('estimatedMonths', 0))
+        && isValidNonNegNum(data.get('validityDays', 0))
+        && isValidStr(data.get('description', ''), 1500)
+        && isValidStr(data.get('origin', ''), 80)
+        && isValidNonNegNum(data.get('laborCost', 0))
+        && isValidNonNegNum(data.get('subcontractCost', 0))
+        && isValidNonNegNum(data.get('equipmentCost', 0))
+        && isValidNonNegNum(data.get('bdiCost', 0))
+        && isValidNonNegNum(data.get('taxCost', 0))
+        && (isValidNonNegNum(data.get('pricingMarginPct', 0)) && data.get('pricingMarginPct', 0) <= 99.99)
+        && (isValidNonNegNum(data.get('downPaymentPct', 0)) && data.get('downPaymentPct', 0) <= 100)
+        && (isValidNonNegNum(data.get('installmentsCount', 0)) && data.get('installmentsCount', 0) <= 36)
+        && (isValidNonNegNum(data.get('probabilityPct', 0)) && data.get('probabilityPct', 0) <= 100)
+        && isValidStr(data.get('discardReason', ''), 300)
+        && isValidStr(data.get('lossReason', ''), 300)
+        && isValidStr(data.get('version', ''), 20)
         && (!('versionHistory' in data) || isValidStringList(data.versionHistory, 30, 400))
         && (!('contractSignStatus' in data) || data.contractSignStatus in ['Não gerado', 'Aguardando assinatura', 'Assinado pelo cliente', 'Assinado pelas partes'])
-        && (!('contractSignedAt' in data) || isValidStr(data.contractSignedAt, 20))
+        && isValidStr(data.get('contractSignedAt', ''), 20)
         && (!('contractAddenda' in data) || isValidStringList(data.contractAddenda, 30, 400))
-        && (!('addendaTotalValue' in data) || isValidNum(data.addendaTotalValue))
-        && (!('projectId' in data) || isValidStr(data.projectId, 128));
+        && isValidNum(data.get('addendaTotalValue', 0))
+        && isValidStr(data.get('projectId', ''), 128);
     }
 
     function isValidProject(data) {
@@ -564,8 +564,7 @@ service cloud.firestore {
 
     function notDeleted(entity, id) {
       let key = entity + '_' + id;
-      return id in ['', 'Empresa'] || (isValidId(id)
-        && !existsAfter(/databases/$(database)/documents/recordTombstones/$(key)));
+      return id in ['', 'Empresa', 'Sem obra'] || !existsAfter(/databases/$(database)/documents/recordTombstones/$(key));
     }
 
     function validNewReference(data, entity, field) {
@@ -743,7 +742,6 @@ service cloud.firestore {
       allow get: if isValidId(installmentId) && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(installmentId) && isSignedIn() && isValidInstallment(incoming())
-        && validNewReference(incoming(), 'projects', 'projectId')
         && validNewReference(incoming(), 'clients', 'clientId')
         && validNewReference(incoming(), 'quotes', 'quoteId')
         && !('receiptReversalAuditId' in incoming()) && incoming().createdAt == request.time && incoming().updatedAt == request.time

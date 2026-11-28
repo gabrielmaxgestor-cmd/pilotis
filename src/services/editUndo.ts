@@ -41,11 +41,12 @@ interface EditedRecord {
   ref: DocumentReference;
   before: object;
   after: object;
+  restoreFields?: Fields;
 }
 
 export function prepareEditUndo(uid: string, actor: ActorRole, edits: EditedRecord[]) {
-  const changed = edits.map(({ ref, before, after }) => ({
-    ref, before: before as Fields,
+  const changed = edits.map(({ ref, before, after, restoreFields }) => ({
+    ref, before: before as Fields, restoreFields,
     entries: Object.entries(after).filter(([key, value]) =>
       !['ownerUid', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'].includes(key) &&
       !sameValue((before as Fields)[key], value)),
@@ -62,7 +63,7 @@ export function prepareEditUndo(uid: string, actor: ActorRole, edits: EditedReco
         }
         const patch = Object.fromEntries(edit.entries.map(([key]) =>
           [key, Object.hasOwn(edit.before, key) ? edit.before[key] : deleteField()]));
-        tx.update(edit.ref, { ...patch, updatedBy: actor, updatedAt: serverTimestamp() });
+        tx.update(edit.ref, { ...patch, ...edit.restoreFields, updatedBy: actor, updatedAt: serverTimestamp() });
       }
       tx.set(auditRef, {
         ownerUid: uid, registeredBy: actor, action: 'Atualização',

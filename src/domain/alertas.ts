@@ -1,3 +1,4 @@
+import { isReversalStatus } from './recordLifecycle';
 import { CERTIFICATE_WARNING_DAYS, OBLIGATION_WARNING_DAYS } from './conformidade';
 import { previsaoCaixa, type PrevisaoCaixaResult } from './caixa';
 import { isParcelaEmAtraso, resolverStatusLancamento } from './financeiro';
@@ -127,7 +128,7 @@ export function alertas(
     });
   }
   for (const entry of lancamentos) {
-    if (entry.tipo !== 'despesa' || entry.status === 'Pago' || entry.categoria.trim().toLowerCase() !== 'tributos'
+    if (entry.tipo !== 'despesa' || entry.status === 'Pago' || isReversalStatus(entry.status) || entry.categoria.trim().toLowerCase() !== 'tributos'
       || (entry.dividaId && taxDebtIds.has(entry.dividaId))) continue;
     const days = diffDaysISO(entry.vencimento || entry.data, refDate);
     const late = resolverStatusLancamento(entry, refDate) === 'Em atraso';

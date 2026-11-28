@@ -921,7 +921,8 @@ export function ClientsQuotesView({
       header: 'Ação',
       align: 'right',
       render: (q) => (
-        <div className="flex justify-end">
+        <div className="flex flex-wrap justify-end gap-2">
+          <RecordLifecycleButton uid={uid} record={{ entity: 'quotes', id: q.id, title: q.title }} />
           <Button
             size="sm"
             variant="secondary"
