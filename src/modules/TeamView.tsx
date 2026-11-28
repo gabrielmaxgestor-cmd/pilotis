@@ -44,6 +44,7 @@ import {
   formatMonthLabelBR,
   onboardingDeadline,
   isPublishedPop,
+  normalizeCompetence,
   getOnboardingAlert,
   plannedWeeks,
   planningTodayISO,
@@ -162,7 +163,8 @@ export function TeamView({
   // Send payroll actor
   const [payrollActor, setPayrollActor] = useState<ActorRole>('Responsável administrativo');
 
-  const [payrollMonth, setPayrollMonth] = useViewParam('equipe.folha.mes', monthKey(todayStr));
+  const [payrollMonthParam, setPayrollMonth] = useViewParam('equipe.folha.mes');
+  const payrollMonth = normalizeCompetence(payrollMonthParam) || monthKey(todayStr);
   const [payrollDueDate, setPayrollDueDate] = useState('');
   const monthlyPayroll = useMemo(() => calculateTeamPayroll(data, payrollMonth), [data, payrollMonth]);
   const payroll = useMemo(
