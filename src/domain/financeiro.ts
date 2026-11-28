@@ -1,3 +1,4 @@
+import { paidExpenseComposition, type PaidExpenseComposition } from './financialCharts';
 import { isReversalStatus } from './recordLifecycle';
 import { diffDaysISO, monthKey, roundCents } from './formatters';
 import type {
@@ -288,6 +289,7 @@ export interface ResumoFinanceiroPeriodoResult {
   possuiMovimentoRealizadoNoMes: boolean;
   entradasMes: number;
   saidasMes: number;
+  composicaoDespesas: PaidExpenseComposition;
   folhaMes: number;
   folhaParticipacaoPct: number | null;
   resultadoMes: number | null;
@@ -323,20 +325,9 @@ export function resumoFinanceiroPeriodo(
       .filter((l) => l.tipo === 'receita')
       .reduce((sum, l) => sum + l.valor, 0),
   );
-  const saidasMes = roundCents(
-    mesTxs
-      .filter((l) => l.tipo === 'despesa')
-      .reduce((sum, l) => sum + l.valor, 0),
-  );
-  const folhaMes = roundCents(
-    mesTxs
-      .filter(
-        (l) =>
-          l.tipo === 'despesa' &&
-          (l.categoria.toLowerCase() === 'folha' || l.origem === 'folha'),
-      )
-      .reduce((sum, l) => sum + l.valor, 0),
-  );
+  const composicaoDespesas = paidExpenseComposition(mesTxs.filter((entry) => entry.tipo === 'despesa'));
+  const saidasMes = composicaoDespesas.total;
+  const folhaMes = composicaoDespesas.rows.find((row) => row.key === 'payroll')?.amount ?? 0;
   const folhaParticipacaoPct =
     saidasMes > 0 ? Math.round((folhaMes / saidasMes) * 100) : null;
   const estornosRealizados = lancamentos.filter((l) => l.status === 'Estornado' && !l.previsto && l.data <= dataReferenciaISO);
@@ -418,6 +409,7 @@ export function resumoFinanceiroPeriodo(
     possuiMovimentoRealizadoNoMes: hasMesMovements,
     entradasMes,
     saidasMes,
+    composicaoDespesas,
     folhaMes,
     folhaParticipacaoPct,
     resultadoMes,

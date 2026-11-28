@@ -9,7 +9,7 @@ import { DashboardView } from '../../src/modules/DashboardView';
 import { FinancialView } from '../../src/modules/FinancialView';
 import { ProjectPlanningView } from '../../src/modules/ProjectPlanningView';
 import { SettingsView } from '../../src/modules/SettingsView';
-import type { PilotisDataState } from '../../src/types/pilotis';
+import type { FinancialTransaction, PilotisDataState } from '../../src/types/pilotis';
 import '../../src/index.css';
 
 const data: PilotisDataState = {
@@ -21,7 +21,8 @@ const data: PilotisDataState = {
 function noAction() {}
 
 function Fixture() {
-  const route = (useViewSearch().get('route') || 'dashboard') as AppRouteKey;
+  const params = useViewSearch();
+  const route = (params.get('route') || 'dashboard') as AppRouteKey;
   const navigate = (next: AppRouteKey) => updateViewUrl({ route: next, registro: undefined }, { push: true });
   const [searchOpen, setSearchOpen] = useState(false);
   const showSearch = () => setSearchOpen(true);
@@ -48,6 +49,32 @@ function Fixture() {
       dueDate: '', installmentLabel: '', quoteId: '', debtId: '', source: 'manual',
     }],
   };
+  const chartProject = { ...planningData.projects[0], budgetedLabor: 4000, budgetedTax: 600 };
+  const chartEntry = (id: string, amount: number, category: string, fields: Partial<FinancialTransaction> = {}): FinancialTransaction => ({
+    ...financeData.transactions[0], id, amount, category, description: category,
+    projectId: chartProject.id, projectName: chartProject.name, ...fields,
+  });
+  const chartData: PilotisDataState = {
+    ...data, projects: [chartProject],
+    transactions: [
+      chartEntry('income', 500, 'Receita de obra', { entryKind: 'income', status: 'Recebido' }),
+      chartEntry('contracted', 300, 'Receita de obra', { entryKind: 'income', status: 'A vencer', isForecast: true }),
+      chartEntry('credit', 100, 'Empréstimo', { entryKind: 'loan', status: 'Não é receita' }),
+      chartEntry('payroll', 1000, 'Folha'),
+      chartEntry('taxes', 250, 'Tributos'),
+      chartEntry('interest', 100, 'Juros e tarifas', { projectId: 'Empresa', projectName: 'Empresa' }),
+      chartEntry('materials', 150, 'Materiais'),
+      chartEntry('unpaid', 200, 'Materiais', { status: 'A vencer', isForecast: true }),
+    ],
+    quotes: [{
+      id: 'funnel', ownerUid: 'browser-test', createdBy: 'Sócio', updatedBy: 'Sócio',
+      code: 'ORC-1', clientId: 'client', clientName: 'Cliente', title: 'Obra em negociação',
+      type: 'Reforma', city: 'Valença', areaM2: 1, estimatedMonths: 1, validityDays: 30, description: '', origin: '',
+      laborCost: 0, subcontractCost: 0, equipmentCost: 0, bdiCost: 0, taxCost: 0, totalValue: 1000,
+      downPaymentPct: 40, installmentsCount: 1, probabilityPct: 50, status: 'Em negociação', discardReason: '', projectId: '',
+    }],
+  };
+  const finance = params.get('finance') === 'charts' ? chartData : params.get('finance') === 'empty' ? data : financeData;
   const title = route === 'financial' ? 'Financeiro' : route === 'planning' ? 'Obras'
     : route === 'settings' ? 'Configurações' : 'Dashboard';
   return (
@@ -59,7 +86,7 @@ function Fixture() {
         {route === 'dashboard' && <DashboardView data={data} onNavigate={navigate}
           onOpenProject={noAction} onOpenNewTransaction={() => { navigate('financial'); setNewExpense(true); }}
           onOpenNewQuote={noAction} />}
-        {route === 'financial' && <FinancialView uid="browser-test" data={financeData} externalNewTxOpen={newExpense}
+        {route === 'financial' && <FinancialView uid="browser-test" data={finance} externalNewTxOpen={newExpense}
           onCloseExternalNewTx={() => setNewExpense(false)} />}
         {route === 'planning' && <ProjectPlanningView uid="browser-test" data={planningData} selectedProjectId="construction" onSelectProject={noAction} />}
         {route === 'settings' && <SettingsView uid="browser-test" data={data} initialTab="Importar dados" />}

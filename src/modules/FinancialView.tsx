@@ -4,6 +4,8 @@ import { useViewParam, useViewTab } from '../hooks/useViewUrl';
 import type { ListSchema } from '../domain/listQuery';
 import { useToast } from '../components/ui/Toast';
 import { canReverseMovement, effectiveTransactions, ledgerSignedAmount } from '../domain/recordLifecycle';
+import { projectDreRows } from '../domain/financialCharts';
+import { CashFlowChart, ExpenseCompositionChart, ProjectDreChart } from './financial/FinancialCharts';
 import { DataList } from '../components/ui/DataList';
 import { CompanyPdfHeader } from '../components/ui/CompanyPdfHeader';
 import {
@@ -669,6 +671,8 @@ export function FinancialView({
     getContractCostBudget(activeDreProject) !== null || (activeDre?.custosTotais.orcado ?? 0) > 0
   ));
 
+  const dreRows = activeDre ? projectDreRows(activeDre, hasActiveCostBudget) : [];
+
   const companyDre = useMemo(
     () => calcularDreEmpresa(data, drePeriodStart, drePeriodEnd),
     [data, drePeriodStart, drePeriodEnd],
@@ -753,7 +757,7 @@ export function FinancialView({
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <section className="lg:col-span-2 bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
+            <section className="min-w-0 lg:col-span-2 bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <h2 className="text-base font-semibold text-[#14181F]">Fluxo de caixa mensal</h2>
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -767,23 +771,7 @@ export function FinancialView({
                 </div>
               </div>
 
-              {projection.length === 0 ? (
-                <p className="text-sm text-[#5B6472] py-10 text-center">
-                  Sem dados suficientes para exibir o fluxo mensal.
-                </p>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
-                  {projection.map((row) => (
-                    <div key={row.mesKey} className="rounded-lg border border-[#E4E1DA] p-2.5">
-                      <strong className="text-sm">{row.rotulo}</strong>
-                      <span className="block text-xs text-[#5B6472]">Saldo projetado</span>
-                      <span className={row.negativo ? 'text-sm font-semibold text-[#B42318]' : 'text-sm font-semibold'}>
-                        {formatBRL(row.saldoProjetado)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <CashFlowChart forecast={cashForecast} />
             </section>
 
             <section id="financial-commercial-simulator" tabIndex={-1} aria-label="Simulador de condições comerciais" className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-3">
@@ -850,6 +838,10 @@ export function FinancialView({
               </div>
             </section>
           </div>
+
+          <section className="min-w-0 rounded-xl border border-[#E4E1DA] bg-white p-5">
+            <ExpenseCompositionChart composition={periodSummary.composicaoDespesas} period={formatMonthLabelBR(monthKey(todayStr))} />
+          </section>
 
           <section className="bg-white border border-[#E4E1DA] rounded-xl p-5 flex flex-col gap-4">
             <div className="flex items-center justify-between">
@@ -1230,6 +1222,8 @@ export function FinancialView({
               <StatusBadge label="Contratado separado do funil" tone="info" />
             </div>
 
+            <CashFlowChart forecast={cashForecast} />
+
             {!cashForecast.possuiDados || projection.length === 0 ? (
               <EmptySection
                 title="Sem dados para projetar fluxo de caixa"
@@ -1352,10 +1346,15 @@ export function FinancialView({
       {tab === 'DRE por obra' && (
         <div className="flex flex-col gap-6">
           {data.projects.length === 0 || !activeDreProject || !activeDre ? (
-            <EmptySection
-              title="Nenhuma obra para calcular DRE"
-              description="Confirme um orçamento ou cadastre uma obra para comparar orçamento x realizado e acompanhar a margem real."
-            />
+            <>
+              <EmptySection
+                title="Nenhuma obra para calcular DRE"
+                description="Confirme um orçamento ou cadastre uma obra para comparar orçamento x realizado e acompanhar a margem real."
+              />
+              <section className="min-w-0 rounded-xl border border-[#E4E1DA] bg-white p-5">
+                <ProjectDreChart rows={[]} />
+              </section>
+            </>
           ) : (
             <>
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1422,23 +1421,16 @@ export function FinancialView({
                   )}
                 </div>
 
+                <div className="no-print min-w-0">
+                  <ProjectDreChart rows={dreRows} projectName={activeDreProject.name} />
+                </div>
+
                 <DataList caption="DRE por obra" keyExtractor={(row) => row.label}
-                  rows={([
-                    ['Receita de obra', activeDre.receita],
-                    ['(−) Mão de obra', activeDre.maoDeObra],
-                    ['(−) Subempreitadas', activeDre.empreita],
-                    ['(−) Equipamentos e EPI', activeDre.equipamentos],
-                    ['(−) Tributos', activeDre.impostos],
-                    ['(−) BDI e comissões', activeDre.bdi],
-                    ['(−) Ajuste do orçamento pela EAP', activeDre.ajusteEap],
-                    ['Resultado / margem da obra', activeDre.resultado],
-                  ] as const).filter(([, line]) => line !== activeDre.ajusteEap || line.orcado !== 0).map(([label, line]) => ({ label, line }))}
+                  rows={dreRows}
                   columns={[
                     { key: 'label', header: 'Linha', render: (row) => row.label },
-                    { key: 'budget', header: 'Orçado', numeric: true, align: 'right', render: ({ line }) =>
-                      formatBRL(line === activeDre.receita || hasActiveCostBudget ? line.orcado : null) },
-                    { key: 'actual', header: 'Realizado', numeric: true, align: 'right', render: ({ line }) =>
-                      formatBRL(activeDre.possuiRealizado && line !== activeDre.ajusteEap ? line.realizado : null) },
+                    { key: 'budget', header: 'Orçado', numeric: true, align: 'right', render: (row) => formatBRL(row.budget) },
+                    { key: 'actual', header: 'Realizado', numeric: true, align: 'right', render: (row) => formatBRL(row.actual) },
                     { key: 'variance', header: 'Variação / margem', render: ({ label, line }) => {
                       if (!activeDre.possuiRealizado || line === activeDre.ajusteEap) return 'Sem dados';
                       if (!hasActiveCostBudget && line !== activeDre.receita) {

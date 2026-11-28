@@ -69,6 +69,82 @@ for (const width of [390, 1440]) {
       await expect(page.getByRole('tab', { name: 'A receber' })).toHaveAttribute('aria-selected', 'true');
     });
 
+    test('gráficos financeiros correspondem às tabelas e mantêm os rótulos na área rolável', async ({ page }) => {
+      await page.clock.setFixedTime(new Date('2026-11-28T12:00:00Z'));
+      await page.goto('/tests/browser/index.html?route=financial&finance=charts');
+
+      async function openChartTable(title, caption) {
+        const figure = page.getByRole('figure', { name: title, exact: true });
+        await expect(figure).toBeVisible();
+        await figure.locator('summary').press('Enter');
+        const table = figure.getByRole('table', { name: caption, exact: true });
+        await expect(table).toBeVisible();
+        return { figure, table };
+      }
+
+      const expenses = await openChartTable('Composição das despesas pagas', 'Dados do gráfico de composição das despesas pagas');
+      await expect(expenses.figure).toContainText(/R\$\s*1\.500,00/);
+      await expect(expenses.table.getByRole('row', { name: /^Folha/ })).toContainText(/R\$\s*1\.000,00/);
+      await expect(expenses.table.getByRole('row', { name: /^Tributos/ })).toContainText(/R\$\s*250,00/);
+      await expect(expenses.table.getByRole('row', { name: /^Juros/ })).toContainText(/R\$\s*100,00/);
+
+      await page.getByRole('tab', { name: 'Fluxo de caixa' }).click();
+      const cash = await openChartTable('Entradas x saídas e saldo projetado', 'Dados do gráfico de fluxo de caixa');
+      const november = cash.table.getByRole('row', { name: /^Nov\/2026/ });
+      await expect(november.getByRole('cell').nth(0)).toHaveText(/R\$\s*500,00/);
+      await expect(november.getByRole('cell').nth(1)).toHaveText(/R\$\s*300,00/);
+      await expect(november.getByRole('cell').nth(3)).toHaveText(/R\$\s*100,00/);
+      await expect(november.getByRole('cell').nth(4)).toHaveText(/R\$\s*1\.500,00/);
+      await expect(november.getByRole('cell').nth(5)).toHaveText(/R\$\s*200,00/);
+      await expect(november.getByRole('cell').nth(7)).toHaveText(/-R\$\s*800,00/);
+      await expect(november.getByRole('cell', { name: 'Negativo' })).toBeVisible();
+      await expect(cash.table.getByRole('row', { name: /^Dez\/2026/ }).getByRole('cell').nth(2)).toHaveText(/R\$\s*200,00/);
+      await expect(cash.figure.locator('svg text').filter({ hasText: 'Saldo negativo' }).first()).toBeVisible();
+      await expect(cash.figure.locator('svg title').filter({ hasText: /Saldo projetado · -R\$\s*800,00/ }).first()).toHaveCount(1);
+
+      if (width === 390) {
+        const area = cash.figure.getByRole('region', { name: /área rolável/ });
+        const dimensions = await area.evaluate((element) => {
+          element.scrollLeft = element.scrollWidth;
+          const svg = element.querySelector('svg');
+          const size = svg.viewBox.baseVal;
+          const clipped = [...svg.querySelectorAll('text')].some((label) => {
+            const bounds = label.getBBox();
+            return bounds.x < 0 || bounds.x + bounds.width > size.width ||
+              bounds.y < 0 || bounds.y + bounds.height > size.height;
+          });
+          return { scrollLeft: element.scrollLeft, clipped };
+        });
+        expect(dimensions.scrollLeft).toBeGreaterThan(0);
+        expect(dimensions.clipped).toBe(false);
+      }
+      await checkPageWidth(page);
+      await checkAccessibility(page);
+
+      await page.getByRole('tab', { name: 'DRE por obra' }).click();
+      const dre = await openChartTable('Orçado x realizado por categoria', 'Dados do gráfico de DRE por obra');
+      const labor = dre.table.getByRole('row', { name: /Mão de obra/ });
+      await expect(labor.getByRole('cell').nth(0)).toHaveText(/R\$\s*4\.000,00/);
+      await expect(labor.getByRole('cell').nth(1)).toHaveText(/R\$\s*1\.000,00/);
+      await expect(dre.figure.locator('svg title').filter({ hasText: /Mão de obra · Realizado · R\$\s*1\.000,00/ })).toHaveCount(1);
+      await checkPageWidth(page);
+      await checkAccessibility(page);
+    });
+
+    test('gráficos financeiros mostram Sem dados no estado inicial', async ({ page }) => {
+      await page.goto('/tests/browser/index.html?route=financial&finance=empty');
+      const cash = page.getByRole('figure', { name: 'Entradas x saídas e saldo projetado' });
+      const expenses = page.getByRole('figure', { name: 'Composição das despesas pagas' });
+      for (const figure of [cash, expenses]) {
+        await expect(figure.getByText('Sem dados', { exact: true })).toBeVisible();
+        await expect(figure.locator('svg')).toHaveCount(0);
+      }
+      await page.getByRole('tab', { name: 'Fluxo de caixa' }).click();
+      await expect(cash.getByText('Sem dados', { exact: true })).toBeVisible();
+      await page.getByRole('tab', { name: 'DRE por obra' }).click();
+      await expect(page.getByRole('figure', { name: 'Orçado x realizado por categoria' }).getByText('Sem dados', { exact: true })).toBeVisible();
+    });
+
     test('modal financeiro mantém foco visível e devolve foco ao fechar', async ({ page }) => {
       await openFinance(page);
       const trigger = page.getByRole('button', { name: 'Novo lançamento', exact: true });
