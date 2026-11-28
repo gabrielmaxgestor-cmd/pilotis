@@ -553,6 +553,17 @@ export async function logSecurityAudit(
   }
 }
 
+export async function recordAccountingPackageExport(uid: string, actor: ActorRole, start: string, end: string) {
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'auditLogs', generateId('aud')), {
+    ownerUid: uid, registeredBy: actor, action: 'Criação', entityType: 'accountingPackage',
+    summary: 'Pacote para o contador gerado',
+    afterValue: formatDateBR(start) + ' a ' + formatDateBR(end),
+    createdAt: serverTimestamp(),
+  });
+  await batch.commit();
+}
+
 interface StageTemplateItem {
   wbsCode: string;
   phase: string;

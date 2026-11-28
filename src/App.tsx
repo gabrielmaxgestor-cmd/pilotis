@@ -1,3 +1,4 @@
+import { ACCOUNTING_COLLECTIONS } from './domain/accountingPackage';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -184,6 +185,7 @@ function AuthenticatedShell({
   const data = useMemo(() => activePilotisData(records), [records]);
   const [dashboardReady, setDashboardReady] = useState(false);
   const [dashboardLoadFailed, setDashboardLoadFailed] = useState(false);
+  const [accountingLoadState, setAccountingLoadState] = useState<'loading' | 'failed' | 'ready'>('loading');
   const [selectedProjectId, setSelectedProjectId] = useViewParam('planning.obra');
   const query = useViewSearch();
   const archiveEntities: readonly ArchivableCollection[] | undefined = route === 'clients' ? ['clients', 'quotes']
@@ -212,13 +214,24 @@ function AuthenticatedShell({
       'clients', 'quotes', 'projects', 'installments', 'stages', 'customerMaterials', 'transactions',
       'debts', 'employees', 'allocations', 'settings', 'complianceItems', 'warrantyCalls',
     ]);
+    const accountingPending = new Set<string>(ACCOUNTING_COLLECTIONS);
+    let accountingFailed = false;
+    setAccountingLoadState('loading');
     const unsub = subscribePilotisCollections(uid, (partial) => {
+      if (accountingPending.size) {
+        Object.keys(partial).forEach((name) => accountingPending.delete(name));
+        if (!accountingPending.size && !accountingFailed) setAccountingLoadState('ready');
+      }
       setData((prev) => ({ ...prev, ...partial }));
       if (dashboardPending.size) {
         Object.keys(partial).forEach((name) => dashboardPending.delete(name));
         if (!dashboardPending.size) setDashboardReady(true);
       }
     }, (key) => {
+      if (ACCOUNTING_COLLECTIONS.some((name) => name === key)) {
+        accountingFailed = true;
+        setAccountingLoadState('failed');
+      }
       if (dashboardPending.has(key)) setDashboardLoadFailed(true);
       else console.error('Falha ao sincronizar os registros de ' + key);
     });
@@ -329,6 +342,7 @@ function AuthenticatedShell({
               data={data}
               companyEmail={companyEmail}
               initialTab={query.get('financial.aba') ?? undefined}
+              accountingLoadState={accountingLoadState}
               externalNewTxOpen={externalNewTxOpen}
               onCloseExternalNewTx={() => setExternalNewTxOpen(false)}
             />

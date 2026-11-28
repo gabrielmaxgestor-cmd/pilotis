@@ -11,7 +11,7 @@ const expenseLabels = {
 
 type ExpenseGroup = keyof typeof expenseLabels;
 
-function expenseGroup(entry: Pick<LancamentoRecord, 'categoria' | 'origem'>): ExpenseGroup {
+export function expenseGroup(entry: Pick<LancamentoRecord, 'categoria' | 'origem'>): ExpenseGroup {
   const category = entry.categoria.trim().toLocaleLowerCase('pt-BR');
   if (category === 'folha' || entry.origem === 'folha') return 'payroll';
   if (category === 'tributos' || category === 'impostos') return 'taxes';

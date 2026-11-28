@@ -85,6 +85,12 @@ No planejamento da obra, abra **Relatórios**, escolha o mês e selecione as fot
 
 O servidor grava o PDF em `projects/{projectId}/workReports/{reportId}/pdf` e as aprovações em `projects/{projectId}/clientApprovals`. O link de leitura vale 30 dias, pode ser revogado e é resolvido pelo hash do token em `workReportShares`. Após enviar o PDF ou o link ao cliente, confirme em **Registrar envio**. Geração, gestão de links e confirmação de envio ficam na auditoria. Abertura de links exige o backend publicado. Quando as fotos estão no Firebase Storage, a conta de serviço do Cloud Run precisa de acesso de leitura aos objetos do diário.
 
+## Pacote para o contador
+
+Em **Financeiro → Pacote para o contador**, informe as datas inicial e final e quem registrou a operação. O ZIP contém uma planilha Excel e um CSV equivalente para cada aba, incluindo o resumo. Mesmo um período sem registros gera os arquivos com cabeçalhos fixos e **Sem dados**. A auditoria guarda o responsável, a data da geração e o recorte.
+
+O resumo da planilha documenta os critérios. Os lançamentos realizados entram pela data do movimento, os previstos pelo vencimento. Parcelas são filtradas pelo recebimento. A folha usa as competências completas do intervalo e é agrupada por centro de custo e categoria. Dívidas refletem o saldo atual dos registros com próximo vencimento dentro do período. O pacote omite contatos, nomes de pessoas, comprovantes e descrições livres dos lançamentos.
+
 ## Anexos de conformidade
 
 Em **Conformidade → Anexos**, consulte o arquivo atual, as versões anteriores e os anexos removidos. PDFs e imagens têm prévia. DOCX pode ser baixado. O limite é de 10 MB. Os objetos usam o caminho `complianceAttachments/{uid}/{obraOuEmpresa}/{documento}/{versao}/{nomeSanitizado}`. A remoção lógica retira a versão atual e mantém o arquivo e o registro de auditoria.

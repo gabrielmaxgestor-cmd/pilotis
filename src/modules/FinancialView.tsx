@@ -1,3 +1,4 @@
+import { AccountingPackageView } from './financial/AccountingPackageView';
 import { installmentWhatsAppContext } from '../domain/whatsapp';
 import { formatTimestampBR } from '../domain/formatters';
 import { WhatsAppShortcut } from '../components/ui/WhatsAppShortcut';
@@ -126,6 +127,7 @@ const FIN_TABS = [
   'Fluxo de caixa',
   'Dívidas e crédito',
   'DRE por obra',
+  'Pacote para o contador',
 ];
 
 const EXPENSE_CATEGORIES = [
@@ -172,6 +174,7 @@ export function FinancialView({
   initialTab,
   externalNewTxOpen,
   onCloseExternalNewTx,
+  accountingLoadState,
 }: {
   uid: string;
   data: PilotisDataState;
@@ -179,6 +182,7 @@ export function FinancialView({
   initialTab?: string;
   externalNewTxOpen?: boolean;
   onCloseExternalNewTx?: () => void;
+  accountingLoadState?: 'loading' | 'failed' | 'ready';
 }) {
   const [tab, setTab] = useViewTab('financial', FIN_TABS, initialTab);
   const [recordId, setRecordId] = useViewParam('registro');
@@ -738,6 +742,7 @@ export function FinancialView({
       />
 
       <Tabs items={FIN_TABS} active={tab} onChange={setTab} />
+      {tab === 'Pacote para o contador' && <AccountingPackageView uid={uid} data={data} loadState={accountingLoadState} />}
       {tab === 'Visão geral' && <ListToolbar label="lançamentos" list={transactions} projects={centers} />}
       {tab === 'A receber' && <ListToolbar label="recebimentos" list={{
         ...installments, statuses: [...new Set([...installments.statuses, ...manualReceivables.statuses])],

@@ -141,7 +141,7 @@ test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', {
       markInstallmentReceived, reverseFinancialMovement, undoInstallmentReceipt, setRecordArchived,
       prepareEditUndo, permanentRecordDeletion, saveCustomerMaterials, saveProjectStage, linkProjectClient,
       recordWhatsAppSend, upsertCompanySettings, whatsappTemplates, createWorkReportStore, createWorkReportRouter,
-      showSharedWorkReport, pdfText } =
+      showSharedWorkReport, pdfText, recordAccountingPackageExport } =
       await loadConfirmationService(db);
     const meta = {
       ownerUid: uid, createdBy: actor, updatedBy: actor, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
@@ -409,6 +409,13 @@ test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', {
     const admin = initializeAdmin({ projectId: 'demo-pilotis' }, 'record-lifecycle');
     try {
       const adminDb = getAdminFirestore(admin, config.firestore[0].database);
+      await recordAccountingPackageExport(uid, actor, '2026-11-01', '2026-11-30');
+      const exportLog = await adminDb.collection('auditLogs').where('ownerUid', '==', uid)
+        .where('entityType', '==', 'accountingPackage').get();
+      assert.equal(exportLog.size, 1);
+      assert.equal(exportLog.docs[0].get('registeredBy'), actor);
+      assert.equal(exportLog.docs[0].get('afterValue'), '01/11/2026 a 30/11/2026');
+      assert.equal(typeof exportLog.docs[0].get('createdAt').toMillis(), 'number');
       await assert.rejects(permanentRecordDeletion(adminDb, uid, 'clients', clientRef.id, actor), /vínculos/);
       await setRecordArchived(uid, actor, 'clients', clientRef.id, false);
       assert.equal((await getDocFromServer(clientRef)).data().archive, undefined);

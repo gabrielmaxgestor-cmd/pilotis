@@ -1,3 +1,4 @@
+import { strFromU8, unzipSync } from 'fflate';
 import { readFile } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
@@ -76,6 +77,44 @@ for (const width of [390, 1440]) {
       await expect(dialog).toHaveCount(0);
       await expect(trigger).toBeFocused();
       await checkPageWidth(page);
+    });
+
+    test('Financeiro gera ZIP com planilha e CSVs mesmo em período sem dados', async ({ page }) => {
+      await page.route((url) => url.pathname === '/src/services/pilotisService.ts', async (route) => {
+        const response = await route.fetch();
+        const source = await response.text();
+        const exportFunction = 'async function recordAccountingPackageExport(uid, actor, start, end) {';
+        if (!source.includes(exportFunction)) throw Error('Função de auditoria não encontrada no módulo da exportação.');
+        await route.fulfill({ response, body: source.replace(exportFunction,
+          exportFunction + ' window.pilotisAccountingAudit = { uid, actor, start, end }; return;') });
+      });
+      await page.clock.setFixedTime(new Date('2026-11-28T12:00:00Z'));
+      await page.goto('/tests/browser/index.html?route=financial&financial.aba=Pacote+para+o+contador&finance=empty');
+      await expect(page.getByRole('heading', { name: 'Pacote para o contador' })).toBeVisible();
+      const start = page.getByLabel('Início do período');
+      const end = page.getByLabel('Fim do período');
+      await expect(start).toHaveValue('2026-11-01');
+      await expect(end).toHaveValue('2026-11-30');
+      await start.fill('2026-10-01');
+      await end.fill('2026-10-31');
+      const button = page.getByRole('button', { name: 'Gerar pacote (.zip)' });
+      await expect(button).toBeEnabled();
+      await checkPageWidth(page);
+      await checkAccessibility(page);
+      const event = page.waitForEvent('download');
+      await button.click();
+      const download = await event;
+      expect(download.suggestedFilename()).toBe('pacote-para-o-contador-2026-10-01-a-2026-10-31.zip');
+      const files = unzipSync(new Uint8Array(await readFile(await download.path())));
+      expect(files['pacote-para-o-contador.xlsx']).toBeDefined();
+      const xml = unzipSync(files['pacote-para-o-contador.xlsx']);
+      expect(strFromU8(xml['xl/workbook.xml'])).toContain('Parcelas recebidas');
+      const csvs = Object.keys(files).filter((file) => file.endsWith('.csv'));
+      expect(csvs).toHaveLength(7);
+      expect(csvs.every((file) => strFromU8(files[file]).includes('Sem dados'))).toBe(true);
+      expect(await page.evaluate(() => window.pilotisAccountingAudit)).toEqual({
+        uid: 'browser-test', actor: 'Sócio', start: '2026-10-01', end: '2026-10-31',
+      });
     });
 
     test('Anexos mostram PDF, versão anterior e remoção lógica', async ({ page }) => {
