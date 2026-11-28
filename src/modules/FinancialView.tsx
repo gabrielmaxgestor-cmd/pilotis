@@ -1232,6 +1232,7 @@ export function FinancialView({
             ) : (
               <DataList
                 caption="Projeção mensal do caixa"
+                keyboardScroll
                 rows={projection}
                 keyExtractor={(row) => row.mesKey}
                 columns={[
@@ -1426,7 +1427,7 @@ export function FinancialView({
                   <ProjectDreChart rows={dreRows} projectName={activeDreProject.name} />
                 </div>
 
-                <DataList caption="DRE por obra" keyExtractor={(row) => row.label}
+                <DataList caption="DRE por obra" keyboardScroll keyExtractor={(row) => row.label}
                   rows={dreRows}
                   columns={[
                     { key: 'label', header: 'Linha', render: (row) => row.label },

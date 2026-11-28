@@ -22,6 +22,7 @@ export interface DataListProps<T> {
   emptyActionLabel?: string;
   onEmptyAction?: () => void;
   caption?: string;
+  keyboardScroll?: boolean;
   sort?: ColumnSort;
 }
 
@@ -36,6 +37,7 @@ export function DataList<T>({
   emptyActionLabel,
   onEmptyAction,
   caption,
+  keyboardScroll = false,
   sort,
 }: DataListProps<T>) {
   if (rows.length === 0) {
@@ -53,7 +55,8 @@ export function DataList<T>({
     <div>
       {/* Desktop table */}
       <div className="hidden md:block bg-white border border-[#E4E1DA] rounded-[12px] overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto focus-visible:outline-offset-[-2px]" tabIndex={keyboardScroll ? 0 : undefined}
+          role={keyboardScroll && caption ? 'region' : undefined} aria-label={keyboardScroll ? caption : undefined}>
           <table className="w-full border-collapse text-left">
             {caption && <caption className="sr-only">{caption}</caption>}
             <thead>

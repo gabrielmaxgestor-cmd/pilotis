@@ -184,7 +184,7 @@ export function CashFlowChart({ forecast }: { forecast: PrevisaoCaixaResult }) {
   const title = 'Entradas x saídas e saldo projetado';
   if (!forecast.possuiDados || !forecast.meses.length) return <ChartFigure title={title} summary="Sem dados" />;
   const monthLabels = forecast.mesesNegativos.map(formatMonthLabelBR);
-  const summary = 'Saldo projetado ao fim do período de ' + formatBRL(forecast.saldoFinalProjetado) + '. ' +
+  const summary = 'Ao fim do período, o saldo projetado é de ' + formatBRL(forecast.saldoFinalProjetado) + '. ' +
     (monthLabels.length ? 'Saldo negativo em ' + monthLabels.join(', ') + '.' : 'Saldo projetado positivo ou zerado em todos os meses.') +
     ' O impacto do funil no saldo está na tabela.';
   return <ChartFigure title={title} summary={summary} legend={<ChartLegend id={id} items={cashLegend} />}
