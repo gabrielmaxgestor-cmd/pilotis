@@ -61,6 +61,8 @@ for (const width of [390, 1440]) {
       await expect(item.getByText('25/11/2026', { exact: true })).toBeVisible();
       await page.keyboard.press('Escape');
       await expect(item).toHaveCount(0);
+      await checkPageWidth(page);
+      await checkAccessibility(page);
       const downloadEvent = page.waitForEvent('download');
       await page.getByRole('button', { name: /Cronograma de compras em PDF/ }).click();
       const download = await downloadEvent;
@@ -69,7 +71,7 @@ for (const width of [390, 1440]) {
       expect(bytes.subarray(0, 8).toString('ascii')).toBe('%PDF-1.4');
       await page.getByRole('tab', { name: 'Kanban' }).click();
       await expect(page.getByRole('region', { name: 'Aguardando', exact: true })
-        .getByRole('button', { name: /Alvenaria/ })).toBeVisible();
+        .getByRole('button', { name: '1.1 · Alvenaria', exact: true })).toBeVisible();
       await page.getByRole('tab', { name: 'Cronograma' }).click();
       await expect(page.getByText('11/12/2026', { exact: true }).first()).toBeVisible();
     });
