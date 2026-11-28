@@ -56,14 +56,17 @@ function MonthCalendar({ period, date, today, events, onDate, onOpen }: {
           const items = inMonth ? events.filter((event) => event.start <= day && event.end >= day) : [];
           const count = items.length;
           return <td key={day} className={'border border-[#E4E1DA] align-top ' + (inMonth ? '' : 'bg-[#F6F5F2]')}>
-            <button type="button" aria-pressed={date === day} aria-current={today === day ? 'date' : undefined}
-              aria-label={formatDateBR(day) + ' · ' + (count === 1 ? '1 evento' : count + ' eventos')}
-              onClick={() => onDate(day)}
-              className={'flex min-h-11 w-full flex-col items-center justify-center gap-0.5 px-0.5 py-1 text-xs font-semibold focus-visible:outline-offset-[-2px] lg:flex-row lg:justify-between lg:px-2 ' +
-                (date === day ? 'bg-[#1F3A5F] text-white' : today === day ? 'bg-[#E6EEFB] text-[#1F3A5F]' : 'text-[#424D5D] hover:bg-[#E6EEFB]')}>
-              <span>{day.slice(-2)}</span>
-              {count > 0 && <span aria-hidden="true" className="rounded-full bg-white px-1 text-[10px] tabular-nums text-[#1F3A5F]">{count}</span>}
-            </button>
+            <div className="relative">
+              <button type="button" aria-pressed={date === day} aria-current={today === day ? 'date' : undefined}
+                aria-label={formatDateBR(day) + ' · ' + (count === 1 ? '1 evento' : count + ' eventos')}
+                onClick={() => onDate(day)}
+                className={'flex min-h-11 w-full items-center justify-center px-0.5 pt-1 text-xs font-semibold focus-visible:outline-offset-[-2px] lg:justify-start lg:px-2 ' +
+                  (count ? 'pb-4 lg:pb-1 ' : 'pb-1 ') +
+                  (date === day ? 'bg-[#1F3A5F] text-white' : today === day ? 'bg-[#E6EEFB] text-[#1F3A5F]' : 'text-[#424D5D] hover:bg-[#E6EEFB]')}>
+                {day.slice(-2)}
+              </button>
+              {count > 0 && <span aria-hidden="true" className="pointer-events-none absolute bottom-1 left-1/2 -translate-x-1/2 rounded-full bg-white px-1 text-[10px] tabular-nums text-[#1F3A5F] lg:bottom-auto lg:left-auto lg:right-2 lg:top-1/2 lg:translate-x-0 lg:-translate-y-1/2">{count}</span>}
+            </div>
             <div className="hidden min-h-11 min-w-0 gap-1 p-1 lg:grid lg:content-start">
               {items.slice(0, 2).map((event) =>
                 <button key={event.id} type="button" onClick={() => onOpen(event.target)} title={event.title}
