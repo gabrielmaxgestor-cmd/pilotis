@@ -58,3 +58,30 @@ jobs:
         if: failure()
         run: |
           if test -f firestore-debug.log; then tail -n 150 firestore-debug.log; fi
+
+  compliance-storage:
+    name: Anexos e regras do Storage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      - name: Testar migração, anexos e regras
+        env:
+          PILOTIS_MIGRATION_REPORT: compliance-migration-emulator.json
+        run: npx --yes firebase-tools emulators:exec --only firestore,storage --project demo-pilotis "node --test tests/storage.rules.test.mjs"
+      - name: Disponibilizar relatório da migração emulada
+        uses: actions/upload-artifact@v4
+        with:
+          name: compliance-migration-emulator
+          path: compliance-migration-emulator.json

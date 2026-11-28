@@ -9,6 +9,7 @@
     "build": "npm run lint && vite build && npm run build:server",
     "build:server": "esbuild server.ts --bundle --platform=node --format=esm --packages=external --outfile=server.js",
     "preview": "vite preview",
+    "migrate:compliance": "tsx scripts/migrateComplianceAttachments.ts",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "test": "node --import tsx --test \"src/domain/__tests__/*.test.ts\" && node --test \"tests/*.mjs\""

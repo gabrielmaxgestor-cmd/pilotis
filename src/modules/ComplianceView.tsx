@@ -1,3 +1,5 @@
+import { ComplianceAttachmentsDialog } from '../components/ui/ComplianceAttachmentsDialog';
+import { COMPLIANCE_FILE_ACCEPT } from '../domain/complianceAttachments';
 import { useState } from 'react';
 import { ListToolbar, useListFilters, type ColumnSort } from '../components/ui/ListFilters';
 import { recordDay } from '../domain/listQuery';
@@ -11,7 +13,7 @@ import {
   resolverStatusConformidade, resolveWorkDocumentCategory, sumPendingInvoices, TENDER_CATEGORIES,
   toDomainComplianceItems, WORK_DOCUMENT_TYPES, type InvoiceReceipt,
 } from '../domain';
-import { markReceiptInvoiceIssued, readComplianceFile, saveComplianceItem } from '../services/pilotisService';
+import { markReceiptInvoiceIssued, saveComplianceItem } from '../services/pilotisService';
 import type { ActorRole, ComplianceItem, ComplianceKind, ComplianceStatus, PilotisDataState } from '../types/pilotis';
 
 const tabs = ['Obrigações', 'Certidões', 'Documentos por obra', 'Notas fiscais', 'Licitações'];
@@ -64,10 +66,11 @@ function Records({ rows, kind, today, onEdit, onFile, sort }: OptionActions & { 
     }] : []),
     { key: 'date', header: kind === 'Obrigação' ? 'Vencimento' : 'Validade', render: (row) => formatDateBR(row.dueDate) },
     { key: 'status', header: 'Situação', render: (row) => <ComplianceStatusBadge status={statusOf(row, today)} kind={row.kind} /> },
-    { key: 'file', header: kind === 'Obrigação' ? 'Comprovante' : 'Arquivo', render: (row) => row.attachmentId
-      ? <button type="button" className="text-left font-semibold text-[#1F3A5F] underline focus-visible:ring-2 focus-visible:ring-[#1F3A5F]"
-          onClick={() => onFile(row)}>Baixar {row.fileName || 'arquivo'}</button>
-      : <span className="break-words text-[#5B6472]">{row.fileName ? 'Ref. ' + row.fileName : 'Sem arquivo'}</span> },
+    { key: 'file', header: kind === 'Obrigação' ? 'Comprovante' : 'Arquivo', render: (row) => <div className="grid gap-1">
+      {row.fileName && <span className="break-all text-[#5B6472]">{row.attachmentId ? '' : 'Ref. '}{row.fileName}</span>}
+      <button type="button" className="justify-self-start text-left font-semibold text-[#1F3A5F] underline focus-visible:ring-2 focus-visible:ring-[#1F3A5F]"
+        onClick={() => onFile(row)} aria-label={'Anexos de ' + row.title}>Anexos</button>
+    </div> },
     { key: 'edit', header: 'Ação', render: (row) => <button type="button" className={button} onClick={() => onEdit(row)} aria-label={'Editar ' + row.title}>Editar</button> },
   ];
   return <DataList rows={rows} columns={columns} keyExtractor={(row) => row.id}
@@ -84,8 +87,8 @@ function Records({ rows, kind, today, onEdit, onFile, sort }: OptionActions & { 
       </dl>
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <button type="button" className={button} onClick={() => onEdit(row)} aria-label={'Editar ' + row.title}>Editar</button>
-        {row.attachmentId ? <button type="button" className={button + ' break-all'} onClick={() => onFile(row)}>Baixar {row.fileName || 'arquivo'}</button>
-          : row.fileName && <span className={note}>Ref. {row.fileName}</span>}
+        <button type="button" className={button} onClick={() => onFile(row)} aria-label={'Anexos de ' + row.title}>Anexos</button>
+        {row.fileName && <span className={note + ' break-all'}>{row.attachmentId ? '' : 'Ref. '}{row.fileName}</span>}
       </div>
     </article>} />;
 }
@@ -149,6 +152,8 @@ export function ComplianceView({ uid, data, companyEmail, initialTab }: {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [editing, setEditing] = useState<ComplianceItem | null>(null);
   const [pickedFile, setPickedFile] = useState<File | undefined>();
+  const [attachmentItemId, setAttachmentItemId] = useState('');
+  const attachmentItem = data.complianceItems.find((row) => row.id === attachmentItemId);
   const [invoice, setInvoice] = useState<InvoiceReceipt | null>(null);
   const [actor, setActor] = useState<ActorRole>('Responsável administrativo');
   const [saving, setSaving] = useState(false);
@@ -225,20 +230,8 @@ export function ComplianceView({ uid, data, companyEmail, initialTab }: {
     });
   }
 
-  async function download(row: ComplianceItem) {
-    try {
-      const file = await readComplianceFile(row);
-      const bytes = file.content.toUint8Array().slice().buffer as ArrayBuffer;
-      const url = URL.createObjectURL(new Blob([bytes], { type: file.mimeType }));
-      const link = document.createElement('a');
-      link.href = url; link.download = file.name;
-      document.body.appendChild(link); link.click(); link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 30000);
-    } catch (err) { setFeedback({ tone: 'bad', text: err instanceof Error ? err.message : 'Não foi possível abrir o arquivo.' }); }
-  }
-
   const records = (rows: ComplianceItem[], kind: ComplianceKind) =>
-    <Records rows={visibleRecords(rows)} kind={kind} today={today} sort={recordList.sort} onEdit={openEdit} onFile={(row) => void download(row)} />;
+    <Records rows={visibleRecords(rows)} kind={kind} today={today} sort={recordList.sort} onEdit={openEdit} onFile={(row) => setAttachmentItemId(row.id)} />;
   const openInvoice = (row: InvoiceReceipt) => { setInvoice(row); setError(''); };
   const invoiceColumns: DataListColumn<InvoiceReceipt>[] = [
     { key: 'name', header: 'Recebimento', render: (row) => <strong className="break-words">{row.description}</strong> },
@@ -367,14 +360,17 @@ export function ComplianceView({ uid, data, companyEmail, initialTab }: {
           {linkedItem.dueDate && <p>Prazo · {formatDateBR(linkedItem.dueDate)}</p>}
           {linkedItem.notes && <p className="break-words text-sm">{linkedItem.notes}</p>}
           <div className="flex flex-wrap gap-2">
-            {linkedItem.attachmentId && <button type="button" className={button} onClick={() => void download(linkedItem)}>Baixar arquivo</button>}
+            <button type="button" className={button} onClick={() => setAttachmentItemId(linkedItem.id)}>Anexos</button>
             <button type="button" className={button} onClick={() => { setRecordId(''); openEdit(linkedItem); }}>Editar registro</button>
           </div>
         </div>}
       </Modal>
+      {attachmentItem && <ComplianceAttachmentsDialog key={attachmentItem.id} item={attachmentItem} onClose={() => setAttachmentItemId('')}
+        onEdit={() => { setAttachmentItemId(''); setRecordId(''); openEdit(attachmentItem); }} />}
       <Modal open={Boolean(draft)} onClose={() => setDraft(null)} title={editing ? 'Editar registro' : 'Novo registro'} maxWidth="max-w-2xl">
         {draft && <form className="grid gap-3" onSubmit={async (event) => {
           event.preventDefault();
+          if (saving) return;
           setSaving(true); setError('');
           try {
             await saveComplianceItem(uid, actor, draft, editing?.id, pickedFile);
@@ -421,8 +417,8 @@ export function ComplianceView({ uid, data, companyEmail, initialTab }: {
               </select>
             </label>
           </div>
-          <label className={label}>{draft.kind === 'Obrigação' ? 'Comprovante' : 'Arquivo'} (PDF, PNG ou JPEG até 700 KB)
-            <input type="file" className={field} accept="application/pdf,image/png,image/jpeg" onChange={(event) => setPickedFile(event.target.files?.[0])} />
+          <label className={label}>{draft.kind === 'Obrigação' ? 'Comprovante' : 'Arquivo'} (PDF, PNG, JPEG ou DOCX até 10 MB)
+            <input type="file" className={field} accept={COMPLIANCE_FILE_ACCEPT} onChange={(event) => setPickedFile(event.target.files?.[0])} />
           </label>
           {!pickedFile && editing?.attachmentId ? <p className={note}>Anexo atual · {editing.fileName}</p> : !pickedFile && (
             <label className={label}>Referência do arquivo ou protocolo

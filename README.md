@@ -85,6 +85,21 @@ No planejamento da obra, abra **Relatórios**, escolha o mês e selecione as fot
 
 O servidor grava o PDF em `projects/{projectId}/workReports/{reportId}/pdf` e as aprovações em `projects/{projectId}/clientApprovals`. O link de leitura vale 30 dias, pode ser revogado e é resolvido pelo hash do token em `workReportShares`. Após enviar o PDF ou o link ao cliente, confirme em **Registrar envio**. Geração, gestão de links e confirmação de envio ficam na auditoria. Abertura de links exige o backend publicado. Quando as fotos estão no Firebase Storage, a conta de serviço do Cloud Run precisa de acesso de leitura aos objetos do diário.
 
+## Anexos de conformidade
+
+Em **Conformidade → Anexos**, consulte o arquivo atual, as versões anteriores e os anexos removidos. PDFs e imagens têm prévia. DOCX pode ser baixado. O limite é de 10 MB. Os objetos usam o caminho `complianceAttachments/{uid}/{obraOuEmpresa}/{documento}/{versao}/{nomeSanitizado}`. A remoção lógica retira a versão atual e mantém o arquivo e o registro de auditoria.
+
+Publique `storage.rules`, `firestore.rules` no banco nomeado e o app com o backend. O bucket configurado em `firebase-applet-config.json` deve estar provisionado. A conta de serviço do Cloud Run precisa de leitura, criação e exclusão de objetos no bucket (a exclusão só é usada para limpar uploads rejeitados). Os arquivos legados continuam disponíveis durante a migração.
+
+Para migrar, use uma estação com as credenciais de aplicação do projeto configuradas, acesso de leitura e escrita ao Firestore e acesso de leitura e criação no bucket. Use o UID da conta da empresa exibido no Firebase Authentication.
+
+```sh
+npm run migrate:compliance -- --owner UID_DA_CONTA --report relatorio-conformidade-previa.json
+npm run migrate:compliance -- --owner UID_DA_CONTA --report relatorio-conformidade-migracao.json --apply
+```
+
+A prévia identifica o que pode ser migrado. A execução grava o SHA-256, relê cada objeto e atualiza a referência antes de retirar os bytes do Firestore. O JSON lista os arquivos, os totais e os motivos das falhas. A execução pode ser repetida. Registros sem documento correspondente ou com arquivo incompatível permanecem no Firestore para conferência. O CI publica um relatório separado do teste no emulador.
+
 ## Publicação no Cloud Run
 
 1. Confirme o projeto, o banco nomeado e o e-mail corporativo. Use um projeto de homologação para o primeiro deploy.

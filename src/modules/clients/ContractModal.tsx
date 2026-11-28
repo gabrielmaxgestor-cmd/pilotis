@@ -1,3 +1,4 @@
+import { ComplianceAttachmentsDialog } from '../../components/ui/ComplianceAttachmentsDialog';
 import { PurchasingScheduleButton } from '../../components/ui/PurchasingScheduleButton';
 import { getProjectSchedule, planningTodayISO } from '../../domain/pilotisAdapters';
 import { useEffect, useMemo, useState } from 'react';
@@ -76,6 +77,7 @@ export function ContractModal({
   const [signActor, setSignActor] = useState<ActorRole>('Sócio');
   const [savingSign, setSavingSign] = useState(false);
   const [togglingDocId, setTogglingDocId] = useState<string | null>(null);
+  const [attachmentItem, setAttachmentItem] = useState<ComplianceItem | null>(null);
 
   // Addendum form
   const [addendumModalOpen, setAddendumModalOpen] = useState(false);
@@ -476,6 +478,9 @@ export function ContractModal({
                               </div>
                               <div className="flex items-center gap-1.5 shrink-0">
                                 <StatusBadge label={docItem.status} />
+                                {docItem.attachmentId && <button type="button"
+                                  className="rounded-md border border-[#E4E1DA] bg-white px-2 py-1 text-[11px] font-semibold text-[#1F3A5F]"
+                                  onClick={() => setAttachmentItem(docItem)} aria-label={'Anexos de ' + docItem.title}>Anexos</button>}
                                 <button
                                   type="button"
                                   disabled={togglingDocId === docItem.id}
@@ -615,7 +620,9 @@ export function ContractModal({
             </Button>
           </div>
         </form>
-      </Modal>
+        {open && attachmentItem && <ComplianceAttachmentsDialog key={attachmentItem.id} item={attachmentItem}
+        onClose={() => setAttachmentItem(null)} />}
+    </Modal>
     </>
   );
 }

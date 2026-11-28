@@ -1,3 +1,4 @@
+import { prepareComplianceDraft, type ComplianceDraft } from '../domain/complianceAttachments';
 import { customerMaterialTemplate, describeMaterialDates, MATERIAL_STATUSES, withMaterialHold } from '../domain/customerMaterials';
 import { validateWhatsAppTemplate, WHATSAPP_MODEL_KEYS } from '../domain/whatsapp';
 import { prepareEditUndo, publishEditUndo } from './editUndo';
@@ -27,7 +28,6 @@ import type {
   CompanySettings,
   Client,
   ComplianceItem,
-  ComplianceFile,
   CustomerMaterial,
   CustomerMaterialInput,
   ContractSignStatus,
@@ -84,7 +84,6 @@ import {
   gerarParcelas,
   isValidISODate,
   isActualReceipt,
-  normalizeCompetence,
   type InvoiceReceiptTarget,
   validarLancamentoFinanceiro,
   resolverStatusParcela,
@@ -1761,64 +1760,42 @@ export function markInstallmentInvoiceIssued(uid: string, actor: ActorRole, inst
   return markReceiptInvoiceIssued(uid, actor, { installmentId: installment.id });
 }
 
-type CompliancePayload = Omit<ComplianceItem, keyof import('../types/pilotis').AuditMeta | 'id' | 'attachmentId' | 'projectName'>;
-
 export async function saveComplianceItem(
-  uid: string, actor: ActorRole, payload: CompliancePayload, itemId?: string, file?: File,
+  uid: string, actor: ActorRole, payload: ComplianceDraft, itemId?: string, file?: File,
 ) {
-  const title = clampStr(payload.title, 160);
-  const competence = normalizeCompetence(payload.competence);
-  if (!title) throw new Error('Informe o nome do registro.');
-  if (payload.kind === 'Obrigação' && (!competence || !isValidISODate(payload.dueDate))) {
-    throw new Error('Informe a competência e o vencimento da obrigação.');
-  }
-  if (payload.kind === 'Certidão' && (!isValidISODate(payload.issuedDate) || !isValidISODate(payload.dueDate))) {
-    throw new Error('Informe a emissão e a validade da certidão.');
-  }
-  if ((payload.dueDate && !isValidISODate(payload.dueDate)) || (payload.issuedDate && !isValidISODate(payload.issuedDate))
-    || (payload.kind !== 'Obrigação' && payload.issuedDate && payload.dueDate && payload.dueDate < payload.issuedDate)) {
-    throw new Error('Confira a emissão e a validade. A validade deve ser igual ou posterior à emissão.');
-  }
-  if (payload.kind === 'Documento de obra' && !payload.projectId) throw new Error('Selecione a obra do documento.');
-
-  const attachment = file ? await readReceiptFile(file) : undefined;
+  const normalized = prepareComplianceDraft(payload);
   const id = itemId ?? generateId('cmp');
-  const attachmentId = attachment ? generateId('cmpfile') : '';
   const ref = doc(db, 'complianceItems', id);
+  if (file) {
+    const previous = itemId ? (await getDoc(ref)).data() as ComplianceItem | undefined : undefined;
+    if (itemId && (!previous || previous.ownerUid !== uid)) throw new Error('Registro de conformidade indisponível.');
+    const { uploadComplianceAttachment } = await import('./complianceAttachmentService');
+    const row = await uploadComplianceAttachment(id, actor, normalized, file, Boolean(itemId), previous?.attachmentId ?? '');
+    publishEditUndo(previous ? prepareEditUndo(uid, actor, [{ ref, before: previous, after: row }]) : undefined);
+    return;
+  }
+
   const undo = await runTransaction(db, async (tx) => {
     const previous = itemId ? (await tx.get(ref)).data() as ComplianceItem | undefined : undefined;
     if (itemId && (!previous || previous.ownerUid !== uid || previous.kind !== payload.kind)) {
       throw new Error('Registro de conformidade indisponível.');
     }
-    const project = payload.projectId ? (await tx.get(doc(db, 'projects', payload.projectId))).data() as Project | undefined : undefined;
-    if (payload.projectId && (!project || project.ownerUid !== uid)) throw new Error('Obra indisponível.');
-    const fileName = attachment?.name ?? (previous?.attachmentId ? previous.fileName : clampStr(payload.fileName, 160));
-    if (payload.status === 'Anexado' && !fileName) throw new Error('Anexe um arquivo ou informe a referência do documento.');
-    const row = {
-      ...payload, title, competence: competence || clampStr(payload.competence, 40),
-      category: clampStr(payload.category, 80), notes: clampStr(payload.notes, 500),
-      projectName: project?.name ?? '', fileName,
-      ...(attachmentId ? { attachmentId } : {}),
-    };
+    const project = normalized.projectId ? (await tx.get(doc(db, 'projects', normalized.projectId))).data() as Project | undefined : undefined;
+    if (normalized.projectId && (!project || project.ownerUid !== uid)) throw new Error('Obra indisponível.');
+    const fileName = previous?.attachmentId ? previous.fileName : normalized.fileName;
+    if (normalized.status === 'Anexado' && !fileName) throw new Error('Anexe um arquivo ou informe a referência do documento.');
+    const row = { ...normalized, projectName: project?.name ?? '', fileName };
 
     if (previous) tx.update(ref, { ...row, updatedBy: actor, updatedAt: serverTimestamp() });
     else tx.set(ref, { ...row, ...auditFields(uid, actor) });
-    if (attachment) tx.set(doc(db, 'complianceFiles', attachmentId), { ...attachment, itemId: id, ...auditFields(uid, actor) });
     tx.set(doc(db, 'auditLogs', generateId('aud')), {
       ownerUid: uid, registeredBy: actor, action: previous ? 'Atualização' : 'Criação', entityType: 'complianceItems',
-      summary: clampStr('Conformidade · ' + title, 240),
-      beforeValue: previous?.status ?? '', afterValue: payload.status, createdAt: serverTimestamp(),
+      summary: clampStr('Conformidade · ' + normalized.title, 240),
+      beforeValue: previous?.status ?? '', afterValue: normalized.status, createdAt: serverTimestamp(),
     });
     return previous ? prepareEditUndo(uid, actor, [{ ref, before: previous, after: row }]) : undefined;
   });
   publishEditUndo(undo);
-}
-
-export async function readComplianceFile(item: Pick<ComplianceItem, 'id' | 'attachmentId'>): Promise<ComplianceFile> {
-  if (!item.attachmentId) throw new Error('Este registro possui somente uma referência de arquivo.');
-  const file = (await getDoc(doc(db, 'complianceFiles', item.attachmentId))).data() as ComplianceFile | undefined;
-  if (!file || file.itemId !== item.id) throw new Error('Anexo indisponível.');
-  return file;
 }
 
 export async function linkProjectClient(uid: string, actor: ActorRole, projectId: string, clientId: string) {

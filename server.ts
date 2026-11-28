@@ -8,6 +8,8 @@ import { GoogleGenAI } from '@google/genai';
 import { deleteApp, getApp, getApps, initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
+import { createComplianceAttachmentRouter } from './src/server/complianceAttachmentRoutes.ts';
+import { ComplianceFileError, createComplianceAttachmentStore } from './src/server/complianceAttachmentStore.ts';
 import { createWorkReportRouter, showSharedWorkReport } from './src/server/workReportRoutes.ts';
 import { createWorkReportStore } from './src/server/workReportStore.ts';
 import { REPORT_SOURCE_PHOTO_BYTES } from './src/server/workReportPdf.ts';
@@ -288,6 +290,16 @@ export function createApiApp(options: AiChatRouterOptions = {}): express.Express
     database: () => getFirestore(adminApp(), loadFirebaseTarget().databaseId),
     verifyToken: options.verifyIdToken ?? ((token) => getAuth(adminApp()).verifyIdToken(token)),
     authorizedEmail: getAuthorizedCompanyEmail(options.authorizedCompanyEmail),
+  }));
+  app.use('/api/compliance-attachments', createComplianceAttachmentRouter({
+    authorizedEmail: getAuthorizedCompanyEmail(options.authorizedCompanyEmail),
+    verifyToken: options.verifyIdToken ?? ((token) => getAuth(adminApp()).verifyIdToken(token)),
+    store: () => {
+      const firebase = loadFirebaseTarget();
+      if (!firebase.storageBucket) throw new ComplianceFileError(503, 'Configure o bucket do Firebase Storage.');
+      const admin = adminApp();
+      return createComplianceAttachmentStore(getFirestore(admin, firebase.databaseId), getStorage(admin).bucket(firebase.storageBucket));
+    },
   }));
   app.get('/relatorio', showSharedWorkReport);
   app.use('/api/work-reports', createWorkReportRouter({
