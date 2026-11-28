@@ -104,7 +104,8 @@ export function ComplianceAttachmentsDialog({ item, onClose, onEdit }: {
         setBusy(true); setError('');
         try {
           const next = await listComplianceVersions(item.id, page.next);
-          setPage({ ...next, versions: [...page.versions, ...next.versions] });
+          const versions = new Map([...page.versions, ...next.versions].map((version) => [version.id, version]));
+          setPage({ ...next, versions: [...versions.values()] });
         } catch (failure) { setError(failure instanceof Error ? failure.message : 'Não foi possível carregar o histórico.'); }
         finally { setBusy(false); }
       }}>Carregar mais versões</Button>}

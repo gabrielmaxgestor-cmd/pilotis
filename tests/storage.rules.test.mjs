@@ -12,10 +12,11 @@ test('anexos de conformidade usam Storage privado com versões e migração veri
   const storageHost = process.env.FIREBASE_STORAGE_EMULATOR_HOST.replace(/^https?:\/\//, '');
   assert.match(storageHost, /^(localhost|127\.0\.0\.1):\d+$/);
   assert.match(process.env.FIRESTORE_EMULATOR_HOST, /^(localhost|127\.0\.0\.1):\d+$/);
-  const { tsImport } = await import('tsx/esm/api');
-  const { createComplianceAttachmentStore } = await tsImport('../src/server/complianceAttachmentStore.ts', import.meta.url);
-  const { createComplianceAttachmentRouter } = await tsImport('../src/server/complianceAttachmentRoutes.ts', import.meta.url);
-  const { createPdfDocument } = await tsImport('../src/domain/pdfDocument.ts', import.meta.url);
+  const { register } = await import('tsx/esm/api');
+  const unregister = register();
+  const { createComplianceAttachmentStore } = await import('../src/server/complianceAttachmentStore.ts');
+  const { createComplianceAttachmentRouter } = await import('../src/server/complianceAttachmentRoutes.ts');
+  const { createPdfDocument } = await import('../src/domain/pdfDocument.ts');
   const { FieldValue, getFirestore } = await import('firebase-admin/firestore');
   const { getStorage: adminStorage } = await import('firebase-admin/storage');
   const { initializeApp: initializeAdmin, deleteApp: deleteAdmin } = await import('firebase-admin/app');
@@ -149,5 +150,6 @@ test('anexos de conformidade usam Storage privado com versões e migração veri
     await new Promise((resolve) => http.close(resolve));
     await Promise.all(clientApps.map(deleteApp));
     await deleteAdmin(admin);
+    unregister();
   }
 });

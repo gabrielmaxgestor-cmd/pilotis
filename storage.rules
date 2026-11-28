@@ -10,96 +10,16 @@ service firebase.storage {
 
     match /complianceAttachments/{uid}/{projectId}/{itemId}/{versionId}/{fileName} {
       allow get: if isCompany(uid)
-        && projectId.matches('^[a-zA-Z0-9_-]{1,128}
-      allow read: if isCompany(uid);
-      allow write: if isCompany(uid) && request.resource != null
-        && logId.matches('^[a-zA-Z0-9_-]{1,128}$')
-        && imageName.matches('^[a-zA-Z0-9_-]{1,128}\\.jpg$')
-        && request.resource.contentType == 'image/jpeg'
-        && request.resource.size > 0 && request.resource.size <= 393216;
-    }
-  }
-}
-)
-        && itemId.matches('^[a-zA-Z0-9_-]{1,128}
-      allow read: if isCompany(uid);
-      allow write: if isCompany(uid) && request.resource != null
-        && logId.matches('^[a-zA-Z0-9_-]{1,128}$')
-        && imageName.matches('^[a-zA-Z0-9_-]{1,128}\\.jpg$')
-        && request.resource.contentType == 'image/jpeg'
-        && request.resource.size > 0 && request.resource.size <= 393216;
-    }
-  }
-}
-)
-        && versionId.matches('^[a-zA-Z0-9_-]{1,128}
-      allow read: if isCompany(uid);
-      allow write: if isCompany(uid) && request.resource != null
-        && logId.matches('^[a-zA-Z0-9_-]{1,128}$')
-        && imageName.matches('^[a-zA-Z0-9_-]{1,128}\\.jpg$')
-        && request.resource.contentType == 'image/jpeg'
-        && request.resource.size > 0 && request.resource.size <= 393216;
-    }
-  }
-}
-)
+        && projectId.matches('^[a-zA-Z0-9_-]{1,128}$')
+        && itemId.matches('^[a-zA-Z0-9_-]{1,128}$')
+        && versionId.matches('^[a-zA-Z0-9_-]{1,128}$')
         && resource.size > 0 && resource.size <= 10485760
-        && fileName.matches('^[a-zA-Z0-9_-]{1,100}\\.(pdf|png|jpg|docx)
-      allow read: if isCompany(uid);
-      allow write: if isCompany(uid) && request.resource != null
-        && logId.matches('^[a-zA-Z0-9_-]{1,128}$')
-        && imageName.matches('^[a-zA-Z0-9_-]{1,128}\\.jpg$')
-        && request.resource.contentType == 'image/jpeg'
-        && request.resource.size > 0 && request.resource.size <= 393216;
-    }
-  }
-}
-)
-        && ((resource.contentType == 'application/pdf' && fileName.matches('.*\\.pdf
-      allow read: if isCompany(uid);
-      allow write: if isCompany(uid) && request.resource != null
-        && logId.matches('^[a-zA-Z0-9_-]{1,128}$')
-        && imageName.matches('^[a-zA-Z0-9_-]{1,128}\\.jpg$')
-        && request.resource.contentType == 'image/jpeg'
-        && request.resource.size > 0 && request.resource.size <= 393216;
-    }
-  }
-}
-))
-          || (resource.contentType == 'image/png' && fileName.matches('.*\\.png
-      allow read: if isCompany(uid);
-      allow write: if isCompany(uid) && request.resource != null
-        && logId.matches('^[a-zA-Z0-9_-]{1,128}$')
-        && imageName.matches('^[a-zA-Z0-9_-]{1,128}\\.jpg$')
-        && request.resource.contentType == 'image/jpeg'
-        && request.resource.size > 0 && request.resource.size <= 393216;
-    }
-  }
-}
-))
-          || (resource.contentType == 'image/jpeg' && fileName.matches('.*\\.jpg
-      allow read: if isCompany(uid);
-      allow write: if isCompany(uid) && request.resource != null
-        && logId.matches('^[a-zA-Z0-9_-]{1,128}$')
-        && imageName.matches('^[a-zA-Z0-9_-]{1,128}\\.jpg$')
-        && request.resource.contentType == 'image/jpeg'
-        && request.resource.size > 0 && request.resource.size <= 393216;
-    }
-  }
-}
-))
+        && fileName.matches('^[a-zA-Z0-9_-]{1,100}\\.(pdf|png|jpg|docx)$')
+        && ((resource.contentType == 'application/pdf' && fileName.matches('.*\\.pdf$'))
+          || (resource.contentType == 'image/png' && fileName.matches('.*\\.png$'))
+          || (resource.contentType == 'image/jpeg' && fileName.matches('.*\\.jpg$'))
           || (resource.contentType == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-            && fileName.matches('.*\\.docx
-      allow read: if isCompany(uid);
-      allow write: if isCompany(uid) && request.resource != null
-        && logId.matches('^[a-zA-Z0-9_-]{1,128}$')
-        && imageName.matches('^[a-zA-Z0-9_-]{1,128}\\.jpg$')
-        && request.resource.contentType == 'image/jpeg'
-        && request.resource.size > 0 && request.resource.size <= 393216;
-    }
-  }
-}
-)));
+            && fileName.matches('.*\\.docx$')));
       // Only the backend can publish or clean up immutable versions.
       allow list, write: if false;
     }

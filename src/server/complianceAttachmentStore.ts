@@ -128,9 +128,11 @@ export function createComplianceAttachmentStore(db: Firestore, bucket: Bucket) {
       if (after) query = query.startAfter(after);
       const page = await query.limit(41).get();
       const rows = page.docs.slice(0, 40);
-      const versions = rows.flatMap((doc): ComplianceVersion[] => {
+      const active = !after && item.attachmentId && !rows.some((row) => row.id === item.attachmentId)
+        ? await files.doc(item.attachmentId).get() : undefined;
+      const versions = (active?.exists ? [active, ...rows] : rows).flatMap((doc): ComplianceVersion[] => {
         const file = doc.data() as FileRow;
-        if (file.ownerUid !== uid || !isComplianceMime(file.mimeType)) return [];
+        if (file.ownerUid !== uid || file.itemId !== itemId || !isComplianceMime(file.mimeType)) return [];
         return [{ id: doc.id, name: file.name, mimeType: file.mimeType, createdAt: isoTime(file.createdAt), removedAt: isoTime(file.removedAt) }];
       });
       return { activeId: item.attachmentId ?? '', versions, next: page.size > rows.length ? rows.at(-1)!.id : null };
