@@ -1,3 +1,4 @@
+import { RecordLifecycleButton } from '../components/ui/ArchivedRecords';
 import { useMemo, useState } from 'react';
 import { ListToolbar, useListFilters } from '../components/ui/ListFilters';
 import { recordDay, type ListSchema } from '../domain/listQuery';
@@ -737,6 +738,7 @@ export function ClientsQuotesView({
           >
             {q.status === 'Ganho' ? 'Detalhes' : 'Editar / Versão'}
           </Button>
+          <RecordLifecycleButton uid={uid} record={{ entity: 'quotes', id: q.id, title: q.title }} />
           {!q.projectId && q.status !== 'Perdido' && q.status !== 'Descartado' && (
             <Button size="sm" variant="primary" onClick={() => setConfirmingQuoteId(q.id)}>
               Confirmar orçamento
@@ -1524,6 +1526,8 @@ export function ClientsQuotesView({
                   >
                     Editar cliente
                   </Button>
+                  <RecordLifecycleButton uid={uid} record={{ entity: 'clients', id: activeClient.id, title: activeClient.name }}
+                    onSaved={() => setSelectedClientId('')} />
                   <Button
                     variant="primary"
                     size="sm"

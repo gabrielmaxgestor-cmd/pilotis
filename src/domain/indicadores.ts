@@ -60,7 +60,7 @@ export function indicadoresDashboard(
   );
 
   const periodSummary = resumoFinanceiroPeriodo(
-    lancamentosUnicos,
+    input.lancamentos,
     input.parcelas,
     refISO,
   );

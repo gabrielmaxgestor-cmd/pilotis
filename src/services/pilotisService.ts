@@ -1,3 +1,4 @@
+import { prepareEditUndo, publishEditUndo } from './editUndo';
 import {
   Bytes,
   collection,
@@ -16,6 +17,7 @@ import {
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { listenToPages, readAllPages } from '../lib/firestorePages';
+import { canReverseMovement, isReversalStatus } from '../domain/recordLifecycle';
 import type {
   ActorRole,
   Allocation,
@@ -335,7 +337,7 @@ export async function updateRecord<T extends Record<string, unknown>>(
   const ref = doc(db, collectionName, id);
   const auditRef = doc(db, 'auditLogs', generateId('aud'));
   try {
-    await runTransaction(db, async (tx) => {
+    const undo = await runTransaction(db, async (tx) => {
       const snapshot = await tx.get(ref);
       const current = snapshot.data();
       if (!snapshot.exists() || current?.ownerUid !== uid) throw new Error('Registro indisponível.');
@@ -352,7 +354,9 @@ export async function updateRecord<T extends Record<string, unknown>>(
         afterValue: clampStr(diff?.after ?? (afterValue || auditSummary), AUDIT_TEXT_LIMIT),
         createdAt: serverTimestamp(),
       });
+      return prepareEditUndo(uid, actor, [{ ref, before: current, after: payload }]);
     });
+    publishEditUndo(undo);
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `${collectionName}/${id}`);
   }
@@ -455,11 +459,8 @@ export async function upsertCompanySettings(
             ? changedLabels.join(' · ')
             : data.companyName || existing.companyName || summary;
       }
-      batch.update(ref, {
-        ...data,
-        updatedBy: actor,
-        updatedAt: serverTimestamp(),
-      });
+      await updateRecord('companySettings', uid, uid, actor, data, summary, beforeValue, afterValue);
+      return;
     }
 
     batch.set(auditRef, {
@@ -1305,7 +1306,7 @@ async function readInstallmentForReceipt(tx: Transaction, uid: string, installme
   const previousRef = installment.transactionId ? doc(db, 'transactions', installment.transactionId) : null;
   const previous = previousRef ? (await tx.get(previousRef)).data() as FinancialTransaction | undefined : undefined;
   if (previous && (
-    previous.ownerUid !== uid || previous.entryKind !== 'income' ||
+    previous.ownerUid !== uid || previous.entryKind !== 'income' || isReversalStatus(previous.status) ||
     previous.projectId !== installment.projectId ||
     (previous.installmentId && previous.installmentId !== installmentId)
   )) {
@@ -1384,11 +1385,102 @@ export async function markInstallmentReceived(
   });
 }
 
+function requireReversalReason(reason: string) {
+  const trimmed = reason.trim();
+  if (!trimmed || trimmed.length > 200) throw new Error('Informe um motivo de até 200 caracteres.');
+  return trimmed;
+}
+
+function writeReversal(
+  tx: Transaction, uid: string, actor: ActorRole, originalId: string,
+  original: FinancialTransaction, reversalId: string, auditId: string, reason: string,
+) {
+  tx.update(doc(db, 'transactions', originalId), {
+    status: 'Estornado', reversalId, reversalReason: reason, reversalAuditId: auditId,
+    updatedBy: actor, updatedAt: serverTimestamp(),
+  });
+  tx.set(doc(db, 'transactions', reversalId), {
+    ...auditFields(uid, actor),
+    date: original.date, dueDate: original.dueDate || original.date,
+    projectId: original.projectId, projectName: original.projectName || '',
+    entryKind: original.entryKind, category: original.category, amount: original.amount,
+    isForecast: original.isForecast, status: 'Estorno', invoiceStatus: 'Não se aplica',
+    paymentMethod: original.paymentMethod || '',
+    description: clampStr('Estorno · ' + original.description, 200),
+    reversalOfId: originalId, reversalAuditId: auditId,
+  });
+}
+
+function writeReversalAudit(
+  tx: Transaction, uid: string, actor: ActorRole, auditId: string,
+  entityType: 'parcelas' | 'transactions', entityId: string, description: string,
+  beforeValue: string, reason: string,
+) {
+  tx.set(doc(db, 'auditLogs', auditId), {
+    ownerUid: uid, registeredBy: actor, action: 'Atualização', entityType, entityId,
+    summary: clampStr(description, 240), beforeValue, afterValue: reason, createdAt: serverTimestamp(),
+  });
+}
+
+export async function reverseFinancialMovement(uid: string, actor: ActorRole, id: string, reason: string) {
+  const detail = requireReversalReason(reason);
+  const reversalId = generateId('tx');
+  const auditId = generateId('aud');
+  await runTransaction(db, async (tx) => {
+    const original = (await tx.get(doc(db, 'transactions', id))).data() as FinancialTransaction | undefined;
+    if (!original || original.ownerUid !== uid || !canReverseMovement(original)) {
+      throw new Error('Lançamento indisponível para estorno. Se for uma parcela, use Desfazer recebimento.');
+    }
+    const debtRef = original.debtId ? doc(db, 'debts', original.debtId) : null;
+    if (debtRef) {
+      const debt = (await tx.get(debtRef)).data() as Debt | undefined;
+      if (!debt || debt.ownerUid !== uid || debt.status !== 'Em uso' || debt.principalBalance !== original.amount) {
+        throw new Error('A dívida vinculada já teve movimentação. Revise a dívida antes de estornar o empréstimo.');
+      }
+      tx.update(debtRef, {
+        status: 'Quitada', principalBalance: 0, remainingInstallments: 0,
+        updatedBy: actor, updatedAt: serverTimestamp(),
+      });
+    }
+    writeReversal(tx, uid, actor, id, original, reversalId, auditId, detail);
+    writeReversalAudit(tx, uid, actor, auditId, 'transactions', id,
+      'Estorno · ' + original.description, original.status + ' · ' + formatBRL(original.amount), detail);
+  });
+}
+
+export async function undoInstallmentReceipt(uid: string, actor: ActorRole, id: string, reason: string) {
+  const detail = requireReversalReason(reason);
+  const auditId = generateId('aud');
+  const reversalId = generateId('tx');
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db, 'parcelas', id);
+    const installment = (await tx.get(ref)).data() as Installment | undefined;
+    if (!installment || installment.ownerUid !== uid || installment.status !== 'Recebida') {
+      throw new Error('A parcela precisa estar recebida para desfazer a baixa.');
+    }
+    if (installment.transactionId) {
+      const original = (await tx.get(doc(db, 'transactions', installment.transactionId))).data() as FinancialTransaction | undefined;
+      if (!original || original.ownerUid !== uid || !isActualReceipt(original) ||
+        original.projectId !== installment.projectId || (original.installmentId && original.installmentId !== id)) {
+        throw new Error('Revise o lançamento vinculado à parcela antes de desfazer o recebimento.');
+      }
+      writeReversal(tx, uid, actor, installment.transactionId, original, reversalId, auditId, detail);
+    }
+    tx.update(ref, {
+      status: 'A vencer', receivedDate: '', transactionId: '', receiptReversalAuditId: auditId,
+      updatedBy: actor, updatedAt: serverTimestamp(),
+    });
+    writeReversalAudit(tx, uid, actor, auditId, 'parcelas', id,
+      'Recebimento desfeito · ' + installment.label + ' · ' + installment.projectName,
+      'Recebida · ' + formatDateBR(installment.receivedDate) + ' · ' + formatBRL(installment.amount), detail);
+  });
+}
+
 function stageTransactionSettlement(
   tx: Transaction, uid: string, actor: ActorRole, id: string,
   record: FinancialTransaction, date: string, statementKey?: string,
 ) {
-  if (record.ownerUid !== uid || !record.isForecast || record.installmentId || record.entryKind === 'loan') {
+  if (record.ownerUid !== uid || !record.isForecast || record.installmentId || record.entryKind === 'loan' || isReversalStatus(record.status)) {
     throw new Error('O lançamento já foi baixado ou deve ser recebido pela parcela.');
   }
   const status = record.entryKind === 'income' ? 'Recebido' : 'Pago';
@@ -1491,7 +1583,7 @@ export async function saveComplianceItem(
   const id = itemId ?? generateId('cmp');
   const attachmentId = attachment ? generateId('cmpfile') : '';
   const ref = doc(db, 'complianceItems', id);
-  await runTransaction(db, async (tx) => {
+  const undo = await runTransaction(db, async (tx) => {
     const previous = itemId ? (await tx.get(ref)).data() as ComplianceItem | undefined : undefined;
     if (itemId && (!previous || previous.ownerUid !== uid || previous.kind !== payload.kind)) {
       throw new Error('Registro de conformidade indisponível.');
@@ -1515,7 +1607,9 @@ export async function saveComplianceItem(
       summary: clampStr('Conformidade · ' + title, 240),
       beforeValue: previous?.status ?? '', afterValue: payload.status, createdAt: serverTimestamp(),
     });
+    return previous ? prepareEditUndo(uid, actor, [{ ref, before: previous, after: row }]) : undefined;
   });
+  publishEditUndo(undo);
 }
 
 export async function readComplianceFile(item: Pick<ComplianceItem, 'id' | 'attachmentId'>): Promise<ComplianceFile> {
@@ -1962,7 +2056,7 @@ export async function saveWarrantyCall(uid: string, actor: ActorRole, projectId:
     throw new Error('Confira a descrição, as datas e o custo do chamado.');
   }
   const ref = doc(db, 'warrantyCalls', callId ?? generateId('war'));
-  await runTransaction(db, async (tx) => {
+  const undo = await runTransaction(db, async (tx) => {
     const project = (await tx.get(doc(db, 'projects', projectId))).data() as Project | undefined;
     const before = callId ? (await tx.get(ref)).data() as WarrantyCall | undefined : undefined;
     if (!project || project.ownerUid !== uid) throw new Error('Obra indisponível.');
@@ -1983,5 +2077,7 @@ export async function saveWarrantyCall(uid: string, actor: ActorRole, projectId:
       summary: clampStr('Chamado de garantia · ' + project.name, 240),
       beforeValue: before?.status ?? '', afterValue: payload.status, createdAt: serverTimestamp(),
     });
+    return before ? prepareEditUndo(uid, actor, [{ ref, before: before, after: row }]) : undefined;
   });
+  publishEditUndo(undo);
 }

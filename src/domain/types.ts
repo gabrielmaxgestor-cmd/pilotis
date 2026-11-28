@@ -130,7 +130,9 @@ export type LancamentoStatus =
   | 'Pago'
   | 'A vencer'
   | 'Em atraso'
-  | 'Não é receita';
+  | 'Não é receita'
+  | 'Estornado'
+  | 'Estorno';
 
 export interface LancamentoRecord extends AuditFields {
   id: string;

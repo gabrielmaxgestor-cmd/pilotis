@@ -94,7 +94,7 @@ async function loadConfirmationService(db) {
     load(url, context, next) {
       if (url === appFirebase) {
         return { format: 'module', shortCircuit: true, source:
-          'export const db = globalThis.__pilotisRulesTestDb; export const OperationType = {}; export function handleFirestoreError(error) { throw error; }' };
+          'export const db = globalThis.__pilotisRulesTestDb; export const OperationType = {}; export const auth = {}; export function handleFirestoreError(error) { throw error; }' };
       }
       if (url.startsWith(root.href) && url.endsWith('.ts')) {
         const source = readFileSync(fileURLToPath(url), 'utf8');
@@ -104,7 +104,12 @@ async function loadConfirmationService(db) {
     },
   });
   try {
-    return await import('../src/services/pilotisService.ts');
+    return {
+      ...await import('../src/services/pilotisService.ts'),
+      ...await import('../src/services/archiveService.ts'),
+      ...await import('../src/services/editUndo.ts'),
+      ...await import('../src/server/recordDeletion.ts'),
+    };
   } finally {
     loader.deregister();
     delete globalThis.__pilotisRulesTestDb;
@@ -113,7 +118,7 @@ async function loadConfirmationService(db) {
 
 test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', { skip: !process.env.FIRESTORE_EMULATOR_HOST }, async () => {
   const { initializeApp, deleteApp } = await import('firebase/app');
-  const { Bytes, collection, connectFirestoreEmulator, doc, getDocFromServer, getDocsFromServer, getFirestore,
+  const { Bytes, deleteDoc, collection, connectFirestoreEmulator, doc, getDocFromServer, getDocsFromServer, getFirestore,
     limit, query, serverTimestamp, setDoc, terminate, updateDoc, where, writeBatch } = await import('firebase/firestore');
   const [host, port] = process.env.FIRESTORE_EMULATOR_HOST.split(':');
   assert.ok(host === '127.0.0.1' || host === 'localhost', 'Use apenas o emulador local');
@@ -127,7 +132,9 @@ test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', {
   });
 
   try {
-    const { confirmQuoteAndGenerateProject, createProjectFromTemplate, recordFinancialTransaction, updateRecord } =
+    const { confirmQuoteAndGenerateProject, createProjectFromTemplate, recordFinancialTransaction, updateRecord,
+      markInstallmentReceived, reverseFinancialMovement, undoInstallmentReceipt, setRecordArchived,
+      prepareEditUndo, permanentRecordDeletion } =
       await loadConfirmationService(db);
     const meta = {
       ownerUid: uid, createdBy: actor, updatedBy: actor, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
@@ -252,6 +259,79 @@ test('a confirmação grava obra, PDF, parcelas e checklist no banco nomeado', {
     assert.ok(modeledStages.size > 1);
     const linkedStage = modeledStages.docs.find((item) => item.data().phase.endsWith('Instalações'));
     assert.equal(linkedStage?.data().popId, popRef.id);
+
+    const denial = { code: 'permission-denied' };
+    const loanId = loans.docs[0].id;
+    const loanRef = doc(db, 'transactions', loanId);
+    await assert.rejects(deleteDoc(loanRef), denial);
+    await assert.rejects(updateDoc(loanRef, { status: 'Estornado', updatedAt: serverTimestamp() }), denial);
+    await assert.rejects(reverseFinancialMovement(uid, actor, loanId, '   '), /Informe um motivo/);
+    await reverseFinancialMovement(uid, actor, loanId, 'Lançado em duplicidade');
+    const reversed = (await getDocFromServer(loanRef)).data();
+    const inverseRef = doc(db, 'transactions', reversed.reversalId);
+    const inverse = (await getDocFromServer(inverseRef)).data();
+    assert.equal(reversed.status, 'Estornado');
+    assert.equal(inverse.status, 'Estorno');
+    assert.equal(inverse.reversalOfId, loanId);
+    assert.equal(inverse.amount, reversed.amount);
+    const reversalAudit = (await getDocFromServer(doc(db, 'auditLogs', reversed.reversalAuditId))).data();
+    assert.equal(reversalAudit.entityId, loanId);
+    assert.equal(reversalAudit.afterValue, 'Lançado em duplicidade');
+    assert.equal((await getDocFromServer(doc(db, 'debts', loan.debtId))).data().principalBalance, 0);
+    await assert.rejects(updateDoc(inverseRef, { amount: 700, updatedAt: serverTimestamp() }), denial);
+    await assert.rejects(reverseFinancialMovement(uid, actor, loanId, 'Tentativa repetida'), /indisponível/);
+
+    const parcel = (await getDocsFromServer(query(collection(db, 'parcelas'), where('ownerUid', '==', uid), limit(1)))).docs[0];
+    const originalParcel = { id: parcel.id, ...parcel.data() };
+    await markInstallmentReceived(uid, actor, originalParcel, '2026-01-15', 'Pix');
+    const received = (await getDocFromServer(parcel.ref)).data();
+    await assert.rejects(updateDoc(parcel.ref, { status: 'A vencer', updatedAt: serverTimestamp() }), denial);
+    await assert.rejects(reverseFinancialMovement(uid, actor, received.transactionId, 'Retorno avulso'), /parcela/);
+    await undoInstallmentReceipt(uid, actor, parcel.id, 'Parcela selecionada por engano');
+    const reopened = (await getDocFromServer(parcel.ref)).data();
+    assert.equal(reopened.status, 'A vencer');
+    assert.equal(reopened.receivedDate, '');
+    assert.equal(reopened.transactionId, '');
+    assert.equal(reopened.amount, originalParcel.amount);
+    const reversedReceipt = (await getDocFromServer(doc(db, 'transactions', received.transactionId))).data();
+    assert.equal(reversedReceipt.status, 'Estornado');
+    assert.equal(reversedReceipt.reversalAuditId, reopened.receiptReversalAuditId);
+    await markInstallmentReceived(uid, actor, originalParcel, '2026-01-16', 'Pix');
+    assert.notEqual((await getDocFromServer(parcel.ref)).data().transactionId, received.transactionId);
+
+    const state = (await getDocFromServer(clientRef)).data();
+    const undo = prepareEditUndo(uid, actor, [{ ref: clientRef, before: state, after: { notes: 'Editar no teste' } }]);
+    await updateRecord('clients', clientRef.id, uid, actor, { notes: 'Editar no teste' }, 'Editar');
+    await undo();
+    assert.equal((await getDocFromServer(clientRef)).data().notes, state.notes);
+    await assert.rejects(undo(), /registro mudou/);
+
+    await assert.rejects(updateDoc(clientRef, {
+      archive: { at: serverTimestamp(), by: actor }, updatedAt: serverTimestamp(),
+    }), denial);
+    await setRecordArchived(uid, actor, 'clients', clientRef.id, true);
+    assert.equal((await getDocFromServer(clientRef)).data().archive.by, actor);
+    await assert.rejects(updateDoc(clientRef, { name: 'Alteração de arquivado', updatedAt: serverTimestamp() }), denial);
+    await assert.rejects(deleteDoc(clientRef), denial);
+
+    const { initializeApp: initializeAdmin, deleteApp: deleteAdmin } = await import('firebase-admin/app');
+    const { getFirestore: getAdminFirestore } = await import('firebase-admin/firestore');
+    const admin = initializeAdmin({ projectId: 'demo-pilotis' }, 'record-lifecycle');
+    try {
+      const adminDb = getAdminFirestore(admin, config.firestore[0].database);
+      await assert.rejects(permanentRecordDeletion(adminDb, uid, 'clients', clientRef.id, actor), /vínculos/);
+      await setRecordArchived(uid, actor, 'clients', clientRef.id, false);
+      assert.equal((await getDocFromServer(clientRef)).data().archive, undefined);
+      const unlinked = doc(collection(db, 'clients'));
+      const unlinkedData = { ...meta, name: 'Cadastro independente no teste', origin: '', status: 'Potencial' };
+      await setDoc(unlinked, unlinkedData);
+      await setRecordArchived(uid, actor, 'clients', unlinked.id, true);
+      await permanentRecordDeletion(adminDb, uid, 'clients', unlinked.id, actor);
+      assert.equal((await adminDb.doc('clients/' + unlinked.id).get()).exists, false);
+      await assert.rejects(setDoc(unlinked, unlinkedData), denial);
+    } finally {
+      await deleteAdmin(admin);
+    }
   } finally {
     await terminate(db);
     await deleteApp(app);

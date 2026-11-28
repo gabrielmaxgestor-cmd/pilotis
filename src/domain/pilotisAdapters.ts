@@ -1,3 +1,4 @@
+import { effectiveTransactions } from './recordLifecycle';
 import type {
   CompanySettings,
   ComplianceItem,
@@ -365,7 +366,9 @@ export function calcularSaldoInicialCaixa(
   const priorRealizedTxs = lancamentosUnicos.filter(
     (entry) => isRealizedCashEntry(entry) && monthKey(entry.data) < baseMonth,
   );
-  if (priorRealizedTxs.length === 0) return undefined;
+  if (priorRealizedTxs.length === 0) {
+    return transactions.some((row) => row.status === 'Estornado' && !row.isForecast && monthKey(row.date) < baseMonth) ? 0 : undefined;
+  }
   return roundCents(
     priorRealizedTxs.reduce(
       (sum, entry) => sum + signedCashAmount(entry),
@@ -434,6 +437,12 @@ export function calcularDreObra(
     toDomainProjectDreInput(project, stages),
     toDomainTransactions(transactions),
   );
+}
+
+export function calcularDreAtualObra(project: Project, data: Pick<PilotisDataState, 'projectClosures' | 'transactions' | 'stages'>) {
+  const consolidated = data.projectClosures?.find((row) => row.projectId === project.id);
+  const corrected = data.transactions.some((row) => row.projectId === project.id && row.status === 'Estornado' && !row.isForecast);
+  return consolidated && !corrected ? consolidated.dre : calcularDreObra(project, data.transactions, data.stages);
 }
 
 export function calcularDreEmpresa(
@@ -605,7 +614,7 @@ export function conciliarExtratoPilotis(
 ): ExtratoLinhaConciliada[] {
   return conciliarExtratoBancario(
     linhas,
-    toDomainTransactions(data.transactions),
+    toDomainTransactions(effectiveTransactions(data.transactions)),
     toDomainInstallments(data.installments),
     data.projects.map((p) => ({ id: p.id, nome: p.name })),
   );

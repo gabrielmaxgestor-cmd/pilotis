@@ -1,3 +1,4 @@
+import { RecordLifecycleButton } from '../components/ui/ArchivedRecords';
 import { useEffect, useMemo, useState } from 'react';
 import { ListToolbar, SortHeading, useListFilters } from '../components/ui/ListFilters';
 import { normalizeSearch, recordDay } from '../domain/listQuery';
@@ -173,13 +174,14 @@ export function TeamView({
   );
 
   const selectedEmployee = data.employees.find((e) => e.id === selectedEmployeeId) || null;
+  const occurrenceEmployeeId = selectedEmployee?.id;
 
   useEffect(() => {
     setOccurrences([]);
     setOccurrenceError(false);
-    if (!selectedEmployeeId) return;
-    return subscribeEmployeeOccurrences(uid, selectedEmployeeId, setOccurrences, () => setOccurrenceError(true));
-  }, [uid, selectedEmployeeId]);
+    if (!occurrenceEmployeeId) return;
+    return subscribeEmployeeOccurrences(uid, occurrenceEmployeeId, setOccurrences, () => setOccurrenceError(true));
+  }, [uid, occurrenceEmployeeId]);
 
   const allocationsByEmployee = new Map<string, PilotisDataState['allocations']>();
   for (const allocation of data.allocations) {
@@ -616,6 +618,8 @@ export function TeamView({
               >
                 Editar
               </button>
+              <RecordLifecycleButton uid={uid} record={{ entity: 'employees', id: selectedEmployee.id, title: selectedEmployee.name }}
+                onSaved={() => setSelectedEmployeeId('')} />
               <button
                 type="button"
                 onClick={() => {

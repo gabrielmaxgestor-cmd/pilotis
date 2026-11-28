@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { ListToolbar, SortHeading, useListFilters } from '../components/ui/ListFilters';
 import { useViewParam, useViewTab } from '../hooks/useViewUrl';
 import type { ListSchema } from '../domain/listQuery';
+import { useToast } from '../components/ui/Toast';
+import { canReverseMovement, effectiveTransactions, ledgerSignedAmount } from '../domain/recordLifecycle';
 import { DataList } from '../components/ui/DataList';
 import { CompanyPdfHeader } from '../components/ui/CompanyPdfHeader';
 import {
@@ -22,7 +24,7 @@ import {
   addMonthsISO,
   calcularDreEmpresa,
   calculateInstallmentProgress,
-  calcularDreObra,
+  calcularDreAtualObra,
   calcularPrevisaoCaixa,
   calcularResumoDividas,
   calcularResumoFinanceiroPeriodo,
@@ -52,6 +54,8 @@ import {
   createRecord,
   importBankStatement,
   recordFinancialTransaction,
+  reverseFinancialMovement,
+  undoInstallmentReceipt,
   settleFinancialTransaction,
   markInstallmentReceived,
   updateRecord,
@@ -68,6 +72,45 @@ import type {
   TransactionKind,
   TransactionStatus,
 } from '../types/pilotis';
+
+type ReversalTarget = { id: string; title: string; kind: 'transaction' | 'installment' };
+
+function ReversalDialog({ uid, target, onClose }: { uid: string; target: ReversalTarget; onClose: () => void }) {
+  const { showToast } = useToast();
+  const [reason, setReason] = useState('');
+  const [actor, setActor] = useState<ActorRole>('Sócio');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const receipt = target.kind === 'installment';
+  const action = receipt ? 'Desfazer recebimento' : 'Estornar';
+  return <Modal open onClose={onClose} title={action + ' · ' + target.title}>
+    <form className="grid gap-3" onSubmit={async (event) => {
+      event.preventDefault();
+      if (saving) return;
+      setSaving(true); setError('');
+      try {
+        if (receipt) await undoInstallmentReceipt(uid, actor, target.id, reason);
+        else await reverseFinancialMovement(uid, actor, target.id, reason);
+        onClose();
+        showToast({ tone: 'success', title: receipt ? 'Recebimento desfeito.' : 'Estorno registrado.' });
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Não foi possível concluir a operação.');
+      } finally {
+        setSaving(false);
+      }
+    }}>
+      <label className="grid gap-1 text-sm font-semibold">Motivo
+        <textarea rows={3} maxLength={200} required value={reason} onChange={(event) => setReason(event.target.value)}
+          className="rounded-lg border border-[#E4E1DA] px-3 py-2 font-normal" />
+      </label>
+      <RegisteredBySelect id="reversal-actor" value={actor} onChange={setActor} />
+      {error && <p role="alert" className="text-sm text-[#B42318]">{error}</p>}
+      <button type="submit" disabled={saving || !reason.trim()} className="justify-self-end rounded-lg bg-[#1F3A5F] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+        {saving ? 'Registrando…' : action}
+      </button>
+    </form>
+  </Modal>;
+}
 
 const formatDateBR = (val: string | null | undefined) => domainFormatDateBR(val, '—');
 
@@ -135,6 +178,9 @@ export function FinancialView({
   const [tab, setTab] = useViewTab('financial', FIN_TABS, initialTab);
   const [recordId, setRecordId] = useViewParam('registro');
   const selectedRecord = data.transactions.find((row) => row.id === recordId);
+  const selectedInstallment = selectedRecord && data.installments.find((row) =>
+    row.status === 'Recebida' && (row.transactionId === selectedRecord.id || row.id === selectedRecord.installmentId));
+  const [reversalTarget, setReversalTarget] = useState<ReversalTarget | null>(null);
   const [visibleTransactions, setVisibleTransactions] = useState(15);
 
   useEffect(() => {
@@ -602,9 +648,9 @@ export function FinancialView({
       { key: 'receipt', label: 'Recebimento', value: (row) => row.receivedDate },
     ],
   });
-  const manualReceivables = useListFilters('receber', transactionsSorted.filter((row) =>
+  const manualReceivables = useListFilters('receber', effectiveTransactions(transactionsSorted).filter((row) =>
     row.entryKind === 'income' && !row.installmentId), txSchema);
-  const payables = useListFilters('pagar', transactionsSorted.filter((row) => row.entryKind === 'expense'),
+  const payables = useListFilters('pagar', effectiveTransactions(transactionsSorted).filter((row) => row.entryKind === 'expense'),
     { ...txSchema, columns: txSchema.columns.filter(({ key }) => key !== 'receipt' && key !== 'invoice') });
   const installmentsFiltered = installments.rows;
   const manualReceivablesFiltered = manualReceivables.rows;
@@ -614,8 +660,8 @@ export function FinancialView({
     data.projects.find((p) => p.id === selectedDreProjectId) || data.projects[0] || null;
   const consolidatedDre = data.projectClosures?.find((row) => row.projectId === activeDreProject?.id);
   const activeDre = useMemo(
-    () => consolidatedDre?.dre ?? (activeDreProject ? calcularDreObra(activeDreProject, data.transactions, data.stages) : null),
-    [consolidatedDre, activeDreProject, data.transactions, data.stages],
+    () => activeDreProject ? calcularDreAtualObra(activeDreProject, data) : null,
+    [activeDreProject, data],
   );
 
   const hasActiveCostBudget = Boolean(activeDreProject && (
@@ -865,8 +911,7 @@ export function FinancialView({
                             )}
                           </td>
                           <td className="py-3 px-3 text-right font-semibold text-[#14181F] tabular-nums">
-                            {tx.entryKind === 'expense' ? '− ' : ''}
-                            {formatBRL(tx.amount)}
+                            {formatBRL(ledgerSignedAmount(tx))}
                           </td>
                           <td className="py-3 px-3">
                             <StatusBadge
@@ -924,8 +969,7 @@ export function FinancialView({
                           {formatDateBR(tx.dueDate || tx.date)} · {tx.projectName || tx.projectId}
                         </span>
                         <strong className="text-sm text-[#14181F] tabular-nums">
-                          {tx.entryKind === 'expense' ? '− ' : ''}
-                          {formatBRL(tx.amount)}
+                          {formatBRL(ledgerSignedAmount(tx))}
                         </strong>
                       </div>
                       {tx.invoiceStatus && tx.invoiceStatus !== 'Não se aplica' && (
@@ -1025,7 +1069,11 @@ export function FinancialView({
                     { key: 'invoice', header: 'Nota fiscal', render: (row) => <StatusBadge label={row.invoiceStatus || 'A emitir'} /> },
                     { key: 'status', header: 'Status', render: (row) => <StatusBadge label={resolverStatusParcela({ status: row.status, vencimento: row.dueDate }, todayStr)} /> },
                     { key: 'receipt', header: 'Recebimento', render: (row) => row.status === 'Recebida'
-                      ? formatDateBR(row.receivedDate)
+                      ? <div className="grid gap-1">
+                        <span>{formatDateBR(row.receivedDate)}</span>
+                        <button type="button" className="text-left text-sm font-semibold text-[#1F3A5F] underline"
+                          onClick={() => setReversalTarget({ id: row.id, title: row.label, kind: 'installment' })}>Desfazer recebimento</button>
+                      </div>
                       : <button type="button" className="text-sm font-semibold text-[#1F3A5F] underline" onClick={() => {
                           setReceivingInstallment(row);
                           setReceivingDate(todayStr);
@@ -1488,7 +1536,7 @@ export function FinancialView({
         {selectedRecord && <div className="grid gap-3 text-sm">
           <StatusBadge label={txStatus(selectedRecord)} />
           <dl className="grid grid-cols-2 gap-3">
-            <div><dt>Valor</dt><dd className="font-semibold">{formatBRL(selectedRecord.amount)}</dd></div>
+            <div><dt>Valor</dt><dd className="font-semibold">{formatBRL(ledgerSignedAmount(selectedRecord))}</dd></div>
             <div><dt>Data</dt><dd>{formatDateBR(selectedRecord.date)}</dd></div>
             <div><dt>Vencimento</dt><dd>{formatDateBR(selectedRecord.dueDate)}</dd></div>
             <div><dt>Obra / centro</dt><dd>{selectedRecord.projectName || selectedRecord.projectId || 'Sem dados'}</dd></div>
@@ -1499,8 +1547,22 @@ export function FinancialView({
           {selectedRecord.receiptFile ? <button type="button" className="justify-self-start font-semibold text-[#1F3A5F] underline"
             onClick={() => selectedRecord.receiptFile && downloadReceipt(selectedRecord.receiptFile)}>Baixar comprovante</button>
             : selectedRecord.receiptRef && <p>Comprovante · {selectedRecord.receiptRef}</p>}
+          {selectedRecord.reversalReason && <p className="break-words">Motivo do estorno · {selectedRecord.reversalReason}</p>}
+          {(selectedRecord.reversalId || selectedRecord.reversalOfId) && <button type="button"
+            className="justify-self-start font-semibold text-[#1F3A5F] underline"
+            onClick={() => setRecordId(selectedRecord.reversalId || selectedRecord.reversalOfId || '', { push: true })}>
+            {selectedRecord.reversalOfId ? 'Ver lançamento original' : 'Ver lançamento inverso'}
+          </button>}
+          {selectedInstallment && selectedRecord.status === 'Recebido' && <button type="button"
+            className="justify-self-start font-semibold text-[#1F3A5F] underline"
+            onClick={() => setReversalTarget({ id: selectedInstallment.id, title: selectedInstallment.label, kind: 'installment' })}>Desfazer recebimento</button>}
+          {!selectedInstallment && canReverseMovement(selectedRecord) && <button type="button"
+            className="justify-self-start font-semibold text-[#B42318] underline"
+            onClick={() => setReversalTarget({ id: selectedRecord.id, title: selectedRecord.description, kind: 'transaction' })}>Estornar</button>}
         </div>}
       </Modal>
+
+      {reversalTarget && <ReversalDialog uid={uid} target={reversalTarget} onClose={() => setReversalTarget(null)} />}
 
       {/* Modal: Novo lançamento com validação estrita de Empréstimo != Receita e comprovante */}
       <Modal open={isTxOpen} onClose={closeTxModal} title="Novo lançamento">

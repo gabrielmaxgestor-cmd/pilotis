@@ -1,3 +1,4 @@
+import { RecordLifecycleButton } from '../components/ui/ArchivedRecords';
 import { useEffect, useMemo, useState } from 'react';
 import { ListToolbar, useListFilters } from '../components/ui/ListFilters';
 import { useViewParam, useViewTab } from '../hooks/useViewUrl';
@@ -365,6 +366,8 @@ export function ProjectPlanningView({
                 Voltar às obras
               </button>
             )}
+            {activeProject && activeProject.status !== 'Concluída' && <RecordLifecycleButton uid={uid}
+              record={{ entity: 'projects', id: activeProject.id, title: activeProject.name }} onSaved={() => onSelectProject('')} />}
             <button
               type="button"
               onClick={() => setNewProjModal(true)}

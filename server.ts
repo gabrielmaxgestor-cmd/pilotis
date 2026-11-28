@@ -6,6 +6,8 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { GoogleGenAI } from '@google/genai';
 import { deleteApp, getApp, getApps, initializeApp } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
+import { createRecordDeletionRouter } from './src/server/recordDeletion.ts';
 import { getAuth, type DecodedIdToken, type UserRecord } from 'firebase-admin/auth';
 import {
   classifyAiQuestionTopics, CONSULTANT_ACTIONS, readAiFacts, renderAiAnswer, suggestedActions, WEEKLY_QUESTION, type AiTurn,
@@ -278,6 +280,11 @@ export function createApiApp(options: AiChatRouterOptions = {}): express.Express
   app.disable('x-powered-by');
   app.get('/healthz', (_req, res) => { res.setHeader('Cache-Control', 'no-store'); res.json({ status: 'ok' }); });
   app.use('/api/ai/chat', createAiChatRouter(options));
+  app.use('/api/records', createRecordDeletionRouter({
+    database: () => getFirestore(adminApp(), loadFirebaseTarget().databaseId),
+    verifyToken: options.verifyIdToken ?? ((token) => getAuth(adminApp()).verifyIdToken(token)),
+    authorizedEmail: getAuthorizedCompanyEmail(options.authorizedCompanyEmail),
+  }));
   app.use('/api', (_req, res) => { res.status(404).json({ error: 'Rota da API indisponível.' }); });
   return app;
 }

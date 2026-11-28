@@ -1,7 +1,8 @@
+import { activePilotisData } from './recordLifecycle';
 import type { ActorRole, PilotisDataState } from '../types/pilotis';
 import { addDaysISO, addMonthsISO, formatBRL, formatDateBR, formatPercentBR, isValidISODate } from './formatters';
 import {
-  calcularAlertasSistema, calcularDreEmpresa, calcularDreObra, calcularIndicadoresDashboard,
+  calcularAlertasSistema, calcularDreEmpresa, calcularDreAtualObra, calcularIndicadoresDashboard,
   calcularPrevisaoCaixa, calcularProgressoObra, getContractCostBudget, calcularResumoDividas, calcularResumoFinanceiroPeriodo,
   calcularResumoFolhaEquipe, calcularResumoFunilOrcamentos, calculateTeamPayroll, toDomainInstallments, toDomainTransactions,
 } from './pilotisAdapters';
@@ -194,7 +195,7 @@ function readForecast(data: PilotisDataState, today: string, question: string, a
 function readProjects(data: PilotisDataState, projects: PilotisDataState['projects'], today: string, add: AddFact, source: SourceFor) {
   for (const project of projects) {
     const closure = data.projectClosures?.find((item) => item.projectId === project.id);
-    const dre = closure?.dre ?? calcularDreObra(project, data.transactions, data.stages);
+    const dre = calcularDreAtualObra(project, data);
     const period = project.startDate
       ? formatAiPeriod(project.startDate, closure?.date || today)
       : 'Até ' + formatDateBR(closure?.date || today);
@@ -250,6 +251,7 @@ function readSimulation(data: PilotisDataState, question: string, today: string,
 }
 
 export function readAiFacts(data: PilotisDataState, question: string, today: string, topics: Set<AiTopic>, previousQuestion = '', mode: AiMode = 'Analista') {
+  data = activePilotisData(data);
   const weekly = topics.has('weekly');
   const week = weekStartingOn(today);
   const range = weekly ? { start: addDaysISO(week, -7), end: addDaysISO(week, -1) } : resolveAiPeriod(question, today);
@@ -364,6 +366,7 @@ export function readAiFacts(data: PilotisDataState, question: string, today: str
 }
 
 export function readWeeklyInsights(data: PilotisDataState, today: string) {
+  data = activePilotisData(data);
   const weekEnd = addDaysISO(weekStartingOn(today), 6);
   const byId = new Map(data.complianceItems.map((item) => [item.id, item]));
   return calcularAlertasSistema(data, today).filter((alert) => {

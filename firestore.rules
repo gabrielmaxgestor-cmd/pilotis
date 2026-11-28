@@ -109,7 +109,7 @@ service cloud.firestore {
       return data.keys().hasAll(['ownerUid', 'name', 'origin', 'status', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
         && data.keys().hasOnly([
           'ownerUid', 'name', 'origin', 'referredBy', 'city', 'phone', 'email', 'notes', 'status',
-          'referralsCount', 'testimonialStatus', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+          'referralsCount', 'testimonialStatus', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt', 'archive', 'archiveAuditId'
         ])
         && hasAuditFields(data)
         && isValidNonEmptyStr(data.name, 140)
@@ -135,7 +135,7 @@ service cloud.firestore {
           'equipmentCost', 'bdiCost', 'taxCost', 'pricingMarginPct', 'totalValue', 'downPaymentPct', 'installmentsCount',
           'probabilityPct', 'status', 'discardReason', 'lossReason', 'version', 'versionHistory',
           'contractSignStatus', 'contractSignedAt', 'contractAddenda', 'addendaTotalValue',
-          'projectId', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+          'projectId', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt', 'archive', 'archiveAuditId'
         ])
         && hasAuditFields(data)
         && isValidNonEmptyStr(data.code, 30)
@@ -180,7 +180,7 @@ service cloud.firestore {
           'contractValue', 'contractPdf', 'downPaymentPct', 'installmentsCount', 'addendaTotalValue',
           'budgetedLabor', 'budgetedSubcontract', 'budgetedEquipment', 'budgetedBdi', 'budgetedTax',
           'startDate', 'baselineEndDate', 'forecastEndDate', 'status', 'contractSigned',
-          'warrantyStartDate', 'closureDate', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+          'warrantyStartDate', 'closureDate', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt', 'archive', 'archiveAuditId'
         ])
         && hasAuditFields(data)
         && isValidNonEmptyStr(data.name, 160)
@@ -221,7 +221,7 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'ownerUid', 'projectId', 'projectName', 'quoteId', 'clientId', 'clientName',
           'number', 'label', 'dueDate', 'amount', 'status', 'invoiceStatus', 'receivedDate',
-          'transactionId', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+          'transactionId', 'receiptReversalAuditId', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
         ])
         && hasAuditFields(data)
         && isValidId(data.projectId)
@@ -236,6 +236,7 @@ service cloud.firestore {
         && (!('clientName' in data) || isValidStr(data.clientName, 140))
         && (!('invoiceStatus' in data) || data.invoiceStatus in ['Emitida', 'A emitir', 'Não emitida', 'Não se aplica'])
         && (!('receivedDate' in data) || isValidStr(data.receivedDate, 20))
+        && (!('receiptReversalAuditId' in data) || isValidId(data.receiptReversalAuditId))
         && (!('transactionId' in data) || isValidStr(data.transactionId, 128));
     }
 
@@ -310,7 +311,8 @@ service cloud.firestore {
           'ownerUid', 'date', 'dueDate', 'description', 'entryKind', 'category', 'projectId', 'projectName',
           'amount', 'isForecast', 'wasForecast', 'statementKey', 'status', 'invoiceStatus', 'paymentMethod', 'receiptRef', 'receiptFile', 'installmentLabel',
           'installmentId', 'quoteId', 'debtId', 'source', 'payrollEmployeeId', 'payrollPeriod',
-          'payrollBase', 'payrollCharges', 'payrollProvisions', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+          'payrollBase', 'payrollCharges', 'payrollProvisions',
+          'reversalId', 'reversalOfId', 'reversalReason', 'reversalAuditId', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
         ])
         && hasAuditFields(data)
         && isValidNonEmptyStr(data.date, 20)
@@ -321,7 +323,7 @@ service cloud.firestore {
         && isValidNonEmptyStr(data.projectId, 128)
         && isValidNonNegNum(data.amount)
         && data.isForecast is bool
-        && data.status in ['Recebido', 'Pago', 'A vencer', 'Não é receita']
+        && data.status in ['Recebido', 'Pago', 'A vencer', 'Não é receita', 'Estornado', 'Estorno']
         && (!('dueDate' in data) || isValidStr(data.dueDate, 20))
         && (!('projectName' in data) || isValidStr(data.projectName, 160))
         && (!('invoiceStatus' in data) || data.invoiceStatus in ['Emitida', 'A emitir', 'Não emitida', 'Não se aplica'])
@@ -378,7 +380,7 @@ service cloud.firestore {
           'currentProjectId', 'currentProjectName', 'asoExpiry', 'nr18Expiry', 'nr35Expiry',
           'epiStatus', 'epiExpiry', 'onboardingStatus', 'onboardingStart', 'vacationPeriod', 'vacationScheduled',
           'vacationStart', 'vacationEnd', 'paymentMonth', 'paymentFrequency', 'occurrencesNote',
-          'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt', 'archive', 'archiveAuditId'
         ])
         && hasAuditFields(data)
         && isValidNonEmptyStr(data.name, 140)
@@ -532,7 +534,7 @@ service cloud.firestore {
     function isValidAuditLog(data) {
       return data.keys().hasAll(['ownerUid', 'registeredBy', 'action', 'entityType', 'summary', 'createdAt'])
         && data.keys().hasOnly([
-          'ownerUid', 'registeredBy', 'action', 'entityType', 'summary', 'beforeValue', 'afterValue', 'createdAt'
+          'ownerUid', 'registeredBy', 'action', 'entityType', 'summary', 'beforeValue', 'afterValue', 'createdAt', 'entityId'
         ])
         && data.ownerUid == request.auth.uid
         && isValidId(data.ownerUid)
@@ -540,6 +542,7 @@ service cloud.firestore {
         && data.action in ['Criação', 'Atualização', 'Exclusão', 'Importação']
         && isValidNonEmptyStr(data.entityType, 60)
         && isValidNonEmptyStr(data.summary, 240)
+        && (!('entityId' in data) || isValidId(data.entityId))
         && data.createdAt is timestamp
         && (!('beforeValue' in data) || isValidStr(data.beforeValue, 16000))
         && (!('afterValue' in data) || isValidStr(data.afterValue, 16000));
@@ -559,18 +562,57 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    function notDeleted(entity, id) {
+      let key = entity + '_' + id;
+      return id in ['', 'Empresa'] || (isValidId(id)
+        && !existsAfter(/databases/$(database)/documents/recordTombstones/$(key)));
+    }
+
+    function validNewReference(data, entity, field) {
+      return notDeleted(entity, data.get(field, ''));
+    }
+
+    function validChangedReference(entity, field) {
+      return incoming().get(field, '') == existing().get(field, '')
+        || validNewReference(incoming(), entity, field);
+    }
+
+    function currentAudit(auditId, entity, id, actor) {
+      let audit = getAfter(/databases/$(database)/documents/auditLogs/$(auditId)).data;
+      return audit.ownerUid == request.auth.uid && audit.entityType == entity && audit.entityId == id
+        && audit.registeredBy == actor && audit.action == 'Atualização' && audit.createdAt == request.time;
+    }
+
+    function archivalChange(entity, id) {
+      let before = existing().get('archive', null);
+      let archive = incoming().get('archive', null);
+      let auditId = incoming().get('archiveAuditId', '');
+      return incoming().diff(existing()).affectedKeys().hasOnly(['archive', 'archiveAuditId', 'updatedAt', 'updatedBy'])
+        && isValidActor(incoming().updatedBy) && incoming().updatedAt == request.time
+        && isValidId(auditId) && currentAudit(auditId, entity, id, incoming().updatedBy)
+        && ((before == null && archive is map
+          && archive.keys().hasAll(['at', 'by']) && archive.keys().hasOnly(['at', 'by'])
+          && archive.at == request.time && archive.by == incoming().updatedBy)
+          || (before is map && !('archive' in incoming())));
+    }
+
     match /clients/{clientId} {
       allow get: if isValidId(clientId) && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(clientId) && isSignedIn() && isValidClient(incoming())
-        && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+        && notDeleted('clients', clientId)
+        && !incoming().keys().hasAny(['archive', 'archiveAuditId']) && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(clientId) && isSignedIn() && isValidClient(incoming())
         && existing().ownerUid == request.auth.uid
+        && !('archive' in existing()) && !('archive' in incoming())
+        && incoming().get('archiveAuditId', '') == existing().get('archiveAuditId', '')
         && incoming().ownerUid == existing().ownerUid
         && incoming().createdAt == existing().createdAt
         && incoming().createdBy == existing().createdBy
         && incoming().updatedAt == request.time;
-      allow delete: if isValidId(clientId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow update: if isValidId(clientId) && isOwner(existing().ownerUid)
+        && archivalChange('clients', clientId);
+      allow delete: if false;
     }
 
     function confirmedProjectMatches(quoteId, quote) {
@@ -586,7 +628,7 @@ service cloud.firestore {
 
     function confirmationClientBelongsToCompany(clientId) {
       let client = getAfter(/databases/$(database)/documents/clients/$(clientId));
-      return client != null && client.data.ownerUid == request.auth.uid;
+      return client != null && client.data.ownerUid == request.auth.uid && !('archive' in client.data);
     }
 
     function isValidQuoteConfirmation(quoteId, quote, before) {
@@ -620,11 +662,14 @@ service cloud.firestore {
       allow get: if isValidId(quoteId) && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(quoteId) && isSignedIn() && isValidQuote(incoming())
-        && incoming().createdAt == request.time && incoming().updatedAt == request.time
-        && exists(/databases/$(database)/documents/clients/$(incoming().clientId))
-        && get(/databases/$(database)/documents/clients/$(incoming().clientId)).data.ownerUid == request.auth.uid;
+        && notDeleted('quotes', quoteId)
+        && !incoming().keys().hasAny(['archive', 'archiveAuditId']) && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && confirmationClientBelongsToCompany(incoming().clientId);
       allow update: if isValidId(quoteId) && isSignedIn()
+        && (incoming().clientId == existing().clientId || confirmationClientBelongsToCompany(incoming().clientId))
         && existing().ownerUid == request.auth.uid
+        && !('archive' in existing()) && !('archive' in incoming())
+        && incoming().get('archiveAuditId', '') == existing().get('archiveAuditId', '')
         && incoming().updatedAt == request.time
         && (incoming().get('projectId', '') == existing().get('projectId', '')
           ? (
@@ -650,16 +695,25 @@ service cloud.firestore {
             )
           )
           : isValidQuoteConfirmation(quoteId, incoming(), existing()));
-      allow delete: if isValidId(quoteId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow update: if isValidId(quoteId) && isOwner(existing().ownerUid)
+        && archivalChange('quotes', quoteId);
+      allow delete: if false;
     }
 
     match /projects/{projectId} {
       allow get: if isValidId(projectId) && isSignedIn() && (resource == null || existing().ownerUid == request.auth.uid);
       allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(projectId) && isSignedIn() && isValidProject(incoming())
-        && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+        && notDeleted('projects', projectId)
+        && validNewReference(incoming(), 'clients', 'clientId')
+        && validNewReference(incoming(), 'quotes', 'quoteId')
+        && !incoming().keys().hasAny(['archive', 'archiveAuditId']) && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(projectId) && isSignedIn() && isValidProject(incoming())
+        && validChangedReference('clients', 'clientId')
+        && validChangedReference('quotes', 'quoteId')
         && existing().ownerUid == request.auth.uid
+        && !('archive' in existing()) && !('archive' in incoming())
+        && incoming().get('archiveAuditId', '') == existing().get('archiveAuditId', '')
         && incoming().ownerUid == existing().ownerUid
         && incoming().createdAt == existing().createdAt
         && incoming().createdBy == existing().createdBy
@@ -675,7 +729,9 @@ service cloud.firestore {
           && getAfter(/databases/$(database)/documents/projectClosures/$(projectId)).data.date == incoming().closureDate
           && getAfter(/databases/$(database)/documents/projectFollowUps/$(projectId)).data.ownerUid == request.auth.uid
         ));
-      allow delete: if isValidId(projectId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow update: if isValidId(projectId) && isOwner(existing().ownerUid) && existing().status != 'Concluída'
+        && archivalChange('projects', projectId);
+      allow delete: if false;
     }
 
     function installmentProjectBelongsToCompany(projectId) {
@@ -687,7 +743,10 @@ service cloud.firestore {
       allow get: if isValidId(installmentId) && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(installmentId) && isSignedIn() && isValidInstallment(incoming())
-        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && validNewReference(incoming(), 'projects', 'projectId')
+        && validNewReference(incoming(), 'clients', 'clientId')
+        && validNewReference(incoming(), 'quotes', 'quoteId')
+        && !('receiptReversalAuditId' in incoming()) && incoming().createdAt == request.time && incoming().updatedAt == request.time
         && installmentProjectBelongsToCompany(incoming().projectId);
       allow update: if isValidId(installmentId) && isSignedIn() && isValidInstallment(incoming())
         && existing().ownerUid == request.auth.uid
@@ -697,8 +756,14 @@ service cloud.firestore {
         && incoming().clientId == existing().clientId
         && incoming().createdAt == existing().createdAt
         && incoming().createdBy == existing().createdBy
-        && incoming().updatedAt == request.time;
-      allow delete: if isValidId(installmentId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+        && incoming().updatedAt == request.time
+        && ((existing().status != 'Recebida' || incoming().status == 'Recebida')
+          && incoming().get('receiptReversalAuditId', '') == existing().get('receiptReversalAuditId', '')
+          && (existing().status != 'Recebida' || incoming().diff(existing()).affectedKeys().hasOnly([
+            'invoiceStatus', 'updatedBy', 'updatedAt'
+          ]))
+          || receiptRestoration(installmentId));
+      allow delete: if false;
     }
 
     function isValidScheduleBaseline(data) {
@@ -731,6 +796,7 @@ service cloud.firestore {
       allow get: if isValidId(baselineId) && isOwner(existing().ownerUid);
       allow list: if isBoundedList() && isOwner(existing().ownerUid);
       allow create: if isValidId(baselineId) && isSignedIn() && isValidScheduleBaseline(incoming())
+        && validNewReference(incoming(), 'projects', 'projectId')
         && incoming().createdAt == request.time && incoming().updatedAt == request.time
         && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.ownerUid == request.auth.uid;
       allow update, delete: if false;
@@ -740,6 +806,7 @@ service cloud.firestore {
       allow get: if isValidId(progressId) && isOwner(existing().ownerUid);
       allow list: if isBoundedList() && isOwner(existing().ownerUid);
       allow create: if isValidId(progressId) && isSignedIn() && isValidScheduleProgress(incoming())
+        && validNewReference(incoming(), 'projects', 'projectId')
         && incoming().createdAt == request.time && incoming().updatedAt == request.time
         && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.ownerUid == request.auth.uid;
       allow update, delete: if false;
@@ -764,8 +831,10 @@ service cloud.firestore {
       allow get: if isValidId(riskId) && isOwner(existing().ownerUid);
       allow list: if isBoundedList() && isOwner(existing().ownerUid);
       allow create: if isValidId(riskId) && isSignedIn() && isValidProjectRisk(incoming())
+        && validNewReference(incoming(), 'projects', 'projectId')
         && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(riskId) && isOwner(existing().ownerUid) && isValidProjectRisk(incoming())
+        && validChangedReference('projects', 'projectId')
         && incoming().projectId == existing().projectId
         && incoming().createdAt == existing().createdAt
         && incoming().createdBy == existing().createdBy
@@ -776,9 +845,11 @@ service cloud.firestore {
       allow get: if isValidId(stageId) && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(stageId) && isSignedIn() && isValidStage(incoming())
+        && validNewReference(incoming(), 'projects', 'projectId')
         && incoming().createdAt == request.time && incoming().updatedAt == request.time
         && getAfter(/databases/$(database)/documents/projects/$(incoming().projectId)).data.ownerUid == request.auth.uid;
       allow update: if isValidId(stageId) && isSignedIn() && isValidStage(incoming())
+        && validChangedReference('projects', 'projectId')
         && existing().ownerUid == request.auth.uid
         && incoming().ownerUid == existing().ownerUid
         && incoming().projectId == existing().projectId
@@ -795,10 +866,12 @@ service cloud.firestore {
       allow get: if isValidId(logId) && isSignedIn() && (resource == null || existing().ownerUid == request.auth.uid);
       allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(logId) && isSignedIn() && isValidDailyLog(incoming())
+        && validNewReference(incoming(), 'projects', 'projectId')
         && incoming().createdAt == request.time && incoming().updatedAt == request.time
         && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
         && get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.ownerUid == request.auth.uid;
       allow update: if isValidId(logId) && isSignedIn() && isValidDailyLog(incoming())
+        && validChangedReference('projects', 'projectId')
         && existing().ownerUid == request.auth.uid
         && incoming().ownerUid == existing().ownerUid
         && incoming().projectId == existing().projectId
@@ -824,6 +897,7 @@ service cloud.firestore {
     match /fieldSync/{operationId} {
       allow get: if isValidId(operationId) && isSignedIn() && (resource == null || existing().ownerUid == request.auth.uid);
       allow create: if isValidId(operationId) && isSignedIn()
+        && validNewReference(incoming(), 'projects', 'projectId')
         && incoming().keys().hasOnly(['ownerUid', 'projectId', 'stageId', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
         && hasAuditFields(incoming()) && incoming().createdAt == request.time && incoming().updatedAt == request.time
         && isValidId(incoming().projectId) && isValidId(incoming().stageId)
@@ -831,18 +905,109 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/stages/$(incoming().stageId)).data.ownerUid == request.auth.uid;
     }
 
+    function isReversalReason(value) {
+      return isValidNonEmptyStr(value, 200) && value.trim().size() > 0;
+    }
+
+    function hasReversalFields(data) {
+      return data.status in ['Estorno', 'Estornado']
+        || data.keys().hasAny(['reversalId', 'reversalOfId', 'reversalReason', 'reversalAuditId']);
+    }
+
+    function receiptRestoration(installmentId) {
+      let auditId = incoming().get('receiptReversalAuditId', '');
+      let linked = existing().get('transactionId', '');
+      return existing().status == 'Recebida' && incoming().status == 'A vencer'
+        && incoming().receivedDate == '' && incoming().transactionId == ''
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'status', 'receivedDate', 'transactionId', 'receiptReversalAuditId', 'updatedAt', 'updatedBy'
+        ])
+        && isValidId(auditId) && currentAudit(auditId, 'parcelas', installmentId, incoming().updatedBy)
+        && isReversalReason(getAfter(/databases/$(database)/documents/auditLogs/$(auditId)).data.afterValue)
+        && (linked == '' || (
+          get(/databases/$(database)/documents/transactions/$(linked)).data.status == 'Recebido'
+          && getAfter(/databases/$(database)/documents/transactions/$(linked)).data.status == 'Estornado'
+          && getAfter(/databases/$(database)/documents/transactions/$(linked)).data.reversalAuditId == auditId
+        ));
+    }
+
+    function undoneReceiptMatches(installmentId, originalId, before, auditId) {
+      let parcel = get(/databases/$(database)/documents/parcelas/$(installmentId)).data;
+      let restored = getAfter(/databases/$(database)/documents/parcelas/$(installmentId)).data;
+      return parcel.ownerUid == request.auth.uid && parcel.status == 'Recebida' && parcel.transactionId == originalId
+        && before.status == 'Recebido' && before.entryKind == 'income' && before.isForecast == false
+        && before.projectId == parcel.projectId && before.get('installmentId', '') in ['', installmentId]
+        && restored.status == 'A vencer' && restored.receiptReversalAuditId == auditId;
+    }
+
+    function reversedDebtMatches(debtId, before) {
+      let debt = get(/databases/$(database)/documents/debts/$(debtId)).data;
+      let settled = getAfter(/databases/$(database)/documents/debts/$(debtId)).data;
+      return debt.ownerUid == request.auth.uid && debt.status == 'Em uso' && debt.principalBalance == before.amount
+        && settled.status == 'Quitada' && settled.principalBalance == 0 && settled.updatedAt == request.time;
+    }
+
+    function validReversalUpdate(originalId, before, after) {
+      let inverseId = after.get('reversalId', '');
+      let auditId = after.get('reversalAuditId', '');
+      let inverse = getAfter(/databases/$(database)/documents/transactions/$(inverseId)).data;
+      let audit = getAfter(/databases/$(database)/documents/auditLogs/$(auditId)).data;
+      let debtId = before.get('debtId', '');
+      return !hasReversalFields(before) && after.status == 'Estornado'
+        && after.diff(before).affectedKeys().hasOnly(['status', 'reversalId', 'reversalAuditId', 'reversalReason', 'updatedBy', 'updatedAt'])
+        && isValidId(inverseId) && isValidId(auditId)
+        && isReversalReason(after.reversalReason) && audit.afterValue == after.reversalReason
+        && inverse.status == 'Estorno' && inverse.reversalOfId == originalId && inverse.reversalAuditId == auditId
+        && inverse.createdAt == request.time
+        && (debtId == '' || reversedDebtMatches(debtId, before))
+        && ((audit.entityType == 'transactions' && before.get('installmentId', '') == ''
+          && currentAudit(auditId, 'transactions', originalId, after.updatedBy))
+          || (audit.entityType == 'parcelas' && isValidId(audit.entityId)
+            && currentAudit(auditId, 'parcelas', audit.entityId, after.updatedBy)
+            && undoneReceiptMatches(audit.entityId, originalId, before, auditId)));
+    }
+
+    function validInverse(txId, data) {
+      let originalId = data.get('reversalOfId', '');
+      let before = get(/databases/$(database)/documents/transactions/$(originalId)).data;
+      let after = getAfter(/databases/$(database)/documents/transactions/$(originalId)).data;
+      return data.status == 'Estorno' && isValidId(originalId) && isValidId(data.reversalAuditId)
+        && data.keys().hasOnly([
+          'ownerUid', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt',
+          'date', 'dueDate', 'description', 'entryKind', 'category', 'projectId', 'projectName',
+          'amount', 'isForecast', 'status', 'invoiceStatus', 'paymentMethod', 'reversalOfId', 'reversalAuditId'
+        ])
+        && before.ownerUid == request.auth.uid && !hasReversalFields(before)
+        && after.status == 'Estornado' && after.reversalId == txId && after.reversalAuditId == data.reversalAuditId
+        && after.updatedAt == request.time && data.createdBy == after.updatedBy && data.updatedBy == after.updatedBy
+        && data.amount == before.amount && data.entryKind == before.entryKind
+        && data.projectId == before.projectId && data.category == before.category
+        && data.date == before.date && data.isForecast == before.isForecast
+        && data.invoiceStatus == 'Não se aplica';
+    }
+
     match /transactions/{txId} {
       allow get: if isValidId(txId) && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(txId) && isSignedIn() && isValidTransaction(incoming())
-        && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+        && validNewReference(incoming(), 'projects', 'projectId')
+        && validNewReference(incoming(), 'quotes', 'quoteId')
+        && validNewReference(incoming(), 'employees', 'payrollEmployeeId')
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && (!hasReversalFields(incoming()) || validInverse(txId, incoming()));
       allow update: if isValidId(txId) && isSignedIn() && isValidTransaction(incoming())
+        && validChangedReference('projects', 'projectId')
+        && validChangedReference('quotes', 'quoteId')
+        && validChangedReference('employees', 'payrollEmployeeId')
         && existing().ownerUid == request.auth.uid
         && incoming().ownerUid == existing().ownerUid
         && incoming().createdAt == existing().createdAt
         && incoming().createdBy == existing().createdBy
-        && incoming().updatedAt == request.time;
-      allow delete: if isValidId(txId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+        && incoming().updatedAt == request.time
+        && ((!hasReversalFields(existing()) && !hasReversalFields(incoming())
+          && (existing().isForecast || incoming().diff(existing()).affectedKeys().hasOnly(['invoiceStatus', 'updatedBy', 'updatedAt'])))
+          || validReversalUpdate(txId, existing(), incoming()));
+      allow delete: if false;
     }
 
     match /debts/{debtId} {
@@ -863,14 +1028,21 @@ service cloud.firestore {
       allow get: if isValidId(employeeId) && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(employeeId) && isSignedIn() && isValidEmployee(incoming())
-        && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+        && notDeleted('employees', employeeId)
+        && validNewReference(incoming(), 'projects', 'currentProjectId')
+        && !incoming().keys().hasAny(['archive', 'archiveAuditId']) && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(employeeId) && isSignedIn() && isValidEmployee(incoming())
+        && validChangedReference('projects', 'currentProjectId')
         && existing().ownerUid == request.auth.uid
+        && !('archive' in existing()) && !('archive' in incoming())
+        && incoming().get('archiveAuditId', '') == existing().get('archiveAuditId', '')
         && incoming().ownerUid == existing().ownerUid
         && incoming().createdAt == existing().createdAt
         && incoming().createdBy == existing().createdBy
         && incoming().updatedAt == request.time;
-      allow delete: if isValidId(employeeId) && isSignedIn() && existing().ownerUid == request.auth.uid;
+      allow update: if isValidId(employeeId) && isOwner(existing().ownerUid)
+        && archivalChange('employees', employeeId);
+      allow delete: if false;
     }
 
     match /employees/{employeeId}/occurrences/{occurrenceId} {
@@ -890,10 +1062,14 @@ service cloud.firestore {
       allow get: if isValidId(allocationId) && isSignedIn() && (resource == null || existing().ownerUid == request.auth.uid);
       allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(allocationId) && isSignedIn() && isValidAllocation(incoming())
+        && validNewReference(incoming(), 'projects', 'projectId')
+        && validNewReference(incoming(), 'employees', 'employeeId')
         && incoming().createdAt == request.time && incoming().updatedAt == request.time
         && exists(/databases/$(database)/documents/employees/$(incoming().employeeId))
         && get(/databases/$(database)/documents/employees/$(incoming().employeeId)).data.ownerUid == request.auth.uid;
       allow update: if isValidId(allocationId) && isSignedIn() && isValidAllocation(incoming())
+        && validChangedReference('projects', 'projectId')
+        && validChangedReference('employees', 'employeeId')
         && existing().ownerUid == request.auth.uid
         && incoming().ownerUid == existing().ownerUid
         && incoming().employeeId == existing().employeeId
@@ -949,8 +1125,10 @@ service cloud.firestore {
       allow get: if isValidId(itemId) && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(itemId) && isSignedIn() && isValidComplianceItem(incoming(), itemId)
+        && validNewReference(incoming(), 'projects', 'projectId')
         && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(itemId) && isSignedIn() && isValidComplianceItem(incoming(), itemId)
+        && validChangedReference('projects', 'projectId')
         && existing().ownerUid == request.auth.uid
         && incoming().ownerUid == existing().ownerUid
         && incoming().createdAt == existing().createdAt
@@ -990,6 +1168,7 @@ service cloud.firestore {
       allow get: if isOwner(existing().ownerUid);
       allow list: if isBoundedList() && isOwner(existing().ownerUid);
       allow create: if isValidId(projectId) && isSignedIn() && hasAuditFields(incoming())
+        && validNewReference(incoming(), 'projects', 'projectId')
         && incoming().keys().hasOnly(['ownerUid', 'projectId', 'date', 'dre', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
         && incoming().projectId == projectId && isValidNonEmptyStr(incoming().date, 10)
         && incoming().dre is map && incoming().dre.obraId == projectId
@@ -1015,8 +1194,10 @@ service cloud.firestore {
       allow get: if isValidId(projectId) && isSignedIn() && (resource == null || isOwner(existing().ownerUid));
       allow list: if isBoundedList() && isOwner(existing().ownerUid);
       allow create: if isValidId(projectId) && isSignedIn() && validFollowUp(incoming(), projectId)
+        && validNewReference(incoming(), 'projects', 'projectId')
         && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isValidId(projectId) && isOwner(existing().ownerUid) && validFollowUp(incoming(), projectId)
+        && validChangedReference('projects', 'projectId')
         && incoming().createdAt == existing().createdAt && incoming().createdBy == existing().createdBy
         && incoming().updatedAt == request.time;
     }
@@ -1025,6 +1206,7 @@ service cloud.firestore {
       allow get: if isValidId(callId) && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow list: if isBoundedList() && isSignedIn() && existing().ownerUid == request.auth.uid;
       allow create: if isValidId(callId) && isSignedIn() && isValidWarrantyCall(incoming())
+        && validNewReference(incoming(), 'projects', 'projectId')
         && incoming().createdAt == request.time && incoming().updatedAt == request.time
         && exists(/databases/$(database)/documents/projects/$(incoming().projectId))
         && get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.ownerUid == request.auth.uid
@@ -1033,6 +1215,7 @@ service cloud.firestore {
         && isValidNonEmptyStr(incoming().deadlineDate, 10)
         && isValidNonEmptyStr(get(/databases/$(database)/documents/projects/$(incoming().projectId)).data.warrantyStartDate, 10);
       allow update: if isValidId(callId) && isSignedIn() && isValidWarrantyCall(incoming())
+        && validChangedReference('projects', 'projectId')
         && existing().ownerUid == request.auth.uid
         && incoming().ownerUid == existing().ownerUid
         && incoming().projectId == existing().projectId

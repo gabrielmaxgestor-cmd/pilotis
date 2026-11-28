@@ -1,3 +1,4 @@
+import { isReversalStatus } from './recordLifecycle';
 import { diffDaysISO, monthKey, roundCents } from './formatters';
 import type {
   DividaRecord,
@@ -137,6 +138,7 @@ export function resolverStatusLancamento(
   >,
   dataReferenciaISO: string,
 ): LancamentoStatus {
+  if (isReversalStatus(lancamento.status)) return lancamento.status;
   if (lancamento.tipo === 'emprestimo' || lancamento.status === 'Não é receita') {
     return 'Não é receita';
   }
@@ -187,6 +189,7 @@ export function deduplicarReceitasEParcelas(
   const lancamentosUnicos: LancamentoRecord[] = [];
 
   for (const tx of lancamentos) {
+    if (isReversalStatus(tx.status)) continue;
     const pid = (tx.parcelaId || '').trim();
     const isRealizedIncome =
       tx.tipo === 'receita' && !tx.previsto && tx.status === 'Recebido';
@@ -336,7 +339,8 @@ export function resumoFinanceiroPeriodo(
   );
   const folhaParticipacaoPct =
     saidasMes > 0 ? Math.round((folhaMes / saidasMes) * 100) : null;
-  const hasMesMovements = mesTxs.length > 0;
+  const estornosRealizados = lancamentos.filter((l) => l.status === 'Estornado' && !l.previsto && l.data <= dataReferenciaISO);
+  const hasMesMovements = mesTxs.length > 0 || estornosRealizados.some((l) => l.tipo !== 'emprestimo' && monthKey(l.data) === mesAtual);
   const resultadoMes = hasMesMovements ? roundCents(entradasMes - saidasMes) : null;
 
   const receitasTxs = semEmprestimo.filter((l) => l.tipo === 'receita');
@@ -363,7 +367,7 @@ export function resumoFinanceiroPeriodo(
             0,
           ),
         )
-      : null;
+      : estornosRealizados.length ? 0 : null;
 
   const avulsasReceita = receitasTxs.filter((l) => !l.parcelaId);
   const possuiRecebiveis = parcelas.length > 0 || avulsasReceita.length > 0;
@@ -410,7 +414,7 @@ export function resumoFinanceiroPeriodo(
   );
 
   return {
-    possuiLancamentos: lancamentosUnicos.length > 0 || parcelas.length > 0,
+    possuiLancamentos: lancamentos.length > 0 || parcelas.length > 0,
     possuiMovimentoRealizadoNoMes: hasMesMovements,
     entradasMes,
     saidasMes,
@@ -574,7 +578,7 @@ export function conciliarExtratoBancario(
       });
 
       const exactMatchTx = lancamentosExistentes.find((tx) => {
-        if (matchedIds.has(tx.id)) return false;
+        if (matchedIds.has(tx.id) || isReversalStatus(tx.status)) return false;
         if (row.statementKey && tx.statementKey === row.statementKey) return true;
         if (Math.abs(tx.valor - absValor) >= 0.005) return false;
         const diff = diffDaysISO(row.data, tx.previsto ? tx.vencimento || tx.data : tx.data);

@@ -3,9 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Suspense, lazy, useEffect, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { MobileNav, MobileTopBar } from './components/ui/MobileNav';
-import { ErrorBoundary } from './components/ui/PilotisUI';
+import { ArchivedRecords } from './components/ui/ArchivedRecords';
+import { activePilotisData, type ArchivableCollection } from './domain/recordLifecycle';
+import { Button, ErrorBoundary } from './components/ui/PilotisUI';
 import { GlobalSearch, SearchButton, useGlobalSearchShortcut } from './components/ui/GlobalSearch';
 import { updateViewUrl, useViewParam, useViewSearch } from './hooks/useViewUrl';
 import { Sidebar, type AppRouteKey } from './components/ui/Sidebar';
@@ -170,11 +172,16 @@ function AuthenticatedShell({
     return parsed === 'login' ? 'dashboard' : parsed;
   });
 
-  const [data, setData] = useState<PilotisDataState>(INITIAL_DATA_STATE);
+  const [records, setData] = useState<PilotisDataState>(INITIAL_DATA_STATE);
+  const data = useMemo(() => activePilotisData(records), [records]);
   const [dashboardReady, setDashboardReady] = useState(false);
   const [dashboardLoadFailed, setDashboardLoadFailed] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useViewParam('planning.obra');
   const query = useViewSearch();
+  const archiveEntities: readonly ArchivableCollection[] | undefined = route === 'clients' ? ['clients', 'quotes']
+    : route === 'planning' ? ['projects'] : route === 'team' ? ['employees'] : undefined;
+  const archiveParam = route + '.arquivados';
+  const showArchived = Boolean(archiveEntities && query.get(archiveParam) === 'sim');
   const [searchOpen, setSearchOpen] = useState(false);
   useGlobalSearchShortcut(searchOpen, () => setSearchOpen(true));
   const [externalNewTxOpen, setExternalNewTxOpen] = useState(false);
@@ -224,7 +231,7 @@ function AuthenticatedShell({
       void onLogout();
       return;
     }
-    updateViewUrl({ registro: undefined, ...(subTab ? { [nextRoute + '.aba']: subTab } : {}), ...selection },
+    updateViewUrl({ registro: undefined, ...(subTab ? { [nextRoute + '.aba']: subTab } : {}), ...(Object.keys(selection).length ? { [nextRoute + '.arquivados']: undefined } : {}), ...selection },
       { path: ROUTE_TO_PATH[nextRoute] || '/', push: true });
     setRoute(nextRoute);
     window.scrollTo({ top: 0, behavior: 'auto' });
@@ -255,6 +262,13 @@ function AuthenticatedShell({
 
       <main id="main-content" tabIndex={-1} className="flex-1 min-w-0 px-4 py-4 pb-24 md:px-8 md:py-6 md:pb-8 max-w-[1360px]">
         <div className="mb-4 hidden justify-end md:flex"><SearchButton onClick={() => setSearchOpen(true)} /></div>
+        {archiveEntities && <div className="mb-3">
+          <Button type="button" variant="secondary" size="sm" aria-pressed={showArchived}
+            onClick={() => updateViewUrl({ [archiveParam]: showArchived ? undefined : 'sim' }, { push: true })}>
+            {showArchived ? 'Voltar aos ativos' : 'Arquivados'}
+          </Button>
+        </div>}
+        {showArchived && archiveEntities ? <ArchivedRecords uid={uid} data={records} entities={archiveEntities} scope={route} /> :
         <Suspense fallback={<ModuleLoadingFallback />}>
 
           {route === 'more' && (
@@ -354,7 +368,7 @@ function AuthenticatedShell({
               initialTab={query.get('settings.aba') ?? undefined}
             />
           )}
-        </Suspense>
+        </Suspense>}
       </main>
 
       <MobileNav active={route} onSelect={(key) => navigateTo(key)} />

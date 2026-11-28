@@ -45,7 +45,12 @@ export interface CompanySettings extends AuditMeta {
 
 export type ClientStatus = 'Potencial' | 'Ativo' | 'Em garantia' | 'Inativo';
 
-export interface Client extends AuditMeta {
+export interface ArchiveMeta {
+  archive?: { at: unknown; by: ActorRole };
+  archiveAuditId?: string;
+}
+
+export interface Client extends AuditMeta, ArchiveMeta {
   id: string;
   name: string;
   origin: string;
@@ -67,7 +72,7 @@ export type ContractSignStatus =
   | 'Assinado pelo cliente'
   | 'Assinado pelas partes';
 
-export interface Quote extends AuditMeta {
+export interface Quote extends AuditMeta, ArchiveMeta {
   id: string;
   code: string;
   clientId: string;
@@ -106,7 +111,7 @@ export type ProjectStatus = 'Contratada' | 'Em execução' | 'Concluída';
 export type ProjectContractKind = 'Principal' | 'Satélite';
 export type ProjectPlanningStatus = 'Aguardando modelo de cronograma' | 'Cronograma criado';
 
-export interface Project extends AuditMeta {
+export interface Project extends AuditMeta, ArchiveMeta {
   id: string;
   name: string;
   quoteId: string;
@@ -215,7 +220,7 @@ export interface DailyLog extends AuditMeta {
 }
 
 export type TransactionKind = 'income' | 'expense' | 'loan';
-export type TransactionStatus = 'Recebido' | 'Pago' | 'A vencer' | 'Em atraso' | 'Não é receita';
+export type TransactionStatus = 'Recebido' | 'Pago' | 'A vencer' | 'Em atraso' | 'Não é receita' | 'Estornado' | 'Estorno';
 export type InvoiceStatus = 'Emitida' | 'A emitir' | 'Não emitida' | 'Não se aplica';
 export type TransactionSource = 'manual' | 'orcamento' | 'planilha' | 'extrato' | 'folha';
 
@@ -236,6 +241,7 @@ export interface Installment extends AuditMeta {
   invoiceStatus: InvoiceStatus;
   receivedDate: string;
   transactionId: string;
+  receiptReversalAuditId?: string;
 }
 
 export interface FinancialTransaction extends AuditMeta {
@@ -250,6 +256,10 @@ export interface FinancialTransaction extends AuditMeta {
   amount: number;
   isForecast: boolean;
   wasForecast?: boolean;
+  reversalId?: string;
+  reversalOfId?: string;
+  reversalReason?: string;
+  reversalAuditId?: string;
   statementKey?: string;
   payrollEmployeeId?: string;
   payrollPeriod?: string;
@@ -299,7 +309,7 @@ export interface EmployeeOccurrence extends AuditMeta {
 export type EpiStatus = 'Em dia' | 'A repor' | 'Pendente';
 export type OnboardingStatus = 'Concluída' | 'Em andamento' | 'Pendente';
 
-export interface Employee extends AuditMeta {
+export interface Employee extends AuditMeta, ArchiveMeta {
   id: string;
   name: string;
   role: string;
@@ -473,6 +483,7 @@ export interface AuditLog {
   registeredBy: ActorRole;
   action: 'Criação' | 'Atualização' | 'Exclusão' | 'Importação';
   entityType: string;
+  entityId?: string;
   summary: string;
   beforeValue?: string;
   afterValue?: string;

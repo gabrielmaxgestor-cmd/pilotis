@@ -2,11 +2,14 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from 'react';
 import { AlertTriangle, CheckCircle2, Info, X, XCircle } from 'lucide-react';
+
+import { subscribeEditUndo, UNDO_DURATION_MS } from '../../services/editUndo';
 
 export type ToastTone = 'success' | 'warning' | 'danger' | 'info';
 
@@ -15,6 +18,7 @@ export interface ToastItem {
   tone: ToastTone;
   title: string;
   description?: string;
+  action?: { label: string; run: () => void };
 }
 
 const TOAST_STYLES: Record<
@@ -48,11 +52,13 @@ export function Toast({
   title,
   description,
   onClose,
+  action,
 }: {
   tone?: ToastTone;
   title: string;
   description?: string;
   onClose?: () => void;
+  action?: ToastItem['action'];
 }) {
   const style = TOAST_STYLES[tone];
   const Icon = style.icon;
@@ -73,6 +79,8 @@ export function Toast({
           <p className="text-xs mt-0.5 opacity-90 leading-relaxed">{description}</p>
         )}
       </div>
+      {action && <button type="button" className="min-h-8 shrink-0 rounded px-1.5 text-sm font-semibold underline"
+        onClick={action.run}>{action.label}</button>}
       {onClose && (
         <button
           type="button"
@@ -104,7 +112,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const showToast = useCallback(
     (toast: Omit<ToastItem, 'id'>, durationMs = 4200) => {
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-      setToasts((prev) => [...prev.slice(-3), { ...toast, id }]);
+      setToasts((prev) => [...prev.filter((item) => item.action), ...prev.filter((item) => !item.action).slice(-3), { ...toast, id }]);
       if (durationMs > 0) {
         window.setTimeout(() => {
           dismissToast(id);
@@ -113,6 +121,21 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     },
     [dismissToast],
   );
+
+  useEffect(() => subscribeEditUndo(({ undo }) => {
+    let used = false;
+    const deadline = Date.now() + UNDO_DURATION_MS;
+    showToast({
+      tone: 'success', title: 'Edição salva.',
+      action: { label: 'Desfazer', run: () => {
+        if (used || Date.now() >= deadline) return;
+        used = true;
+        void undo().then(() => showToast({ tone: 'success', title: 'Edição desfeita.' }))
+          .catch((error: unknown) => showToast({ tone: 'danger', title: 'Não foi possível desfazer.',
+            description: error instanceof Error ? error.message : undefined }));
+      } },
+    }, UNDO_DURATION_MS);
+  }), [showToast]);
 
   const value = useMemo(
     () => ({ showToast, dismissToast }),
@@ -131,6 +154,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             tone={item.tone}
             title={item.title}
             description={item.description}
+            action={item.action && { label: item.action.label, run: () => { dismissToast(item.id); item.action?.run(); } }}
             onClose={() => dismissToast(item.id)}
           />
         ))}
