@@ -71,6 +71,8 @@ No navegador, repita a conferência em 390 px e 1440 px. Percorra navegação, a
 
 A `main` só recebe merge quando os jobs **Aplicação (Node 22)** e **Regras do Firestore** estiverem verdes no workflow **CI**. O workflow roda em pull requests e em pushes na `main`. O job de Aplicação executa lint, testes de domínio e de integração e o build. O job de Regras usa o emulador com o projeto `demo-pilotis`.
 
+Para aplicar esse bloqueio no GitHub, a proteção da branch `main` deve exigir os dois jobs como verificações de status obrigatórias.
+
 O comando `npm audit --omit=dev` registra avisos para revisão. Falhas de lint, de teste ou de build bloqueiam o CI.
 
 ## Publicação no Cloud Run
