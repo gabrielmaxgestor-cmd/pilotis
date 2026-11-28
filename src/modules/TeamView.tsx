@@ -85,6 +85,7 @@ export function TeamView({
 }) {
   const [tab, setTab] = useViewTab('team', TEAM_TABS, initialTab);
   const [selectedEmployeeId, setSelectedEmployeeId] = useViewParam('team.colaborador');
+  const [recordId, setRecordId] = useViewParam('registro');
 
   // Modals
   const [empModalOpen, setEmpModalOpen] = useState(false);
@@ -576,6 +577,7 @@ export function TeamView({
 
   if (selectedEmployee) {
     const isClt = selectedEmployee.employmentType === 'CLT';
+    const linkedVacation = data.allocations.find((row) => row.id === recordId && row.employeeId === selectedEmployee.id && row.status === 'Férias');
     const empCharges = calcularEncargosColaborador(selectedEmployee, data.settings, todayStr);
     const asoStatus = avaliarValidadeSst(selectedEmployee.asoExpiry, todayStr);
     const nr18Status = avaliarValidadeSst(selectedEmployee.nr18Expiry, todayStr);
@@ -749,7 +751,9 @@ export function TeamView({
             <div className="flex justify-between text-[13px] py-1">
               <span className="text-[#5B6472]">Férias programadas</span>
               <strong className="text-[#14181F]">
-                {isClt ? selectedEmployee.vacationScheduled || 'A programar' : 'Não se aplica'}
+                {isClt ? selectedEmployee.vacationStart && selectedEmployee.vacationEnd
+                  ? formatDateBR(selectedEmployee.vacationStart) + ' a ' + formatDateBR(selectedEmployee.vacationEnd)
+                  : selectedEmployee.vacationScheduled || 'A programar' : 'Não se aplica'}
               </strong>
             </div>
           </section>
@@ -794,6 +798,13 @@ export function TeamView({
             </ul>
           )}
         </section>
+        <Modal open={Boolean(linkedVacation)} onClose={() => setRecordId('')}
+          title={'Férias · ' + selectedEmployee.name}>
+          {linkedVacation && <div className="grid gap-2 text-sm">
+            <p>Período registrado na alocação semanal.</p>
+            <p>{formatDateBR(linkedVacation.effectiveFrom || linkedVacation.weekStart)} a {formatDateBR(addDaysISO(linkedVacation.weekStart, 6))}</p>
+          </div>}
+        </Modal>
         <Modal
           open={occurrenceModalOpen}
           onClose={() => setOccurrenceModalOpen(false)}

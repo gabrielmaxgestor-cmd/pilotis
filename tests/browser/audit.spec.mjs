@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
@@ -49,6 +50,57 @@ for (const width of [390, 1440]) {
       await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
       await checkPageWidth(page);
       await checkAccessibility(page);
+    });
+
+    test('Agenda filtra vencimentos, abre o registro e baixa somente os eventos selecionados', async ({ page }) => {
+      await page.clock.setFixedTime(new Date('2026-11-27T12:00:00Z'));
+      await page.goto('/tests/browser/index.html?agenda=events');
+      if (width === 390) {
+        await navigation(page).getByRole('button', { name: 'Mais' }).click();
+        await page.getByRole('button', { name: /Agenda Vencimentos/ }).click();
+        await expect(navigation(page).getByRole('button', { name: 'Mais' })).toHaveAttribute('aria-current', 'page');
+      } else {
+        await navigation(page).getByRole('button', { name: 'Agenda', exact: true }).click();
+      }
+      await expect(page.getByRole('heading', { name: 'Agenda', exact: true })).toBeVisible();
+      const calendar = page.getByRole('table', { name: 'Calendário mensal de eventos' });
+      await expect(calendar.getByRole('button', { name: '27/11/2026 · 3 eventos' })).toBeVisible();
+      await checkPageWidth(page);
+      await checkAccessibility(page);
+
+      await page.getByRole('button', { name: 'Semana', exact: true }).click();
+      await expect(page.getByRole('heading', { name: '23/11/2026 a 29/11/2026' })).toBeVisible();
+      await page.getByRole('combobox', { name: /^Obra/ }).selectOption('construction');
+      await expect(page.getByRole('button', { name: /Guia de novembro/ })).toHaveCount(0);
+      await page.getByLabel('Tipo de evento').selectOption('installment');
+      await page.getByRole('button', { name: /Parcela · 01\/04/ }).click();
+      await expect(page.getByRole('dialog', { name: 'Parcela · 01/04' })).toBeVisible();
+      await expect(page).toHaveURL(/registro=agenda-parcel/);
+      await page.goBack();
+      await expect(page.getByLabel('Tipo de evento')).toHaveValue('installment');
+      await page.getByLabel('Tipo de evento').selectOption('');
+
+      const exportButton = page.getByRole('button', { name: 'Exportar para o Google Agenda' });
+      await exportButton.click();
+      const dialog = page.getByRole('dialog', { name: 'Exportar para o Google Agenda' });
+      await dialog.getByRole('button', { name: 'Limpar seleção' }).click();
+      await expect(dialog.getByRole('button', { name: 'Baixar arquivo .ics' })).toBeDisabled();
+      await dialog.getByRole('checkbox', { name: /Aluguel de equipamento/ }).check();
+      const [download] = await Promise.all([
+        page.waitForEvent('download'),
+        dialog.getByRole('button', { name: 'Baixar arquivo .ics' }).click(),
+      ]);
+      expect(download.suggestedFilename()).toBe('pilotis-agenda-2026-11-23.ics');
+      const body = await readFile(await download.path(), 'utf8');
+      expect(body).toMatch(/BEGIN:VCALENDAR\r\nVERSION:2\.0/);
+      expect(body).toContain('SUMMARY:Vencimento de conta');
+      expect(body).toContain('DTSTART;VALUE=DATE:20261127');
+      expect(body.match(/BEGIN:VEVENT/g)).toHaveLength(1);
+      expect(body).not.toMatch(/R\$|135,00|Aluguel/);
+
+      await page.getByRole('combobox', { name: /^Obra/ }).selectOption('Empresa');
+      await page.getByRole('button', { name: /Guia de novembro/ }).click();
+      await expect(page.getByRole('dialog', { name: 'Guia de novembro' })).toBeVisible();
     });
 
     test('Financeiro alterna tabela e lista e habilita as abas por teclado', async ({ page }) => {

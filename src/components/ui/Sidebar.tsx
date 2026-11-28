@@ -1,5 +1,6 @@
 import {
   Building2,
+  CalendarDays,
   ClipboardList,
   DollarSign,
   HardHat,
@@ -22,6 +23,7 @@ export const NAV_ITEMS: Array<{
   { key: 'dashboard', label: 'Dashboard', icon: LayoutGrid },
   { key: 'ai', label: 'IA Operacional', icon: Sparkles },
   { key: 'financial', label: 'Financeiro', icon: DollarSign },
+  { key: 'agenda', label: 'Agenda', icon: CalendarDays },
   { key: 'clients', label: 'Clientes e Orçamentos', icon: Users },
   { key: 'planning', label: 'Planejamento de Obras', icon: Building2 },
   { key: 'team', label: 'Equipe', icon: HardHat },

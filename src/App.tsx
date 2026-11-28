@@ -18,6 +18,9 @@ import { subscribePilotisCollections } from './services/pilotisService';
 import { readEmailAction } from './services/emailActions';
 import type { ModuleKey, PilotisDataState } from './types/pilotis';
 
+const AgendaView = lazy(() =>
+  import('./modules/AgendaView').then((m) => ({ default: m.AgendaView }))
+);
 const ClientsQuotesView = lazy(() =>
   import('./modules/ClientsQuotesView').then((m) => ({ default: m.ClientsQuotesView }))
 );
@@ -98,6 +101,7 @@ const ROUTE_TO_PATH: Record<AppRouteKey, string> = {
   dashboard: '/',
   ai: '/ia-operacional',
   financial: '/financeiro',
+  agenda: '/agenda',
   clients: '/clientes',
   planning: '/obras',
   team: '/equipe',
@@ -116,6 +120,8 @@ function parseRouteFromPathname(pathname: string): AppRouteKey {
       return 'dashboard';
     case '/ia-operacional':
       return 'ai';
+    case '/agenda':
+      return 'agenda';
     case '/financeiro':
       return 'financial';
     case '/clientes':
@@ -145,6 +151,7 @@ const MOBILE_MODULE_TITLES: Record<ModuleKey, string> = {
   dashboard: 'Dashboard',
   ai: 'IA Operacional',
   financial: 'Financeiro',
+  agenda: 'Agenda',
   clients: 'Clientes e Orçamentos',
   planning: 'Obras',
   team: 'Equipe',
@@ -308,6 +315,11 @@ function AuthenticatedShell({
               companyEmail={companyEmail}
               onNavigate={handleModuleNavigate}
             />
+          )}
+
+          {route === 'agenda' && (
+            <AgendaView data={data} companyEmail={companyEmail} loading={!dashboardReady} loadFailed={dashboardLoadFailed}
+              onOpen={(target) => navigateTo(target.module, target.tab, target.params)} />
           )}
 
           {route === 'financial' && (

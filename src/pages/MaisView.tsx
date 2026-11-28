@@ -1,4 +1,4 @@
-import { ChevronRight, ClipboardList, HardHat, LogOut, Settings, ShieldCheck, Sparkles } from 'lucide-react';
+import { CalendarDays, ChevronRight, ClipboardList, HardHat, LogOut, Settings, ShieldCheck, Sparkles } from 'lucide-react';
 import { Badge, Card, PageHeader } from '../components/ui/PilotisUI';
 import type { AppRouteKey } from '../components/ui/Sidebar';
 
@@ -15,6 +15,12 @@ export function MaisView({
     description: string;
     icon: typeof Sparkles;
   }> = [
+    {
+      key: 'agenda',
+      label: 'Agenda',
+      description: 'Vencimentos, prazos, férias e garantias',
+      icon: CalendarDays,
+    },
     {
       key: 'ai',
       label: 'IA Operacional',

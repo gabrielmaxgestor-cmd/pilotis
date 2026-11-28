@@ -180,6 +180,8 @@ export function FinancialView({
   const [tab, setTab] = useViewTab('financial', FIN_TABS, initialTab);
   const [recordId, setRecordId] = useViewParam('registro');
   const selectedRecord = data.transactions.find((row) => row.id === recordId);
+  const linkedInstallment = !selectedRecord && tab === 'A receber' ? data.installments.find((row) => row.id === recordId) : undefined;
+  const linkedDebt = !selectedRecord && tab === 'Dívidas e crédito' ? data.debts.find((row) => row.id === recordId) : undefined;
   const selectedInstallment = selectedRecord && data.installments.find((row) =>
     row.status === 'Recebida' && (row.transactionId === selectedRecord.id || row.id === selectedRecord.installmentId));
   const [reversalTarget, setReversalTarget] = useState<ReversalTarget | null>(null);
@@ -658,6 +660,14 @@ export function FinancialView({
   const manualReceivablesFiltered = manualReceivables.rows;
   const payablesFiltered = payables.rows;
 
+  function openInstallmentReceipt(row: Installment) {
+    setReceivingInstallment(row);
+    setReceivingDate(todayStr);
+    setReceivingMethod('');
+    setReceivingActor('Sócio');
+    setReceivingError(null);
+  }
+
   const activeDreProject =
     data.projects.find((p) => p.id === selectedDreProjectId) || data.projects[0] || null;
   const dreCorrected = data.transactions.some((row) => row.projectId === activeDreProject?.id && row.status === 'Estornado' && !row.isForecast);
@@ -1068,13 +1078,7 @@ export function FinancialView({
                         <button type="button" className="text-left text-sm font-semibold text-[#1F3A5F] underline"
                           onClick={() => setReversalTarget({ id: row.id, title: row.label, kind: 'installment' })}>Desfazer recebimento</button>
                       </div>
-                      : <button type="button" className="text-sm font-semibold text-[#1F3A5F] underline" onClick={() => {
-                          setReceivingInstallment(row);
-                          setReceivingDate(todayStr);
-                          setReceivingMethod('');
-                          setReceivingActor('Sócio');
-                          setReceivingError(null);
-                        }}>Receber</button> },
+                      : <button type="button" className="text-sm font-semibold text-[#1F3A5F] underline" onClick={() => openInstallmentReceipt(row)}>Receber</button> },
                   ]}
                 />
               )}
@@ -1528,6 +1532,35 @@ export function FinancialView({
         </div>
       )}
 
+      <Modal open={Boolean(linkedInstallment)} onClose={() => setRecordId('')}
+        title={linkedInstallment ? 'Parcela · ' + linkedInstallment.label : 'Parcela'}>
+        {linkedInstallment && <div className="grid gap-3 text-sm">
+          <StatusBadge label={resolverStatusParcela({ status: linkedInstallment.status, vencimento: linkedInstallment.dueDate }, todayStr)} />
+          <dl className="grid gap-2 sm:grid-cols-2">
+            <div><dt>Vencimento</dt><dd>{formatDateBR(linkedInstallment.dueDate)}</dd></div>
+            <div><dt>Valor</dt><dd>{formatBRL(linkedInstallment.amount)}</dd></div>
+            <div><dt>Obra</dt><dd>{linkedInstallment.projectName || 'Sem dados'}</dd></div>
+            <div><dt>Cliente</dt><dd>{linkedInstallment.clientName || 'Sem dados'}</dd></div>
+            {linkedInstallment.receivedDate && <div><dt>Recebida em</dt><dd>{formatDateBR(linkedInstallment.receivedDate)}</dd></div>}
+          </dl>
+          {linkedInstallment.status !== 'Recebida' && <button type="button"
+            className="justify-self-start font-semibold text-[#1F3A5F] underline"
+            onClick={() => { setRecordId(''); openInstallmentReceipt(linkedInstallment); }}>Receber parcela</button>}
+        </div>}
+      </Modal>
+      <Modal open={Boolean(linkedDebt)} onClose={() => setRecordId('')}
+        title={linkedDebt ? 'Dívida · ' + linkedDebt.creditor : 'Dívida'}>
+        {linkedDebt && <div className="grid gap-3 text-sm">
+          <StatusBadge label={resolverStatusDivida({ status: linkedDebt.status, proximoVencimento: linkedDebt.nextDueDate }, todayStr)} />
+          <dl className="grid gap-2 sm:grid-cols-2">
+            <div><dt>Tipo</dt><dd>{linkedDebt.debtType}</dd></div>
+            <div><dt>Próximo vencimento</dt><dd>{formatDateBR(linkedDebt.nextDueDate)}</dd></div>
+            <div><dt>Saldo em aberto</dt><dd>{formatBRL(linkedDebt.principalBalance)}</dd></div>
+          </dl>
+          <button type="button" className="justify-self-start font-semibold text-[#1F3A5F] underline"
+            onClick={() => { setRecordId(''); openDebtModal(linkedDebt); }}>Editar dívida</button>
+        </div>}
+      </Modal>
       <Modal open={Boolean(selectedRecord)} onClose={() => setRecordId('')} title={selectedRecord?.description || 'Lançamento'}>
         {selectedRecord && <div className="grid gap-3 text-sm">
           <StatusBadge label={txStatus(selectedRecord)} />

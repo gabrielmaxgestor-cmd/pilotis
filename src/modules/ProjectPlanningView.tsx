@@ -124,6 +124,7 @@ export function ProjectPlanningView({
   onSelectProject: (id: string) => void;
 }) {
   const [tab, setTab] = useViewTab('planning', PLAN_TABS);
+  const [recordId, setRecordId] = useViewParam('registro');
   const [selectedPhase, setSelectedPhase] = useViewParam('etapas.fase');
   const [projectFilter, setProjectFilter] = useState('Todas');
 
@@ -229,6 +230,7 @@ export function ProjectPlanningView({
       { key: 'status', label: 'Situação', value: (row) => row.status },
     ],
   };
+  const linkedStage = tab === 'Cronograma' ? projectStages.find((stage) => stage.id === recordId) : undefined;
   const stages = useListFilters('etapas', projectStages, stageSchema);
   const projectProgress = activeProject ? calcularProgressoObra(activeProject.id, projectStages) : null;
   const curvaSData = useMemo(() => calcularCurvaSObra(
@@ -961,6 +963,22 @@ export function ProjectPlanningView({
             </button>
           </div>
         </form>
+      </Modal>
+
+      <Modal open={Boolean(linkedStage)} onClose={() => setRecordId('')}
+        title={linkedStage ? 'Etapa · ' + linkedStage.name : 'Etapa'}>
+        {linkedStage && <div className="grid gap-3 text-sm">
+          <StatusBadge label={linkedStage.status} />
+          <dl className="grid gap-2 sm:grid-cols-2">
+            <div><dt>Obra</dt><dd>{activeProject?.name}</dd></div>
+            <div><dt>Código EAP</dt><dd>{linkedStage.wbsCode}</dd></div>
+            <div><dt>Fase</dt><dd>{linkedStage.phase}</dd></div>
+            <div><dt>{linkedStage.isMilestone ? 'Data do marco' : 'Término previsto'}</dt><dd>{formatDateBR(stageDeadline(linkedStage))}</dd></div>
+            {linkedStage.materialExpectedDate && <div><dt>Material prometido para</dt><dd>{formatDateBR(linkedStage.materialExpectedDate)}</dd></div>}
+          </dl>
+          {activeProject?.status !== 'Concluída' && <button type="button" className="justify-self-start font-semibold text-[#1F3A5F] underline"
+            onClick={() => { setRecordId(''); openEditStage(linkedStage); }}>Editar etapa</button>}
+        </div>}
       </Modal>
 
       {/* Modal: Nova / Editar Etapa com detecção de ciclo */}

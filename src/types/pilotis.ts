@@ -6,6 +6,7 @@ export type ModuleKey =
   | 'dashboard'
   | 'ai'
   | 'financial'
+  | 'agenda'
   | 'clients'
   | 'planning'
   | 'team'

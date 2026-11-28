@@ -5,6 +5,9 @@ import { MobileNav, MobileTopBar } from '../../src/components/ui/MobileNav';
 import { GlobalSearch, SearchButton, useGlobalSearchShortcut } from '../../src/components/ui/GlobalSearch';
 import { updateViewUrl, useViewSearch } from '../../src/hooks/useViewUrl';
 import { ToastProvider } from '../../src/components/ui/Toast';
+import { AgendaView } from '../../src/modules/AgendaView';
+import { MaisView } from '../../src/pages/MaisView';
+import { ComplianceView } from '../../src/modules/ComplianceView';
 import { DashboardView } from '../../src/modules/DashboardView';
 import { FinancialView } from '../../src/modules/FinancialView';
 import { ProjectPlanningView } from '../../src/modules/ProjectPlanningView';
@@ -23,7 +26,8 @@ function noAction() {}
 function Fixture() {
   const params = useViewSearch();
   const route = (params.get('route') || 'dashboard') as AppRouteKey;
-  const navigate = (next: AppRouteKey) => updateViewUrl({ route: next, registro: undefined }, { push: true });
+  const navigate = (next: AppRouteKey, tab?: string, selection: Record<string, string> = {}) =>
+    updateViewUrl({ route: next, registro: undefined, ...(tab ? { [next + '.aba']: tab } : {}), ...selection }, { push: true });
   const [searchOpen, setSearchOpen] = useState(false);
   const showSearch = () => setSearchOpen(true);
   useGlobalSearchShortcut(searchOpen, showSearch);
@@ -74,9 +78,27 @@ function Fixture() {
       downPaymentPct: 40, installmentsCount: 1, probabilityPct: 50, status: 'Em negociação', discardReason: '', projectId: '',
     }],
   };
-  const finance = params.get('finance') === 'charts' ? chartData : params.get('finance') === 'empty' ? data : financeData;
+  const agendaData: PilotisDataState = params.get('agenda') === 'events' ? {
+    ...planningData,
+    installments: [{
+      id: 'agenda-parcel', ownerUid: 'browser-test', createdBy: 'Sócio', updatedBy: 'Sócio',
+      projectId: 'construction', projectName: 'Obra contratada', quoteId: 'quote', clientId: 'client', clientName: 'Cliente',
+      number: 1, label: '01/04', dueDate: '2026-11-27', amount: 5000, status: 'A vencer',
+      invoiceStatus: 'A emitir', receivedDate: '', transactionId: '',
+    }],
+    transactions: [{
+      ...financeData.transactions[0], id: 'agenda-bill', description: 'Aluguel de equipamento R$ 135,00',
+      dueDate: '2026-11-27', status: 'A vencer', isForecast: true, projectId: 'construction', projectName: 'Obra contratada',
+    }],
+    complianceItems: [{
+      id: 'agenda-guide', ownerUid: 'browser-test', createdBy: 'Sócio', updatedBy: 'Sócio',
+      kind: 'Obrigação', title: 'Guia de novembro', category: 'INSS', projectId: '', projectName: '',
+      competence: '2026-11', dueDate: '2026-11-27', issuedDate: '', fileName: '', mandatory: true, status: 'Pendente', notes: '',
+    }],
+  } : data;
+  const finance = params.get('agenda') === 'events' ? agendaData : params.get('finance') === 'charts' ? chartData : params.get('finance') === 'empty' ? data : financeData;
   const title = route === 'financial' ? 'Financeiro' : route === 'planning' ? 'Obras'
-    : route === 'settings' ? 'Configurações' : 'Dashboard';
+     : route === 'settings' ? 'Configurações' : route === 'agenda' ? 'Agenda' : route === 'more' ? 'Mais' : 'Dashboard';
   return (
     <div className="min-h-screen flex flex-col md:flex-row bg-[#F6F5F2]">
       <Sidebar active={route} onSelect={navigate} onLogout={noAction} />
@@ -86,6 +108,9 @@ function Fixture() {
         {route === 'dashboard' && <DashboardView data={data} onNavigate={navigate}
           onOpenProject={noAction} onOpenNewTransaction={() => { navigate('financial'); setNewExpense(true); }}
           onOpenNewQuote={noAction} />}
+        {route === 'more' && <MaisView onSelect={navigate} onLogout={noAction} />}
+        {route === 'agenda' && <AgendaView data={agendaData} onOpen={(target) => navigate(target.module, target.tab, target.params)} />}
+        {route === 'compliance' && <ComplianceView uid="browser-test" data={agendaData} />}
         {route === 'financial' && <FinancialView uid="browser-test" data={finance} externalNewTxOpen={newExpense}
           onCloseExternalNewTx={() => setNewExpense(false)} />}
         {route === 'planning' && <ProjectPlanningView uid="browser-test" data={planningData} selectedProjectId="construction" onSelectProject={noAction} />}

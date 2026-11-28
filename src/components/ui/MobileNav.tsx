@@ -66,7 +66,7 @@ export function MobileNav({
     { key: 'more', label: 'Mais', icon: MoreHorizontal },
   ];
 
-  const isMoreGroup = ['more', 'ai', 'team', 'pops', 'compliance', 'settings'].includes(
+  const isMoreGroup = ['more', 'agenda', 'ai', 'team', 'pops', 'compliance', 'settings'].includes(
     active,
   );
 

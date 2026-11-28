@@ -1,3 +1,4 @@
+import { useViewParam } from '../hooks/useViewUrl';
 import { useEffect, useState } from 'react';
 import { Modal, RegisteredBySelect, StatusBadge } from '../components/ui/PilotisUI';
 import { formatBRL, formatDateBR, formatPercentBR, getClosureReview, getWarrantyWindow, planningTodayISO, summarizeWarrantyCalls } from '../domain';
@@ -179,6 +180,8 @@ export function ProjectClosureView({ uid, project, data, onAftercare }: {
 }
 
 function WarrantyCalls({ uid, project, calls }: { uid: string; project: Project; calls: WarrantyCall[] }) {
+  const [recordId, setRecordId] = useViewParam('registro');
+  const linkedCall = calls.find((call) => call.id === recordId);
   const [editing, setEditing] = useState<WarrantyCall | 'new' | null>(null);
   const [description, setDescription] = useState('');
   const [openedDate, setOpenedDate] = useState('');
@@ -216,6 +219,19 @@ function WarrantyCalls({ uid, project, calls }: { uid: string; project: Project;
           </span>
         </button></li>)}
       </ul> : <p className="text-sm text-[#5B6472]">Sem chamados nesta obra.</p>}
+      <Modal open={Boolean(linkedCall)} title="Chamado de garantia" onClose={() => setRecordId('')}>
+        {linkedCall && <div className="grid gap-3 text-sm">
+          <p className="break-words font-semibold">{linkedCall.description}</p>
+          <StatusBadge label={linkedCall.status} />
+          <dl className="grid gap-2 sm:grid-cols-2">
+            <div><dt>Obra</dt><dd>{project.name}</dd></div>
+            <div><dt>Prazo</dt><dd>{formatDateBR(linkedCall.deadlineDate)}</dd></div>
+            <div><dt>Abertura</dt><dd>{formatDateBR(linkedCall.openedDate)}</dd></div>
+            <div><dt>Custo registrado</dt><dd>{formatBRL(linkedCall.cost)}</dd></div>
+          </dl>
+          <button type="button" className={secondary} onClick={() => { setRecordId(''); open(linkedCall); }}>Editar chamado</button>
+        </div>}
+      </Modal>
       <Modal open={Boolean(editing)} onClose={() => setEditing(null)}
         title={editing === 'new' ? 'Registrar chamado' : 'Editar chamado'} maxWidth="max-w-lg">
         <form className="grid gap-3" onSubmit={async (event) => {
@@ -359,16 +375,28 @@ function FollowUp({ uid, project, data }: { uid: string; project: Project; data:
 export function PostConstructionView({ uid, data, projectId, initialProjectId }: {
   uid: string; data: PilotisDataState; projectId?: string; initialProjectId?: string;
 }) {
+  const [recordId, setRecordId] = useViewParam('registro');
   const [activeOnly, setActiveOnly] = useState(!initialProjectId);
   const [selectedId, setSelectedId] = useState(initialProjectId ?? '');
   const today = planningTodayISO();
   const projects = data.projects.filter((row) => row.status === 'Concluída' && (!projectId || row.id === projectId));
   const visible = activeOnly && !projectId ? projects.filter((row) => getWarrantyWindow(row, today)?.active) : projects;
   const selected = visible.find((row) => row.id === selectedId) ?? visible[0];
+  const linkedWarranty = selected && selected.id === recordId ? getWarrantyWindow(selected, today) : null;
   const totals = summarizeWarrantyCalls(data.warrantyCalls.filter((call) => visible.some((row) => row.id === call.projectId)));
   const testimonials = (data.projectFollowUps ?? []).filter((row) => row.testimonial && visible.some((item) => item.id === row.projectId));
   return (
     <div className="grid gap-4">
+      <Modal open={Boolean(linkedWarranty)} onClose={() => setRecordId('')}
+        title={selected ? 'Garantia · ' + selected.name : 'Garantia'}>
+        {linkedWarranty && <div className="grid gap-3 text-sm">
+          <StatusBadge label={linkedWarranty.active ? 'Em garantia' : 'Fora do período de garantia'} />
+          <dl className="grid gap-2 sm:grid-cols-2">
+            <div><dt>Início da garantia</dt><dd>{formatDateBR(linkedWarranty.start)}</dd></div>
+            <div><dt>Fim da garantia</dt><dd>{formatDateBR(linkedWarranty.end)}</dd></div>
+          </dl>
+        </div>}
+      </Modal>
       {!projectId && <section className={card + ' grid gap-3'}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-base font-semibold">Pós-obra e garantia</h2>
